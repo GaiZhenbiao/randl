@@ -1,0 +1,12 @@
+{
+  "options.accent.label": "Above-threshold color",
+  "options.decimals.label": "Decimal places",
+  "options.decimals.unit": "places",
+  "options.prefix.label": "Value prefix",
+  "options.threshold.help": "Values above it get the arrow and color.",
+  "options.threshold.label": "Threshold",
+  "options.trend.arrow": "Arrow above the threshold",
+  "options.trend.label": "Trend marker",
+  "options.trend.none": "None",
+  "panel.noData": "No data"
+}

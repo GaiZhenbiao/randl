@@ -1,0 +1,20 @@
+{
+  "id": "stat-card",
+  "name": "Latest value",
+  "version": "1.1.0",
+  "apiVersion": 1,
+  "entry": "panel.js",
+  "metricSelection": "single",
+  "settings": {
+    "common": [],
+    "options": [
+      { "key": "decimals", "tab": "display", "type": "integer", "control": "slider", "min": 0, "max": 8, "step": 1, "unit": "options.decimals.unit", "default": 4, "label": "options.decimals.label" },
+      { "key": "trend", "tab": "display", "type": "select", "default": "none", "label": "options.trend.label",
+        "choices": [ { "value": "none", "label": "options.trend.none" }, { "value": "arrow", "label": "options.trend.arrow" } ] },
+      { "key": "threshold", "tab": "display", "type": "number", "default": 0, "label": "options.threshold.label", "help": "options.threshold.help", "inheritGroup": "threshold", "enabledWhen": { "key": "trend", "in": ["arrow"] } },
+      { "key": "accent", "tab": "display", "type": "color", "default": "#0f62fe", "label": "options.accent.label", "inheritGroup": "threshold", "enabledWhen": { "key": "trend", "in": ["arrow"] } },
+      { "key": "prefix", "tab": "data", "after": "title", "type": "text", "maxLength": 16, "default": "", "label": "options.prefix.label", "scopes": ["panel"] }
+    ]
+  },
+  "locales": { "en": "locales/en.json", "fr": "locales/fr.json" }
+}

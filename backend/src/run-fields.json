@@ -1,0 +1,137 @@
+{
+  "display_name": {
+    "label": "runs.fields.displayName",
+    "type": "string",
+    "column": "display_name"
+  },
+  "name": {
+    "label": "runs.fields.name",
+    "type": "string",
+    "column": "name"
+  },
+  "state": {
+    "label": "runs.fields.state",
+    "type": "string",
+    "column": "state"
+  },
+  "created": {
+    "label": "runs.fields.created",
+    "type": "date",
+    "column": "created"
+  },
+  "updated": {
+    "label": "runs.fields.updated",
+    "type": "date",
+    "column": "updated"
+  },
+  "started": {
+    "label": "runs.fields.started",
+    "type": "date",
+    "column": "started"
+  },
+  "finished": {
+    "label": "runs.fields.finished",
+    "type": "date",
+    "column": "finished"
+  },
+  "runtime": {
+    "label": "runs.fields.runtime",
+    "type": "number",
+    "column": "runtime"
+  },
+  "history_count": {
+    "label": "runs.fields.historyCount",
+    "type": "number",
+    "column": "history_count"
+  },
+  "group_name": {
+    "label": "runs.fields.groupName",
+    "type": "string",
+    "column": "group_name"
+  },
+  "job_type": {
+    "label": "runs.fields.jobType",
+    "type": "string",
+    "column": "job_type"
+  },
+  "tags": {
+    "label": "runs.fields.tags",
+    "type": "tags",
+    "column": "tags"
+  },
+  "notes": {
+    "label": "runs.fields.notes",
+    "type": "string",
+    "column": "notes"
+  },
+  "host": {
+    "label": "runs.fields.host",
+    "type": "string",
+    "column": "host"
+  },
+  "program": {
+    "label": "runs.fields.program",
+    "type": "string",
+    "column": "program"
+  },
+  "git_commit": {
+    "label": "runs.fields.gitCommit",
+    "type": "string",
+    "column": "git_commit"
+  },
+  "git_remote": {
+    "label": "runs.fields.gitRemote",
+    "type": "string",
+    "column": "git_remote"
+  },
+  "username": {
+    "label": "runs.fields.username",
+    "type": "string",
+    "column": "username"
+  },
+  "exit_code": {
+    "label": "runs.fields.exitCode",
+    "type": "number",
+    "column": "exit_code"
+  },
+  "os": {
+    "label": "runs.fields.os",
+    "type": "string",
+    "path": "$.os"
+  },
+  "python": {
+    "label": "runs.fields.python",
+    "type": "string",
+    "path": "$.python"
+  },
+  "executable": {
+    "label": "runs.fields.executable",
+    "type": "string",
+    "path": "$.executable"
+  },
+  "cpu_count": {
+    "label": "runs.fields.cpuCount",
+    "type": "number",
+    "path": "$.cpu_count"
+  },
+  "gpu_count": {
+    "label": "runs.fields.gpuCount",
+    "type": "number",
+    "path": "$.gpu_count"
+  },
+  "gpu": {
+    "label": "runs.fields.gpu",
+    "type": "string",
+    "path": "$.gpu"
+  },
+  "memory": {
+    "label": "runs.fields.memory",
+    "type": "number",
+    "path": "$.memory.total"
+  },
+  "sdk_version": {
+    "label": "runs.fields.sdkVersion",
+    "type": "string",
+    "path": "$.sdkVersion"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "maxMetrics": 8,
+  "maxColumns": 32,
+  "chartRuns": 1000,
+  "chartPixels": 16384,
+  "resolution": {
+    "default": "high",
+    "bucketsPerPixel": {
+      "low": 0.5,
+      "medium": 1,
+      "high": 2
+    },
+    "points": {
+      "low": 25000,
+      "medium": 50000,
+      "high": 100000,
+      "full": 500000
+    }
+  },
+  "cells": {
+    "renderers": 36,
+    "export": 64
+  },
+  "itemSize": {
+    "min": 80,
+    "max": 960,
+    "step": 8,
+    "chart": 240,
+    "chartMin": 200,
+    "media": 200
+  },
+  "media": {
+    "files": {
+      "default": 100,
+      "max": 1000
+    },
+    "responseFiles": 5000,
+    "steps": 10000,
+    "entries": 1000
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "options.accent.label": "Couleur au-dessus du seuil",
+  "options.decimals.label": "Décimales",
+  "options.decimals.unit": "décimales",
+  "options.prefix.label": "Préfixe de la valeur",
+  "options.threshold.help": "Les valeurs supérieures reçoivent la flèche et la couleur.",
+  "options.threshold.label": "Seuil",
+  "options.trend.arrow": "Flèche au-dessus du seuil",
+  "options.trend.label": "Marqueur de tendance",
+  "options.trend.none": "Aucun",
+  "panel.noData": "Aucune donnée"
+}
