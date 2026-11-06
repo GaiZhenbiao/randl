@@ -348,22 +348,290 @@ try {
   await carousel.getByRole('tab', { name: 'Run 37', exact: true }).click();
   await expect(slide).toHaveAttribute('aria-label', '3 of 40: Run 37');
   await expect(carousel.locator('.carousel-counter')).toHaveText('3 of 40');
-  // A swipe on the stage moves one item.
-  const stageBox = await carousel.locator('.carousel-stage').boundingBox();
-  await carousel.locator('.carousel-stage').evaluate((stage, box) => {
-    const at = (type, x) =>
-      stage.dispatchEvent(
-        new PointerEvent(type, {
-          pointerId: 7,
-          pointerType: 'touch',
-          clientX: x,
-          clientY: box.y + box.height / 2,
-          bubbles: true,
+  // The drag that moves the items by one: how far the current run moves on screen to its
+  // neighbor's place.
+  const stage = carousel.locator('.carousel-stage'),
+    stageBox = await stage.boundingBox(),
+    settled = () => expect.poll(() => slide.evaluate((el) => el.style.transform)).toBe('none'),
+    scrub = await carousel.evaluate((node) => {
+      const at = Number(node.querySelector('.carousel-slide').dataset.index),
+        transform = node.querySelector(`.carousel-item[data-index="${at + 1}"]`).style.transform,
+        [, p, x, z] = transform.match(
+          /perspective\(([-\d.e]+)px\) translate3d\(([-\d.e]+)px, 0px, ([-\d.e]+)px\)/,
+        );
+      return Math.max(48, Math.abs(x) * (p / (p - z)));
+    }),
+    turn = (index) =>
+      carousel
+        .locator(`.carousel-item[data-index="${index}"]`)
+        .evaluate((el) => Number(el.style.transform.match(/rotateY\(([-\d.e]+)deg\)/)?.[1] ?? 0));
+  // A short, slow touch drag on the stage stays on the current run; a short flick moves one.
+  const touchDrag = (moves, every) =>
+    stage.evaluate(
+      async (stage, { box, moves, every }) => {
+        const y = box.y + box.height / 2,
+          at = (type, x) =>
+            stage.dispatchEvent(
+              new PointerEvent(type, {
+                pointerId: 7,
+                pointerType: 'touch',
+                clientX: x,
+                clientY: y,
+                bubbles: true,
+              }),
+            );
+        let x = box.x + box.width / 2;
+        at('pointerdown', x);
+        for (const move of moves) {
+          await new Promise((resolve) => setTimeout(resolve, every));
+          at('pointermove', (x -= move));
+        }
+        at('pointerup', x);
+      },
+      { box: stageBox, moves, every },
+    );
+  const unmoved = await slide.getAttribute('aria-label');
+  await touchDrag([12, 6, 6, 6, 6, 4, 0, 0, 0, 0, 0], 30);
+  await expect(stage).not.toHaveClass(/swiping/);
+  await expect(slide).toHaveAttribute('aria-label', unmoved);
+  await settled();
+  await touchDrag([12, 16, 16, 16], 16);
+  await expect(slide).toHaveAttribute('aria-label', '4 of 40: Run 36');
+  // A real touch drag that starts on the current chart moves the items continuously with the
+  // finger: halfway between two runs, both stand half turned and the current run stays. On
+  // release the runs move on at once, frame by frame, to the nearest run.
+  {
+    await settled();
+    const box = await slide.boundingBox(),
+      x = box.x + box.width / 2,
+      y = box.y + box.height / 2,
+      cdp = await page.context().newCDPSession(page),
+      // The drag takes up from the 10 px where it is known to be horizontal.
+      to = (items) =>
+        cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: x - 10 - items * scrub, y }],
+        });
+    try {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: x - 10, y }],
+      });
+      for (let tenths = 1; tenths <= 15; tenths++) await to(tenths / 10);
+      await expect(stage).toHaveClass(/swiping/);
+      await expect.poll(() => turn(4)).toBeGreaterThan(30);
+      assert.ok((await turn(4)) < 40, String(await turn(4)));
+      assert.ok(Math.abs((await turn(5)) + 35) < 5, String(await turn(5)));
+      await expect(slide).toHaveAttribute('aria-label', '4 of 40: Run 36');
+      for (let tenths = 16; tenths <= 23; tenths++) await to(tenths / 10);
+      await page.waitForTimeout(300);
+      await carousel.evaluate((node) => {
+        const item = () => node.querySelector('.carousel-item[data-index="5"]'),
+          turned = () => Number(item().style.transform.match(/rotateY\(([-\d.e]+)deg\)/)?.[1] ?? 0);
+        window.turns = [];
+        node.addEventListener('pointerup', () => (window.released = performance.now()), {
+          once: true,
+        });
+        const frame = (now) => {
+          if (window.released !== undefined && now > window.released) window.turns.push(turned());
+          if (window.turns.length < 12) requestAnimationFrame(frame);
+        };
+        window.held = turned();
+        requestAnimationFrame(frame);
+      });
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    } finally {
+      await cdp.detach();
+    }
+    await expect(slide).toHaveAttribute('aria-label', '6 of 40: Run 34');
+    // From 0.3 of the way to the next run, Run 34 turns back to face the viewer from the first
+    // frames after the release on, in one motion, without a pause after the drag.
+    const { held, turns } = await page.evaluate(async () => {
+      while (window.turns.length < 12) await new Promise(requestAnimationFrame);
+      return { held: window.held, turns: window.turns };
+    });
+    assert.ok(Math.abs(held - 21) < 3, 'released 0.3 on: ' + held);
+    assert.ok(turns[1] < held, 'moves at once: ' + [held, turns]);
+    for (let index = 1; index < turns.length; index++)
+      assert.ok(turns[index] <= turns[index - 1] && turns[index] >= -0.01, 'one motion: ' + turns);
+    await expect(stage).not.toHaveClass(/swiping/);
+    await settled();
+    // A vertical drag is the page's.
+    await stage.evaluate((stage, box) => {
+      const at = (type, y) =>
+        stage.dispatchEvent(
+          new PointerEvent(type, {
+            pointerId: 8,
+            pointerType: 'touch',
+            clientX: box.x + box.width / 2,
+            clientY: y,
+            bubbles: true,
+          }),
+        );
+      at('pointerdown', box.y + 10);
+      at('pointermove', box.y + 80);
+      at('pointerup', box.y + 120);
+    }, stageBox);
+    await expect(slide).toHaveAttribute('aria-label', '6 of 40: Run 34');
+  }
+  // A horizontal touchpad scroll over the chart moves the items as a drag does and settles on
+  // the nearest run once it ends; a vertical one does not move the items.
+  {
+    const box = await slide.boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(-(scrub * 2 + 10), 0);
+    await expect(slide).toHaveAttribute('aria-label', '4 of 40: Run 36');
+    await settled();
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(200);
+    await expect(slide).toHaveAttribute('aria-label', '4 of 40: Run 36');
+  }
+  // Past the first run a drag stretches like a rubber band: the farther, the less it moves, but
+  // it does not stop. On release the run settles back quickly.
+  {
+    await slide.focus();
+    await page.keyboard.press('Home');
+    await expect(slide).toHaveAttribute('aria-label', '1 of 40: Run 39');
+    await settled();
+    const box = await slide.boundingBox(),
+      x = box.x + box.width / 2,
+      y = box.y + box.height / 2,
+      atRest = await slide.evaluate((el) => parseFloat(el.style.left)),
+      shift = async () => (await slide.evaluate((el) => parseFloat(el.style.left))) - atRest,
+      cdp = await page.context().newCDPSession(page),
+      to = (items) =>
+        cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [{ x: x + 10 + items * scrub, y }],
+        });
+    const shifts = [];
+    try {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: x + 10, y }],
+      });
+      for (const items of [0.5, 1, 1.5]) {
+        await to(items);
+        await page.waitForTimeout(50);
+        shifts.push(await shift());
+      }
+      await page.waitForTimeout(300);
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    } finally {
+      await cdp.detach();
+    }
+    assert.ok(
+      shifts[0] > 0 && shifts[1] > shifts[0] && shifts[2] > shifts[1],
+      'no hard stop: ' + shifts,
+    );
+    assert.ok(shifts[2] - shifts[1] < shifts[1] - shifts[0], 'ever less: ' + shifts);
+    assert.ok(shifts[2] < scrub * 1.5, 'less than the finger: ' + shifts);
+    const back = await stage.evaluate(
+      (node) =>
+        new Promise((resolve) => {
+          const start = performance.now(),
+            check = () =>
+              node.classList.contains('swiping')
+                ? requestAnimationFrame(check)
+                : resolve(performance.now() - start);
+          check();
         }),
-      );
-    at('pointerdown', box.x + box.width * 0.7);
-    at('pointerup', box.x + box.width * 0.3);
-  }, stageBox);
+    );
+    assert.ok(back < 500, 'springs back quickly: ' + back);
+    await expect(slide).toHaveAttribute('aria-label', '1 of 40: Run 39');
+    await settled();
+  }
+  // Touchpad gestures, as a touchpad scrolls: `deltas` of the fingers moving, then of the glide
+  // after they lift, an event `every` ms. Returns the first run's `left` frame by frame, and
+  // how many frames passed while the events were sent.
+  const touchpad = (fingers, glide = [], every = 16, x = false) =>
+    slide.evaluate(
+      async (slide, { fingers, glide, every, x }) => {
+        // The run's left, or for a run between two its x along the row.
+        const read = (slide) =>
+          x
+            ? Number(slide.style.transform.match(/translate3d\(([-\d.e]+)px/)?.[1] ?? 0) +
+              parseFloat(slide.style.left)
+            : parseFloat(slide.style.left);
+        const target = slide.querySelector('canvas') ?? slide,
+          box = target.getBoundingClientRect(),
+          lefts = [],
+          wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        let done = false;
+        const frame = () => {
+          lefts.push(read(slide));
+          if (!done) requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+        for (const deltaX of [...fingers, ...glide]) {
+          target.dispatchEvent(
+            new WheelEvent('wheel', {
+              deltaX,
+              deltaMode: 0,
+              clientX: box.x + box.width / 2,
+              clientY: box.y + box.height / 2,
+              bubbles: true,
+              cancelable: true,
+            }),
+          );
+          await wait(every);
+        }
+        const sent = lefts.length,
+          stage = slide.closest('.carousel-stage');
+        while (stage.classList.contains('swiping')) await wait(16);
+        done = true;
+        return { lefts, sent };
+      },
+      { fingers, glide, every, x },
+    );
+  // A slow touchpad swipe follows the fingers however slowly they move, with pauses between
+  // events, and settles on the nearest run when they lift still.
+  {
+    await settled();
+    // About 0.3 px/ms in uneven steps, 1.6 runs in all.
+    const steps = Array.from(
+        { length: 60 },
+        (_, index) => ([3, 5, 2, 6, 4][index % 5] * scrub * 1.6) / 240,
+      ),
+      moved = steps.reduce((sum, step) => sum + step, 0),
+      { lefts: xs } = await touchpad(steps, [], 45, true);
+    // The first run moves left with the fingers, never back while they move.
+    const tracked = new Set(xs).size,
+      far = xs.indexOf(Math.min(...xs));
+    assert.ok(tracked > 20, 'follows the fingers: ' + xs);
+    for (let index = 1; index < far; index++)
+      assert.ok(xs[index] <= xs[index - 1] + 0.01, 'never back while moving: ' + xs);
+    assert.ok(Math.abs(moved / scrub - 1.6) < 1e-9);
+    await expect(slide).toHaveAttribute('aria-label', '3 of 40: Run 37');
+    await settled();
+    await slide.focus();
+    await page.keyboard.press('Home');
+    await expect(slide).toHaveAttribute('aria-label', '1 of 40: Run 39');
+    await settled();
+  }
+  // A touchpad swipe past the first run stretches; once the fingers lift, the glide's first
+  // events hand over to the spring, which takes the run back in one motion, and the rest of
+  // the glide does not drag again.
+  {
+    const left = () => slide.evaluate((el) => parseFloat(el.style.left)),
+      atRest = await left(),
+      glide = Array.from({ length: 30 }, (_, index) => -40 * 0.88 ** (index + 1)),
+      { lefts, sent } = await touchpad(Array(8).fill(-40), glide);
+    const peak = Math.max(...lefts),
+      top = lefts.indexOf(peak);
+    assert.ok(peak > atRest, 'stretched: ' + [atRest, peak]);
+    // The spring takes over while the glide still sends events.
+    const back = lefts.findIndex((value, index) => index > top && value < peak - 1);
+    assert.ok(back > 0 && back < sent - 5, 'takes over from the glide: ' + [back, sent]);
+    for (let index = top + 1; index < lefts.length; index++)
+      assert.ok(lefts[index] <= lefts[index - 1] + 0.01, 'one motion back: ' + lefts);
+    await expect(slide).toHaveAttribute('aria-label', '1 of 40: Run 39');
+    await settled();
+    assert.equal(await left(), atRest);
+  }
+  await carousel.getByRole('tab', { name: 'Run 36', exact: true }).click();
   await expect(slide).toHaveAttribute('aria-label', '4 of 40: Run 36');
   // Pinning a run moves it first; the current run stays shown at its new position.
   await page.locator('.run-row').filter({ hasText: 'Run 30' }).hover();
@@ -372,7 +640,9 @@ try {
   // Reload keeps the layout but not the position.
   await page.reload();
   await expect(slide).toHaveAttribute('aria-label', /^1 of 40: /);
-  checks.push('Coverflow moves by buttons, keys, strip and swipe, and keeps its run across pins');
+  checks.push(
+    'Coverflow moves by buttons, keys, strip, touch drags and touchpad scrolls, and keeps its run across pins',
+  );
 
   // A very wide panel shows as many neighbors as its width holds, more than three on each
   // side; only those and one hidden beyond each edge have elements, all sparklines, and the

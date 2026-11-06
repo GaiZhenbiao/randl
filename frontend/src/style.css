@@ -1427,6 +1427,22 @@ aside {
   position: relative;
   min-width: 0;
 }
+/* A section's pages side by side while a swipe moves between them (gap: pageGap). */
+.section-track {
+  display: flex;
+  align-items: flex-start;
+  gap: 32px;
+}
+.section-track > .charts {
+  flex: 0 0 100%;
+}
+.section-grid.swiping {
+  overflow-x: clip;
+}
+/* Horizontal touch drags on a section with pages are its own; vertical ones scroll. */
+.section-grid.pageable {
+  touch-action: pan-y;
+}
 .panel-corner {
   position: absolute;
   right: 0;
@@ -5141,8 +5157,8 @@ aside {
 }
 /* Transparent images sit on a checkerboard of the theme's layers. */
 .media-checker {
-  background: repeating-conic-gradient(var(--cds-ui-01) 0 25%, var(--cds-ui-02) 0 50%) 0 0 /
-    16px 16px;
+  background: repeating-conic-gradient(var(--cds-ui-01) 0 25%, var(--cds-ui-02) 0 50%) 0 0 / 16px
+    16px;
 }
 .media-missing {
   border: 1px dashed var(--cds-border-strong);
@@ -5239,7 +5255,9 @@ aside {
 .carousel-slide {
   transition-property: transform, transform-origin, left, top, width, height, opacity;
 }
-.carousel-instant .carousel-item {
+/* A swipe moves the items itself, frame by frame. */
+.carousel-instant .carousel-item,
+.carousel-stage.swiping .carousel-item {
   transition: none;
 }
 @media (prefers-reduced-motion: reduce) {
@@ -5282,10 +5300,29 @@ aside {
 .carousel-next {
   right: 0;
 }
-@media (pointer: coarse) {
-  .carousel-move {
-    min-width: 44px;
-    min-height: 44px;
+/* The previous and next buttons show to a mouse over the stage or to the keyboard; after a
+   touch or touchpad gesture they stay hidden until the mouse moves, and without a hovering
+   pointer, as on a touchscreen, they do not show. */
+.carousel .carousel-move {
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+@media (hover: hover) {
+  .carousel-stage:hover .carousel-move {
+    opacity: 1;
+  }
+}
+.carousel .carousel-move:focus-visible {
+  opacity: 1;
+}
+/* Hidden buttons take no taps, so a swipe or tap over them reaches the stage. */
+.carousel .carousel-stage.swipe-gesture .carousel-move {
+  opacity: 0;
+  pointer-events: none;
+}
+@media (hover: none) {
+  .carousel .carousel-move {
+    pointer-events: none;
   }
 }
 /* Chart neighbors: the caption and a sparkline on the panel's layer. */

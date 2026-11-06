@@ -5,12 +5,7 @@
   import Settings from 'carbon-icons-svelte/lib/Settings.svelte';
   import { tick, untrack, type Snippet } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
-  import {
-    Button,
-    OverflowMenu,
-    OverflowMenuItem,
-    TextInput,
-  } from 'carbon-components-svelte';
+  import { Button, OverflowMenu, OverflowMenuItem, TextInput } from 'carbon-components-svelte';
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import ChevronDown from 'carbon-icons-svelte/lib/ChevronDown.svelte';
   import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
@@ -18,6 +13,7 @@
   import PanelCard from './Panel.svelte';
   import PanelTools from './PanelTools.svelte';
   import { columnLimit, columnsFor, cardWidth } from './section-layout';
+  import { Swipe } from './swipe';
   import type { Run, View, Panel, Plugin, PlotSettings, SectionLayout, Section } from './types';
   import { resolvePlotSettings } from './plot-settings';
   let {
@@ -168,6 +164,53 @@
         (!search && !hiddenPattern) || panels.some((panel) => panelSection(panel) === section.id),
     ),
   );
+  // Swiping between a section's pages: touch drags and touchpad scrolls move the pages with the
+  // finger, the page beside the current one mounted while it shows, and settle on a page.
+  const pageGap = 32;
+  let swipePages = $state<Record<string, number[]>>({});
+  function pager(node: HTMLElement, params: { id: string; pages: number; page: number }) {
+    let current = params,
+      chosen = -1;
+    const unit = () => node.clientWidth + pageGap,
+      swipe = new Swipe(node, {
+        count: () => current.pages,
+        index: () => current.page,
+        unit,
+        show: (position) => {
+          const id = current.id,
+            track = node.querySelector<HTMLElement>('.section-track');
+          if (position === undefined) {
+            const { [id]: _, ...rest } = swipePages;
+            swipePages = rest;
+            track?.style.removeProperty('transform');
+            return;
+          }
+          const first = Math.max(0, Math.min(current.pages - 1, Math.floor(position))),
+            shown = position > first && first + 1 < current.pages ? [first, first + 1] : [first];
+          if (swipePages[id]?.join() !== shown.join()) swipePages = { ...swipePages, [id]: shown };
+          if (track) track.style.transform = `translateX(${-(position - first) * unit()}px)`;
+        },
+        choose: (index) => {
+          chosen = index;
+          pageBySection = { ...pageBySection, [current.id]: index };
+        },
+      });
+    return {
+      update(next: typeof params) {
+        // The page buttons, a resize or a reorder changing the page during a swipe end it.
+        if (swipe.active && next.page !== current.page && next.page !== chosen) {
+          swipe.stop();
+          const { [next.id]: _, ...rest } = swipePages;
+          swipePages = rest;
+          node.querySelector<HTMLElement>('.section-track')?.style.removeProperty('transform');
+        }
+        current = next;
+      },
+      destroy() {
+        swipe.destroy();
+      },
+    };
+  }
   function measure(node: HTMLElement, id: string) {
     const observer = new ResizeObserver(() => {
       const next = Math.round(node.clientWidth);
@@ -398,12 +441,7 @@
         control.scrollIntoView({ block: 'nearest' });
     });
   }
-  function startReorder(
-    event: PointerEvent,
-    kind: 'panel' | 'section',
-    id: string,
-    label: string,
-  ) {
+  function startReorder(event: PointerEvent, kind: 'panel' | 'section', id: string, label: string) {
     if (event.button !== 0 || !view) return;
     const pressed = (event.currentTarget as HTMLElement).classList.contains(
       kind === 'panel' ? 'panel-drag-handle' : 'section-drag-handle',
@@ -741,11 +779,8 @@
   >
     <Draggable size={16} /><span>{reorder.label}</span>
   </div>{/if}
-<span id="row-resize-help" class="bx--visually-hidden"
-  >{$t('workspace.instructions.rows')}</span
->
-<span id="panel-resize-help" class="bx--visually-hidden"
-  >{$t('workspace.instructions.resize')}</span
+<span id="row-resize-help" class="bx--visually-hidden">{$t('workspace.instructions.rows')}</span>
+<span id="panel-resize-help" class="bx--visually-hidden">{$t('workspace.instructions.resize')}</span
 >
 
 <svelte:window
@@ -799,7 +834,8 @@
         >{$t('common.search.clear')}</Button
       >{:else if hiddenPattern}<Button kind="tertiary" size="small" on:click={() => onDefaults()}
         >{$t('workspace.empty.editFilter')}</Button
-      >{:else if hasRuns}<Button size="small" on:click={() => onAdd()}>{$t('workspace.addPanel')}</Button
+      >{:else if hasRuns}<Button size="small" on:click={() => onAdd()}
+        >{$t('workspace.addPanel')}</Button
       >{:else}<p>{$t('projects.emptyText')}</p>
       <Button size="small" on:click={onConnect}>{$t('connect.title')}</Button>{/if}
   </section>{/if}
@@ -827,9 +863,12 @@
           title={$t(section.collapsed ? 'workspace.section.expand' : 'workspace.section.collapse', {
             name: section.name,
           })}
-          aria-label={$t(section.collapsed ? 'workspace.section.expand' : 'workspace.section.collapse', {
-            name: section.name,
-          })}
+          aria-label={$t(
+            section.collapsed ? 'workspace.section.expand' : 'workspace.section.collapse',
+            {
+              name: section.name,
+            },
+          )}
           onclick={() => onSection('collapse', section.id)}
           >{#if section.collapsed}<ChevronRight size={16} />{:else}<ChevronDown
               size={16}
@@ -975,58 +1014,69 @@
         >
       </div>
     </div>
-    {#if !section.collapsed}<div class="section-grid" use:measure={section.id}>
-        <div
-          class="charts"
-          style:grid-template-columns={'repeat(' + g.columns + ', minmax(0,1fr))'}
-        >
-          {#each content.slice(page * size, (page + 1) * size) as panel (panel.id)}<div
-              class="panel-slot"
+    {#if !section.collapsed}<div
+        class="section-grid"
+        class:pageable={content.length > size}
+        use:measure={section.id}
+        use:pager={{ id: section.id, pages: Math.ceil(content.length / size), page }}
+      >
+        <div class="section-track">
+          {#each swipePages[section.id] ?? [page] as shownPage (shownPage)}<div
+              class="charts"
+              style:grid-template-columns={'repeat(' + g.columns + ', minmax(0,1fr))'}
+              aria-hidden={shownPage === page ? undefined : 'true'}
+              inert={shownPage !== page}
             >
-              <PanelCard
-                panel={{
-                  ...panel,
-                  settings: resolvePlotSettings(
-                    [
-                      { scope: 'workspace', settings: view?.body.plotSettings },
-                      { scope: 'section', settings: view?.body.sectionSettings?.[section.id] },
-                      { scope: 'panel', settings: panel.settings },
-                    ],
-                    plugins.filter((p) => p.id === panel.plugin),
-                    plugins.find((p) => p.id === panel.plugin)?.settings.defaults,
-                  ).settings,
-                }}
-                resizeLabel={{
-                  key: 'workspace.section.resizeLabel',
-                  values: { name: section.name, count: g.columns, height: g.height },
-                }}
-                emptySelectionText={noMatchingRuns
-                  ? 'runs.empty.noMatches'
-                  : 'panel.empty.noVisibleRuns'}
-                height={g.height}
-                {runs}
-                {colors}
-                pinned={view?.body.pinned || []}
-                plugin={plugins.find((p) => p.id === panel.plugin)}
-                {dark}
-                onedit={() => onEdit(panel)}
-                onsettings={(settings) => onPanelSettings(panel.id, settings)}
-                session={{
-                  section: view!.id + ':' + section.id,
-                  panel: view!.id + ':' + panel.id,
-                }}
-                onremove={() => removePanel(panel)}
-                onduplicate={() => onDuplicate(panel)}
-                columns={g.columns}
-                position={content.indexOf(panel)}
-                count={content.length}
-                onmove={(direction, keyboard) => moveWithinSection(panel, direction, keyboard)}
-                onresizestart={(event) => startResize(event, section.id, 'panel')}
-                onresizekey={(event) => keyResize(event, section.id, 'panel')}
-                onreorderstart={(event) =>
-                  startReorder(event, 'panel', panel.id, panel.title || panel.metric)}
-                reordering={reorder?.kind === 'panel' && reorder.id === panel.id && reorder.active}
-              />
+              {#each content.slice(shownPage * size, (shownPage + 1) * size) as panel (panel.id)}<div
+                  class="panel-slot"
+                >
+                  <PanelCard
+                    panel={{
+                      ...panel,
+                      settings: resolvePlotSettings(
+                        [
+                          { scope: 'workspace', settings: view?.body.plotSettings },
+                          { scope: 'section', settings: view?.body.sectionSettings?.[section.id] },
+                          { scope: 'panel', settings: panel.settings },
+                        ],
+                        plugins.filter((p) => p.id === panel.plugin),
+                        plugins.find((p) => p.id === panel.plugin)?.settings.defaults,
+                      ).settings,
+                    }}
+                    resizeLabel={{
+                      key: 'workspace.section.resizeLabel',
+                      values: { name: section.name, count: g.columns, height: g.height },
+                    }}
+                    emptySelectionText={noMatchingRuns
+                      ? 'runs.empty.noMatches'
+                      : 'panel.empty.noVisibleRuns'}
+                    height={g.height}
+                    {runs}
+                    {colors}
+                    pinned={view?.body.pinned || []}
+                    plugin={plugins.find((p) => p.id === panel.plugin)}
+                    {dark}
+                    onedit={() => onEdit(panel)}
+                    onsettings={(settings) => onPanelSettings(panel.id, settings)}
+                    session={{
+                      section: view!.id + ':' + section.id,
+                      panel: view!.id + ':' + panel.id,
+                    }}
+                    onremove={() => removePanel(panel)}
+                    onduplicate={() => onDuplicate(panel)}
+                    columns={g.columns}
+                    position={content.indexOf(panel)}
+                    count={content.length}
+                    onmove={(direction, keyboard) => moveWithinSection(panel, direction, keyboard)}
+                    onresizestart={(event) => startResize(event, section.id, 'panel')}
+                    onresizekey={(event) => keyResize(event, section.id, 'panel')}
+                    onreorderstart={(event) =>
+                      startReorder(event, 'panel', panel.id, panel.title || panel.metric)}
+                    reordering={reorder?.kind === 'panel' &&
+                      reorder.id === panel.id &&
+                      reorder.active}
+                  />
+                </div>{/each}
             </div>{/each}
         </div>
         {#if !content.length}<button class="empty-section" onclick={() => onAdd(section.id)}

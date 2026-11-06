@@ -19,6 +19,7 @@
     "test:resources": "node tests/resources.mjs",
     "test:media": "node tests/media-browser.mjs",
     "test:display": "node tests/display-layout-browser.mjs",
+    "test:swipe": "node tests/swipe-browser.mjs",
     "test:sdk": "npm run build -w backend && node tests/sdk-gate.mjs",
     "test:charts": "node tests/charts-browser.mjs && node tests/plot-hover-browser.mjs && node tests/area-hover-browser.mjs && node tests/hover-updates-browser.mjs && node tests/focused-run-browser.mjs && node tests/grouped-charts-browser.mjs",
     "test:scroll-cache": "node tests/scroll-cache-browser.mjs",

@@ -3,6 +3,8 @@
 // in Finder's icon view. Only rows that intersect the viewport, plus one row above and below,
 // are mounted; the rest are space of their computed height, so the scrollbar stays accurate.
 
+import { Swipe } from '../swipe';
+
 export const tileGap = 8;
 
 /** Columns that fit `size`-wide tiles, and the tile width that fills the row. */
@@ -603,13 +605,43 @@ export function flowLayout(
   return items;
 }
 /**
+ * The layout between two whole positions, for a drag that is `t` of the way from the layout
+ * `from` to `to` (beyond 0 or 1 past an end): each item's box and transform move linearly,
+ * as the moving transition moves them, and items stack by their distance from `position`.
+ * An item one layout does not place keeps the other's place, hidden unless both show it.
+ */
+export function flowBlend(
+  from: Map<number, FlowItem>,
+  to: Map<number, FlowItem>,
+  t: number,
+  position: number,
+) {
+  const items = new Map<number, FlowItem>(),
+    mix = (a: number, b: number) => a + (b - a) * t,
+    keys = ['left', 'top', 'width', 'height', 'originY', 'x', 'z', 'rotate', 'scale'] as const;
+  for (const index of new Set([...from.keys(), ...to.keys()])) {
+    const a = from.get(index) ?? to.get(index)!,
+      b = to.get(index) ?? a,
+      item = { ...a };
+    for (const key of keys) item[key] = mix(a[key], b[key]);
+    item.perspective = b.perspective;
+    item.order = -Math.round(Math.abs(index - position) * 16);
+    item.hidden = (from.get(index)?.hidden ?? true) && (to.get(index)?.hidden ?? true);
+    items.set(index, item);
+  }
+  return items;
+}
+/**
  * A Cover Flow carousel of one item at a time (WAI-ARIA carousel): the current item large in
  * the middle, its neighbors turned in 3D and partly hidden on each side, previous and next
  * buttons, and below a tab list of the items or of `tabs` that choose the items. Items keep
  * their element while they are shown, so moving animates them into place with transforms
  * only. It never rotates by itself. Left and Right on the current item move one item, Home and
- * End to the ends, a click on a neighbor shows it, and a horizontal swipe on the stage moves
- * one item; on the tab list the same keys move between tabs.
+ * End to the ends, and a click on a neighbor shows it. On the stage, touch drags and touchpad
+ * scrolls swipe between the items (`Swipe`), which move continuously between two layouts
+ * (`flowBlend`), the current item at the finger's pace. The previous and next buttons show
+ * to a mouse over the stage, not after a touch or touchpad gesture. On the tab list the same
+ * keys move between tabs.
  */
 export class Carousel {
   readonly region = document.createElement('div');
@@ -624,7 +656,8 @@ export class Carousel {
   private count = 0;
   private stageShows = -1;
   private observer: ResizeObserver;
-  private swipe: { x: number; y: number; id: number } | undefined;
+  /** Touch and touchpad swiping between the items. */
+  private swipe: Swipe;
   private icons: (() => void)[] = [];
   private reduced = matchMedia('(prefers-reduced-motion: reduce)');
   private frame = 0;
@@ -663,9 +696,17 @@ export class Carousel {
     this.region.append(this.stage, this.strip);
     host.append(this.region);
     this.region.addEventListener('keydown', this.keydown);
-    this.stage.addEventListener('pointerdown', this.pointerdown);
-    this.stage.addEventListener('pointerup', this.pointerup);
-    this.stage.addEventListener('pointercancel', () => (this.swipe = undefined));
+    this.swipe = new Swipe(this.stage, {
+      count: () => this.count,
+      index: () => this.index,
+      unit: () => this.scrub(),
+      // The items show between two layouts; at rest they take their place at once.
+      show: (position) => this.render(false, position === undefined),
+      choose: (index) => {
+        this.index = index;
+        this.hooks.change?.(index);
+      },
+    });
     // A new stage size places the items without animating them.
     this.observer = new ResizeObserver(() => this.render(false, true));
     this.observer.observe(this.stage);
@@ -692,6 +733,12 @@ export class Carousel {
   }
   go(index: number) {
     const next = Math.max(0, Math.min(this.count - 1, index));
+    // A key or button during a swipe ends it; the items move on from where they show.
+    if (this.swipe.active) {
+      this.swipe.stop();
+      void this.stage.offsetWidth;
+      if (next === this.index) return this.render(false);
+    }
     if (next === this.index) return;
     this.index = next;
     this.render(false);
@@ -715,25 +762,63 @@ export class Carousel {
     }
     return element;
   }
+  /** The layout with `index` current. */
+  private flow(index: number) {
+    return flowLayout(
+      this.stage.clientWidth,
+      this.stage.clientHeight,
+      index,
+      this.count,
+      (item) => this.hooks.aspect?.(item),
+      this.options.footer,
+      this.reduced.matches,
+    );
+  }
+  /**
+   * The layout at a swipe's `position` between two items. Past the first or last item, that
+   * item's layout slides along as a whole, as a rubber band stretches.
+   */
+  private between(position: number) {
+    const last = this.count - 1;
+    if (position < 0 || position > last) {
+      const end = position < 0 ? 0 : last,
+        layout = this.flow(end),
+        shift = (end - position) * this.scrub();
+      for (const item of layout.values()) item.left += shift;
+      return layout;
+    }
+    const from = Math.max(0, Math.min(this.count - 2, Math.floor(position))),
+      t = position - from;
+    if (t === 0) return this.flow(from);
+    if (t === 1) return this.flow(from + 1);
+    return flowBlend(this.flow(from), this.flow(from + 1), t, position);
+  }
+  /**
+   * The drag distance that moves the items by one: how far the current item moves on screen to
+   * its neighbor's place, so it keeps pace with the finger.
+   */
+  private scrub() {
+    const layout = this.flow(this.index),
+      center = layout.get(this.index),
+      neighbor = layout.get(this.index + 1) ?? layout.get(this.index - 1);
+    if (!center || !neighbor) return Math.max(48, this.stage.clientWidth / 4);
+    // The neighbor's middle as seen from the vanishing point, `perspective` in front of it.
+    const seen =
+      Math.abs(neighbor.x) * (neighbor.perspective / (neighbor.perspective - neighbor.z));
+    return Math.max(48, seen);
+  }
   private render(refresh: boolean, instant = false) {
-    const width = this.stage.clientWidth,
-      height = this.stage.clientHeight,
-      flat = this.reduced.matches,
+    const flat = this.reduced.matches,
       focused =
         this.stageShows >= 0 && this.items.get(this.stageShows)?.contains(document.activeElement);
     this.previous.disabled = this.index <= 0;
     this.next.disabled = this.index >= this.count - 1;
-    const layout = this.count
-      ? flowLayout(
-          width,
-          height,
-          this.index,
-          this.count,
-          (index) => this.hooks.aspect?.(index),
-          this.options.footer,
-          flat,
-        )
-      : new Map<number, FlowItem>();
+    const dragging = this.swipe.active,
+      layout = !this.count
+        ? new Map<number, FlowItem>()
+        : dragging
+          ? this.between(this.swipe.position!)
+          : this.flow(this.index);
     // A new stage size or motion preference places the items without animating them. Other
     // renders, including those for an aspect learned while the items move, retarget the
     // running transitions, so moving always animates.
@@ -769,12 +854,17 @@ export class Carousel {
       const added = !this.items.has(index),
         element = this.item(index),
         current = index === this.index;
-      if (current && this.stageShows !== index) {
+      // While a swipe moves the items, an item that becomes current keeps its preview; it gets
+      // its live content once they come to rest.
+      if (current && this.stageShows !== index && !dragging) {
         if (element.firstChild) this.hooks.unpeek?.(index, element);
         element.replaceChildren();
         this.stageShows = index;
         this.hooks.stage(index, element);
-      } else if (!current && (added || refresh || !element.firstChild)) {
+      } else if (
+        (!current || this.stageShows !== index) &&
+        (added || refresh || !element.firstChild)
+      ) {
         // New neighbors, the item that was current, and every neighbor after new data.
         if (element.firstChild) this.hooks.unpeek?.(index, element);
         element.replaceChildren();
@@ -808,7 +898,8 @@ export class Carousel {
       // The current item ends without a transform, so its content (a chart's popups, a
       // video's full screen) behaves as it would outside the carousel. While it turns to face
       // the viewer it keeps the neighbors' kind of transform, so the two interpolate alike.
-      const settled = current && (still || added || element.style.transform === 'none');
+      const settled =
+        current && !dragging && (still || added || element.style.transform === 'none');
       element.style.transform = settled
         ? 'none'
         : `perspective(${place.perspective}px) translate3d(${place.x}px, 0px, ${place.z}px) rotateY(${place.rotate}deg) scale(${place.scale})`;
@@ -825,7 +916,7 @@ export class Carousel {
     }
     clearTimeout(this.settle);
     const shown = this.items.get(this.index);
-    if (shown && shown.style.transform !== 'none')
+    if (shown && !dragging && shown.style.transform !== 'none')
       this.settle = window.setTimeout(() => {
         if (this.items.get(this.index) !== shown) return;
         shown.style.transition = 'none';
@@ -911,20 +1002,6 @@ export class Carousel {
     if (fromChip) this.choose(next);
     else this.go(next);
   };
-  private pointerdown = (event: PointerEvent) => {
-    if (event.pointerType === 'touch')
-      this.swipe = { x: event.clientX, y: event.clientY, id: event.pointerId };
-  };
-  // A horizontal swipe of more than 40 px, within 30° of horizontal, moves one item.
-  private pointerup = (event: PointerEvent) => {
-    const start = this.swipe;
-    this.swipe = undefined;
-    if (!start || start.id !== event.pointerId) return;
-    const dx = event.clientX - start.x,
-      dy = event.clientY - start.y;
-    if (Math.abs(dx) > 40 && Math.abs(dy) <= Math.abs(dx) * Math.tan(Math.PI / 6))
-      this.go(this.index + (dx < 0 ? 1 : -1));
-  };
   /** The element showing the current item. */
   get current() {
     return this.items.get(this.index) ?? this.stage;
@@ -934,6 +1011,7 @@ export class Carousel {
     this.reduced.removeEventListener('change', this.motion);
     cancelAnimationFrame(this.frame);
     clearTimeout(this.settle);
+    this.swipe.destroy();
     for (const [index, element] of this.items)
       if (index === this.stageShows) this.hooks.release(index, element);
       else this.hooks.unpeek?.(index, element);

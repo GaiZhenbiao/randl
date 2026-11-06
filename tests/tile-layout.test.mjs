@@ -2,12 +2,30 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
-const js = ts.transpileModule(
-  await readFile(new URL('../frontend/src/plugins/tile-view.ts', import.meta.url), 'utf8'),
-  { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
-).outputText;
-const { gridGeometry, layoutRows, windowRows, fitSize, moveIndex, flowLayout, flowBound } =
-  await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
+const module = async (name, replace = (code) => code) =>
+  'data:text/javascript;base64,' +
+  Buffer.from(
+    replace(
+      ts.transpileModule(
+        await readFile(new URL('../frontend/src/' + name, import.meta.url), 'utf8'),
+        { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } },
+      ).outputText,
+    ),
+  ).toString('base64');
+const swipe = await module('swipe.ts', (code) =>
+  code.replace("'wheel-gestures'", `'${import.meta.resolve('wheel-gestures')}'`),
+);
+const js = await module('plugins/tile-view.ts', (code) => code.replace("'../swipe'", `'${swipe}'`));
+const {
+  gridGeometry,
+  layoutRows,
+  windowRows,
+  fitSize,
+  moveIndex,
+  flowLayout,
+  flowBound,
+  flowBlend,
+} = await import(js);
 
 test('columns follow the width for a fixed item size, and tiles stretch to fill', () => {
   assert.deepEqual(gridGeometry(1000, 240), { columns: 4, width: 244 });
@@ -269,5 +287,31 @@ test('Cover Flow shows as many neighbors as the width holds, within a bound', ()
       .filter(([at, item]) => at > 500 && !item.hidden)
       .map(([, item]) => Math.min(...corners(item, 3200).map(([x]) => x)));
     for (let i = 1; i < inner.length; i++) assert.ok(inner[i] - inner[i - 1] >= 12 - 1e-6);
+  }
+});
+
+test('a drag shows the layout between two items, moving each item linearly', () => {
+  const aspect = () => 4 / 3,
+    from = flowLayout(1200, 400, 2, 6, aspect),
+    to = flowLayout(1200, 400, 3, 6, aspect),
+    half = flowBlend(from, to, 0.5, 2.5);
+  // The leaving item turns halfway toward its neighbor's place as the next comes in.
+  assert.equal(half.get(2).x, (from.get(2).x + to.get(2).x) / 2);
+  assert.equal(half.get(2).rotate, to.get(2).rotate / 2);
+  assert.equal(half.get(3).rotate, from.get(3).rotate / 2);
+  assert.equal(half.get(3).left, (from.get(3).left + to.get(3).left) / 2);
+  // At its ends the blend is the layout itself.
+  for (const [index, item] of flowBlend(from, to, 0, 2))
+    if (from.has(index)) assert.equal(item.x, from.get(index).x);
+  // Items nearer the position stack above farther ones.
+  assert.ok(half.get(2).order === half.get(3).order);
+  assert.ok(
+    flowBlend(from, to, 0.3, 2.3).get(2).order > flowBlend(from, to, 0.3, 2.3).get(3).order,
+  );
+  // An item one layout does not place keeps the other's place, hidden unless both show it.
+  for (const [index, item] of half) {
+    const a = from.get(index),
+      b = to.get(index);
+    if (!a || !b) assert.equal(item.hidden, (a ?? b).hidden);
   }
 });
