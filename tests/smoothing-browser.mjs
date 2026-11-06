@@ -158,6 +158,76 @@ try {
     })
     .toMatchObject({ smoothingMethod: 'twema', smoothingValue: 0.9 });
   checks.push('editor ranges and defaults per method; a chosen value returns when switching back');
+
+  // A downsampled skewed metric (about 0.59, and 1–6 in one row of twenty) is smoothed from
+  // its bucket means, so the line sits at the data's mean; the original trace keeps spikes.
+  const skewed = await server.db.call('upsert', {
+    entity: 'test',
+    project: 'skewed',
+    name: 'skewed',
+    displayName: 'Skewed run',
+  });
+  let seed = 7;
+  const next = () => (seed = (seed * 1664525 + 1013904223) % 2 ** 32) / 2 ** 32;
+  const skewedRows = Array.from({ length: 20_000 }, (_, i) => ({
+    _step: i,
+    seconds: next() < 0.05 ? 1 + 5 * next() : 0.58 + 0.02 * next(),
+  }));
+  await server.db.call('ingest', skewed.id, {
+    files: {
+      'wandb-history.jsonl': { offset: 0, content: skewedRows.map((row) => JSON.stringify(row)) },
+    },
+    complete: true,
+  });
+  const skewedView = await server.tools.execute('view_create', {
+    project: 'test/skewed',
+    name: 'Skewed',
+    body: {
+      generation: 'manual',
+      panels: [
+        {
+          id: 'skewed-ema',
+          plugin: 'line',
+          metric: 'seconds',
+          metrics: ['seconds'],
+          title: 'Skewed',
+          section: 'skewed',
+          settings: { smoothingMethod: 'ema', smoothingValue: 0.95, showOriginal: true },
+        },
+      ],
+      sections: [{ id: 'skewed', name: 'skewed' }],
+      sectionLayouts: { skewed: { width: 340, height: 240, rows: 1 } },
+      visible: [skewed.id],
+      solo: [],
+    },
+  });
+  await page.goto(base + '/test/skewed/workspace?view=' + skewedView.id);
+  const skewedChart = page.locator('[data-panel-id="skewed-ema"] [_echarts_instance_]');
+  await expect(skewedChart.locator('canvas').first()).toBeVisible();
+  const drawn = await skewedChart.evaluate(async (host) => {
+    const url = performance
+      .getEntriesByType('resource')
+      .map((e) => e.name)
+      .find((n) => /\/assets\/engine-[^/]+\.js/.test(n));
+    const mod = await import(url),
+      series = Object.values(mod)
+        .find((v) => v?.getInstanceByDom)
+        .getInstanceByDom(host)
+        .getOption().series;
+    return {
+      smoothed: series.find((s) => s.randlKey).data,
+      original: series.find((s) => !s.randlKey && s.silent).data,
+    };
+  });
+  const truth = skewedRows.slice(10_000).reduce((sum, row) => sum + row.seconds, 0) / 10_000;
+  const tail = drawn.smoothed.slice(Math.floor(drawn.smoothed.length / 2)),
+    level = tail.reduce((sum, p) => sum + p[1], 0) / tail.length;
+  assert.ok(drawn.smoothed.length < drawn.original.length, 'smoothed from bucket means');
+  assert.ok(Math.abs(level / truth - 1) < 0.05, `smoothed ${level} vs mean ${truth}`);
+  assert.ok(Math.max(...drawn.original.map((p) => p[1])) > 5, 'original trace keeps spikes');
+  checks.push(
+    `a downsampled skewed metric smooths to its mean (${level.toFixed(3)} vs ${truth.toFixed(3)})`,
+  );
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks, roughnessRatios: results, errors }, null, 2));
 } catch (error) {

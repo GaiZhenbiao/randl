@@ -36,6 +36,23 @@ export function smoothingSpacing(series: Point[][]) {
   }
   return hi > lo && count > 1 ? (hi - lo) / (count - 1) : 1;
 }
+// The points a series' metric is smoothed from: its bucket means when the response was
+// downsampled, otherwise its points. Downsampled points are each bucket's minimum and
+// maximum; smoothing them would follow the midpoint of the extremes, not the data's level.
+// Without smoothing (no method, or a zero amount), the points themselves are drawn, so
+// spikes stay visible.
+export function smoothingSource(
+  series: { values: Record<string, Point[]>; means?: Record<string, Point[]> },
+  metric: string,
+  method: Smoothing,
+  amount: number,
+): Point[] {
+  return (
+    (method === 'none' || !(amount > 0) ? undefined : series.means?.[metric]) ??
+    series.values[metric] ??
+    []
+  );
+}
 function calculateSmooth(
   points: Point[],
   method: Smoothing,

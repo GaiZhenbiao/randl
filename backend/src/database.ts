@@ -1609,16 +1609,13 @@ export class Store {
         plan.settings,
         work,
       );
-      series.push({
-        id,
-        name: plan.names[id],
-        values: Object.fromEntries(
-          plan.metrics.map((m: string) => {
-            const points = run.values[m] || [];
-            return [m, plan.width === null ? points : decimate(points, plan.width)];
-          }),
+      series.push(
+        sampledSeries(
+          id,
+          plan.names[id],
+          plan.metrics.map((m: string) => [m, sampleSeries(run.values[m] || [], plan.width)]),
         ),
-      });
+      );
       yield;
     }
     return series;
@@ -1683,22 +1680,22 @@ export class Store {
     ids: string[],
   ) {
     const source = [plan.settings.xAxis, plan.settings.xMin, plan.settings.xMax];
-    return ids.map((id) => ({
-      id,
-      name: plan.names[id],
-      values: Object.fromEntries(
+    return ids.map((id) =>
+      sampledSeries(
+        id,
+        plan.names[id],
         plan.metrics.map((m, j) => [
           m,
           plan.counts[id][j]
             ? this.remembered(
                 JSON.stringify(['series', id, plan.revisions[id], m, source, plan.width]),
-                () => this.series(id, m, plan.width, plan.settings),
-                (points) => points.length * 48,
+                () => sampleSeries(this.points(id, m, plan.settings), plan.width),
+                (sampled) => (sampled.points.length + (sampled.means?.length ?? 0)) * 48,
               )
-            : [],
+            : { points: [] },
         ]),
       ),
-    }));
+    );
   }
 
   projects() { return this.projectStore.list(); }
@@ -2052,6 +2049,54 @@ export function decimate(points: number[][], width: number) {
   }
   flush();
   return [...keep].sort((a, b) => a - b).map((i) => points[i]);
+}
+
+// The mean of each aligned bucket, placed at the bucket's last X as grouped charts place
+// their points. Smoothing uses them: the minima and maxima `decimate` keeps describe a
+// bucket's range, not its level, so smoothing those samples follows the midpoint of a
+// skewed bucket's extremes. Undefined when no bucket holds more than one point, since the
+// means would then equal the points. Points must be ordered by X.
+export function bucketMeans(points: number[][], width: number) {
+  const means: number[][] = [];
+  let bucket = NaN,
+    count = 0,
+    merged = false;
+  for (const point of points) {
+    const next = Math.floor(point[0] / width);
+    if (next !== bucket) {
+      bucket = next;
+      count = 1;
+      means.push([point[0], point[1]]);
+      continue;
+    }
+    merged = true;
+    const mean = means[means.length - 1];
+    count++;
+    mean[0] = point[0];
+    // An incremental mean cannot overflow as a sum of large values can.
+    mean[1] += point[1] / count - mean[1] / count;
+  }
+  return merged ? means : undefined;
+}
+/** A series sampled to a bucket width: its extrema and, unless they equal them, its bucket means. */
+export type SampledSeries = { points: number[][]; means?: number[][] };
+export function sampleSeries(points: number[][], width: number | null): SampledSeries {
+  if (width === null) return { points };
+  const sampled = decimate(points, width),
+    means = bucketMeans(points, width);
+  return means ? { points: sampled, means } : { points: sampled };
+}
+// A response series from sampled metrics; `means` is present only for metrics that have them.
+function sampledSeries(id: string, name: string, metrics: [string, SampledSeries][]): Series {
+  const means = metrics.filter(([, sampled]) => sampled.means);
+  return {
+    id,
+    name,
+    values: Object.fromEntries(metrics.map(([m, sampled]) => [m, sampled.points])),
+    ...(means.length
+      ? { means: Object.fromEntries(means.map(([m, sampled]) => [m, sampled.means!])) }
+      : {}),
+  };
 }
 
 function jsonExtractValue(v: any): any {

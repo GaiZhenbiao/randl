@@ -12,13 +12,16 @@ export function clipChart(data: any, settings: any = {}) {
   if (!Number.isFinite(lo) && !Number.isFinite(hi)) return data;
   const inside = (p: number[]) =>
     (!Number.isFinite(lo) || p[0] >= lo) && (!Number.isFinite(hi) || p[0] <= hi);
+  const clip = (values: Record<string, number[][]>) =>
+    Object.fromEntries(
+      Object.entries(values).map(([metric, points]) => [metric, points.filter(inside)]),
+    );
   return {
     ...data,
     series: (data.series || []).map((s: Series) => ({
       ...s,
-      values: Object.fromEntries(
-        Object.entries(s.values).map(([metric, points]) => [metric, points.filter(inside)]),
-      ),
+      values: clip(s.values),
+      ...(s.means ? { means: clip(s.means) } : {}),
     })),
   };
 }
@@ -43,22 +46,27 @@ export const chartSampled = (
   plan: { metrics: string[]; counts: Record<string, number[]> },
   series: { id: string; values: Record<string, unknown[]> }[],
 ) => series.some((s) => plan.metrics.some((m, j) => plan.counts[s.id][j] > s.values[m].length));
-export type Series = { id: string; values: Record<string, number[][]>; [key: string]: any };
-/** The change that turns `old` into `series`: point patches, a replacement, or null. */
-export function diffSeries(old: Series | undefined, series: Series) {
-  if (!old) return { replace: series };
+export type Series = {
+  id: string;
+  values: Record<string, number[][]>;
+  /** Downsampled metrics: each bucket's mean at its last X, the input to smoothing. */
+  means?: Record<string, number[][]>;
+  [key: string]: any;
+};
+// Point patches per metric that turn `before` into `after`.
+function diffMetrics(before: Record<string, number[][]>, after: Record<string, number[][]>) {
   const metrics: Record<string, any> = {};
-  for (const metric of new Set([...Object.keys(old.values), ...Object.keys(series.values)])) {
-    if (!(metric in series.values)) {
+  for (const metric of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    if (!(metric in after)) {
       metrics[metric] = { delete: true };
       continue;
     }
-    if (!(metric in old.values)) {
-      metrics[metric] = { replace: series.values[metric] };
+    if (!(metric in before)) {
+      metrics[metric] = { replace: after[metric] };
       continue;
     }
-    const a = old.values[metric] || [],
-      b = series.values[metric] || [];
+    const a = before[metric] || [],
+      b = after[metric] || [];
     if (JSON.stringify(a) === JSON.stringify(b)) continue;
     if (
       new Set(a.map((p) => p[0])).size !== a.length ||
@@ -76,10 +84,29 @@ export function diffSeries(old: Series | undefined, series: Series) {
     }
     metrics[metric] = { upsert, remove: [...map.keys()] };
   }
-  const { values: _, ...metadata } = series,
-    { values: __, ...oldMetadata } = old;
-  if (Object.keys(metrics).length || JSON.stringify(metadata) !== JSON.stringify(oldMetadata))
-    return { id: series.id, metadata, metrics };
+  return metrics;
+}
+/**
+ * The change that turns `old` into `series`: point patches of `values` (`metrics`) and of
+ * `means`, a replacement, or null.
+ */
+export function diffSeries(old: Series | undefined, series: Series) {
+  if (!old) return { replace: series };
+  const metrics = diffMetrics(old.values, series.values),
+    means = diffMetrics(old.means || {}, series.means || {});
+  const { values: _, means: __, ...metadata } = series,
+    { values: ___, means: ____, ...oldMetadata } = old;
+  if (
+    Object.keys(metrics).length ||
+    Object.keys(means).length ||
+    JSON.stringify(metadata) !== JSON.stringify(oldMetadata)
+  )
+    return {
+      id: series.id,
+      metadata,
+      metrics,
+      ...(Object.keys(means).length ? { means } : {}),
+    };
   return null;
 }
 export function chartDiff(previous: any, next: any) {

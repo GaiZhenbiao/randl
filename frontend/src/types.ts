@@ -168,6 +168,11 @@ export type ChartData = {
     pending?: boolean;
     /** Read-only shared arrays; copy before transforming. */
     values: Record<string, [number, number][]>;
+    /**
+     * Downsampled series: each bucket's mean at its last X, for metrics whose buckets hold
+     * several points. Smoothing uses these instead of `values` (see smoothingSource).
+     */
+    means?: Record<string, [number, number][]>;
     /** Grouped series: [x, lower, upper, runs aggregated at x] per aggregated point. */
     bands?: Record<string, [number, number, number, number][]>;
   }[];

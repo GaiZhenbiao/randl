@@ -100,6 +100,7 @@ export function chartBytes(data: ChartData | null) {
   for (const series of data.series) {
     bytes += 256;
     for (const points of Object.values(series.values)) bytes += 64 + points.length * 48;
+    for (const points of Object.values(series.means || {})) bytes += 64 + points.length * 48;
     for (const band of Object.values(series.bands || {})) bytes += 64 + band.length * 56;
   }
   return bytes;

@@ -10,6 +10,7 @@ import {
   smooth,
   smoothingAmount,
   smoothingSpacing,
+  smoothingSource,
   type Point,
   type Smoothing,
 } from '../chart-math';
@@ -181,12 +182,13 @@ export function smoothingFor(ctx: PanelContext) {
       : ctx.panel.metrics?.length
         ? ctx.panel.metrics
         : [ctx.panel.metric];
+  const amount = smoothingAmount(method, settings.smoothingValue);
   return {
     method,
-    amount: smoothingAmount(method, settings.smoothingValue),
+    amount,
     spacing: smoothingSpacing(
       ctx.data.series.flatMap((series) =>
-        metrics.map((metric) => (series.values[metric] || []) as Point[]),
+        metrics.map((metric) => smoothingSource(series, metric, method, amount)),
       ),
     ),
   };
@@ -198,8 +200,11 @@ export function lines(ctx: PanelContext, area = false): any[] {
   const result: any[] = [];
   for (const series of ctx.data.series)
     for (const [metric, index] of metrics.map((m, i) => [m, i] as const)) {
+      // The faint original trace keeps the sampled extrema, so spikes stay visible; the
+      // smoothed line and its hover "original" values come from the bucket means.
       const raw = series.values[metric] || [],
-        points = smooth(raw as Point[], method, amount, spacing),
+        source = smoothingSource(series, metric, method, amount),
+        points = smooth(source, method, amount, spacing),
         name = legendName(ctx, series, metric, metrics.length > 1);
       if (settings.showOriginal && method !== 'none')
         result.push({
@@ -248,7 +253,7 @@ export function lines(ctx: PanelContext, area = false): any[] {
       }
       result.push({
         name,
-        randlOriginal: method !== 'none' ? raw : undefined,
+        randlOriginal: method !== 'none' ? source : undefined,
         randlMembers: band,
         randlKey: series.id + ':' + metric,
         randlMetric: metric,

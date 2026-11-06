@@ -1,5 +1,5 @@
 import { base, fitOutliers, legendName, smoothingFor } from './shared';
-import { smooth, stackEdges, type Point } from '../chart-math';
+import { smooth, smoothingSource, stackEdges, type Point } from '../chart-math';
 import { color, componentColor } from '../run-colors';
 import type { PanelContext } from '../types';
 
@@ -37,7 +37,7 @@ export function stackedOption(ctx: PanelContext, percent: boolean) {
       metrics.length > 1 && metric.length > shared.length ? metric.slice(shared.length) : metric;
     option.series = ctx.data.series.flatMap((series) =>
       metrics.map((metric, index) => {
-        const raw = series.values[metric] || [],
+        const raw = smoothingSource(series, metric, method, amount),
           points = smooth(raw, method, amount, spacing),
           name = legendName(ctx, series, metric, true);
         return {
@@ -66,7 +66,7 @@ export function stackedOption(ctx: PanelContext, percent: boolean) {
       series = ctx.data.series
         .map((item) => ({
           ...item,
-          points: smooth(item.values[metric] || [], method, amount, spacing),
+          points: smooth(smoothingSource(item, metric, method, amount), method, amount, spacing),
         }))
         .filter((item) => item.points.length);
     if (percent && series.some((item) => item.points.some((point) => point[1] < 0)))
@@ -105,7 +105,9 @@ export function stackedOption(ctx: PanelContext, percent: boolean) {
     const originals =
       method === 'none'
         ? undefined
-        : series.map((item) => steps.map((x) => interpolate(item.values[metric], x)));
+        : series.map((item) =>
+            steps.map((x) => interpolate(smoothingSource(item, metric, method, amount), x)),
+          );
     option.series = series.map((item, index) => ({
       name: legendName(ctx, item, metric),
       randlOriginal:
