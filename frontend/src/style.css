@@ -1471,60 +1471,26 @@ aside {
 .chart:focus-within .panel-corner {
   opacity: 1;
 }
-/* The rows handle takes no row of its own: it lies on the section's bottom border, the
-   separator above the next section, which lights up under a pointer or focus. */
+/* The rows handle takes no row of its own: like the sidebar's, it is a strip on the section's
+   bottom border, the separator above the next section, shown only under a pointer or focus. */
 .section-row-resize {
   position: absolute;
   left: calc(-1 * var(--section-padding));
   right: calc(-1 * var(--section-padding));
-  bottom: calc(-1 * var(--section-padding) - 8.5px);
-  z-index: 2;
+  bottom: calc(-1 * var(--section-padding) - 3.5px);
+  z-index: 5;
   display: block;
-  height: 16px;
+  height: 6px;
   padding: 0;
   border: 0;
   background: none;
   cursor: row-resize;
   touch-action: none;
-  opacity: 0;
 }
-.section-row-resize::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 50%;
-  height: 1px;
-  margin-top: -0.5px;
-  background: transparent;
-}
-/* Two lines either side of the separator, which runs between them: a three-line grip. */
-.section-row-resize::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 32px;
-  height: 5px;
-  box-sizing: border-box;
-  transform: translate(-50%, -50%);
-  border-top: 1px solid var(--cds-text-02);
-  border-bottom: 1px solid var(--cds-text-02);
-}
-.section-grid:hover > .section-row-resize,
-.section-grid:focus-within > .section-row-resize {
-  opacity: 1;
-}
-.section-row-resize:hover::before,
-.section-row-resize:focus-visible::before {
-  background: var(--cds-focus);
-}
+.section-row-resize:hover,
 .section-row-resize:focus-visible {
+  background: var(--cds-focus);
   outline: none;
-}
-.section-row-resize:focus-visible::before {
-  height: 2px;
-  margin-top: -1px;
 }
 .resize-preview {
   position: fixed;
@@ -1560,8 +1526,7 @@ aside {
   cursor: default;
 }
 @media (hover: none) {
-  .panel-corner,
-  .section-row-resize {
+  .panel-corner {
     opacity: 1;
   }
 }
