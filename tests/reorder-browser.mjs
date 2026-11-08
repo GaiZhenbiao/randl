@@ -94,13 +94,20 @@ try {
       .locator('[data-section-id="' + id + '"] .chart')
       .evaluateAll((nodes) => nodes.map((n) => n.dataset.panelId));
   const saved = () => server.db.call('view', view.id);
-  const geometry = () =>
-    page.locator('.chart').evaluateAll((nodes) =>
+  // Panel boxes once they finish moving to their places (reordering animates them).
+  const geometry = async () => {
+    await page.waitForFunction(() =>
+      document
+        .getAnimations()
+        .every((motion) => motion.id !== 'layout' || motion.playState === 'finished'),
+    );
+    return page.locator('.chart').evaluateAll((nodes) =>
       nodes.map((node) => {
         const r = node.getBoundingClientRect();
         return [node.dataset.panelId, r.x, r.y, r.width, r.height];
       }),
     );
+  };
   async function start(selector) {
     const handle = page.locator(selector);
     await handle.locator('..').hover();
@@ -209,6 +216,14 @@ try {
   await grip.focus();
   await expect.poll(() => grip.evaluate((el) => el.getBoundingClientRect().width)).toBe(24);
   await page.keyboard.press('ArrowRight');
+  // The panels slide to their new places rather than jumping there.
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.getAnimations().some((motion) => motion.id === 'layout'),
+      ),
+    )
+    .toBe(true);
   await expect
     .poll(async () => (await saved()).body.panels.slice(0, 2).map((p) => p.id))
     .toEqual(['p1', 'p0']);
@@ -217,7 +232,7 @@ try {
     .poll(async () => (await saved()).body.panels.slice(0, 2).map((p) => p.id))
     .toEqual(['p0', 'p1']);
   await grip.evaluate((el) => el.blur());
-  checks.push('keyboard focus reveals the grip and arrow keys reorder');
+  checks.push('keyboard focus reveals the grip and arrow keys reorder, animated');
   await start('[data-panel-id="p0"] .panel-drag-handle');
   await move('[data-panel-id="p1"]');
   const previewGeometry = await geometry(),

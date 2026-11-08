@@ -335,30 +335,34 @@
   // Motion for a layout change, as Carbon's productive standard easing.
   const layoutMotion = { duration: 240, easing: 'cubic-bezier(0.2, 0, 0.38, 0.9)' };
   /**
-   * Notes where a section's panels are before a resize changes its layout; the returned
+   * Notes where panels are before a resize or reorder changes the layout: those of section
+   * `id`, or of every section; or, for `sections`, the sections themselves. The returned
    * function, called after the change, moves them from there to their new places once the
-   * DOM updates (FLIP). A panel that grows reveals its new size rather than stretching its
-   * chart, and one that comes onto the page fades in.
+   * DOM updates (FLIP), from wherever an earlier motion has them. A panel that grows reveals
+   * its new size rather than stretching its chart, and one that comes onto the page fades in.
    */
-  function animateLayout(id: string) {
-    const grid = document.querySelector<HTMLElement>(
-      `[data-section-id="${CSS.escape(id)}"] .section-grid`,
-    );
-    if (!grid || matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {};
-    const cards = () => [...grid.querySelectorAll<HTMLElement>('.chart')],
-      before = new Map(cards().map((card) => [card.dataset.panelId, card.getBoundingClientRect()]));
+  function animateLayout(id?: string, items: 'panels' | 'sections' = 'panels') {
+    const scope = id
+      ? document.querySelector<HTMLElement>(`[data-section-id="${CSS.escape(id)}"] .section-grid`)
+      : document.body;
+    if (!scope || matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {};
+    const selector = items === 'panels' ? '.chart[data-panel-id]' : '.metric-section',
+      keyOf = (node: HTMLElement) => node.dataset.panelId ?? node.dataset.sectionId,
+      cards = () => [...scope.querySelectorAll<HTMLElement>(selector)],
+      before = new Map(cards().map((card) => [keyOf(card), card.getBoundingClientRect()]));
     return () =>
       void tick().then(() => {
         for (const card of cards()) {
-          const from = before.get(card.dataset.panelId),
+          const from = before.get(keyOf(card)),
             to = card.getBoundingClientRect();
+          for (const motion of card.getAnimations()) if (motion.id === 'layout') motion.cancel();
           if (!from) {
             card.animate(
               [
                 { opacity: 0, transform: 'scale(0.98)' },
                 { opacity: 1, transform: 'none' },
               ],
-              layoutMotion,
+              { ...layoutMotion, id: 'layout' },
             );
             continue;
           }
@@ -375,7 +379,7 @@
               },
               { transform: 'none', clipPath: 'inset(0)' },
             ],
-            layoutMotion,
+            { ...layoutMotion, id: 'layout' },
           );
         }
       });
@@ -618,8 +622,13 @@
     if (
       JSON.stringify(next.map((p) => [p.id, panelSection(p)])) !==
       JSON.stringify(previewPanels.map((p) => [p.id, panelSection(p)]))
-    )
+    ) {
+      // The other panels make way for the dragged one as it moves. Its target comes from the
+      // grid's geometry rather than the panels' boxes, so their motion cannot move it.
+      const animate = animateLayout();
       previewPanels = next;
+      animate();
+    }
     if (previewSections.find((s) => s.id === destination)?.collapsed)
       previewSections = previewSections.map((s) =>
         s.id === destination ? { ...s, collapsed: false } : s,
@@ -663,11 +672,13 @@
     const updated = allSections.map((section) =>
       visibleIds.has(section.id) ? next[cursor++] : section,
     );
+    const animate = animateLayout(undefined, 'sections');
     onLayout(
       view.body.panels,
       updated,
       JSON.stringify([view.body.panels, view.body.sections || []]),
     );
+    animate();
     focusReorder(
       '[data-section-id="' +
         CSS.escape(id) +
@@ -713,9 +724,11 @@
       }),
     );
     if (!valid) return;
+    const animate = animateLayout(sectionId);
     onReorder(panel.id, delta < 0 ? items[target].id : items[target + 1]?.id || '', sectionId);
     const g = geometry(sectionId);
     pageBySection = { ...pageBySection, [sectionId]: Math.floor(target / (g.columns * g.rows)) };
+    animate();
     focusReorder(
       '[data-panel-id="' +
         CSS.escape(panel.id) +
