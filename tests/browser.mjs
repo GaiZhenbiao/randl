@@ -337,12 +337,26 @@ async function resizeFixture(page, viewId, metric) {
 }
 
 async function beginResize(page, handle, dx, dy) {
+  await laidOut(page);
   await handle.scrollIntoViewIfNeeded();
   const box = await handle.boundingBox();
   assert.ok(box, 'Resize handle has no geometry');
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 10 });
+}
+
+/** Waits for panels to finish moving to a new section layout. */
+async function laidOut(page) {
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every(
+        (animation) =>
+          !animation.effect?.target?.classList?.contains('chart') ||
+          animation.playState === 'finished',
+      ),
+  );
 }
 
 function near(actual, expected, message) {
@@ -1166,6 +1180,7 @@ try {
         await expect
           .poll(async () => (await persisted(viewId)).body.sectionLayouts?.[id]?.height)
           .toBe(345);
+        await laidOut(page);
         const committed = await page.locator(`[data-panel-id="${targetId}"]`).boundingBox();
         near(committed.width, ghost.width, `${id}: committed width differs from preview`);
         near(committed.height, ghost.height, `${id}: committed height differs from preview`);
@@ -1353,6 +1368,35 @@ try {
         0,
         'Workspace unexpectedly scrolls horizontally',
       );
+      // Changing the columns moves the panels to their new places rather than jumping there.
+      await laidOut(page);
+      const moved = section.getByRole('article').last();
+      await moved.evaluate((card) => {
+        window.layoutTops = [];
+        const frame = () => {
+          window.layoutTops.push(card.getBoundingClientRect().top);
+          if (window.layoutTops.length < 40) requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      });
+      await section.getByRole('article').first().getByRole('button', { name: /^Resize / }).focus();
+      await page.keyboard.press('ArrowRight');
+      await expect
+        .poll(async () => (await persisted(viewId)).body.sectionLayouts?.pair?.width)
+        .not.toBe(baseline.body.sectionLayouts?.pair?.width);
+      await laidOut(page);
+      const tops = await page.evaluate(async () => {
+        while (window.layoutTops.length < 40) await new Promise(requestAnimationFrame);
+        return window.layoutTops;
+      });
+      const [top, bottom] = [tops[0], tops.at(-1)];
+      assert.ok(bottom > top + 100, 'One column puts the second panel below: ' + tops);
+      assert.ok(
+        tops.some((value) => value > top + 5 && value < bottom - 5),
+        'The panel jumped to its new place: ' + tops,
+      );
+      await page.keyboard.press('ArrowLeft');
+      await laidOut(page);
       await page.setViewportSize({ width: 390, height: 850 });
       await handle.scrollIntoViewIfNeeded();
       const touchBox = await handle.boundingBox();
@@ -1442,6 +1486,7 @@ try {
       await expect
         .poll(async () => (await persisted(viewId)).body.sectionLayouts?.dense?.rows)
         .toBe(1);
+      await laidOut(page);
       near(
         (await cards.first().boundingBox()).height,
         initialHeight,

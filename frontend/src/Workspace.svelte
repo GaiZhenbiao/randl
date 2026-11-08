@@ -322,12 +322,61 @@
         ),
       );
   }
+  // Motion for a layout change, as Carbon's productive standard easing.
+  const layoutMotion = { duration: 240, easing: 'cubic-bezier(0.2, 0, 0.38, 0.9)' };
+  /**
+   * Notes where a section's panels are before a resize changes its layout; the returned
+   * function, called after the change, moves them from there to their new places once the
+   * DOM updates (FLIP). A panel that grows reveals its new size rather than stretching its
+   * chart, and one that comes onto the page fades in.
+   */
+  function animateLayout(id: string) {
+    const grid = document.querySelector<HTMLElement>(
+      `[data-section-id="${CSS.escape(id)}"] .section-grid`,
+    );
+    if (!grid || matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {};
+    const cards = () => [...grid.querySelectorAll<HTMLElement>('.chart')],
+      before = new Map(cards().map((card) => [card.dataset.panelId, card.getBoundingClientRect()]));
+    return () =>
+      void tick().then(() => {
+        for (const card of cards()) {
+          const from = before.get(card.dataset.panelId),
+            to = card.getBoundingClientRect();
+          if (!from) {
+            card.animate(
+              [
+                { opacity: 0, transform: 'scale(0.98)' },
+                { opacity: 1, transform: 'none' },
+              ],
+              layoutMotion,
+            );
+            continue;
+          }
+          const dx = from.left - to.left,
+            dy = from.top - to.top,
+            wider = Math.max(0, to.width - from.width),
+            taller = Math.max(0, to.height - from.height);
+          if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && wider < 1 && taller < 1) continue;
+          card.animate(
+            [
+              {
+                transform: `translate(${dx}px, ${dy}px)`,
+                clipPath: `inset(0 ${wider}px ${taller}px 0)`,
+              },
+              { transform: 'none', clipPath: 'inset(0)' },
+            ],
+            layoutMotion,
+          );
+        }
+      });
+  }
   function endResize(event: PointerEvent) {
     if (!drag || event.pointerId !== drag.pointerId) return;
     const current = drag;
     drag = null;
     if (!current.moved) return;
-    const old = view?.body.sectionLayouts?.[current.id] || {};
+    const old = view?.body.sectionLayouts?.[current.id] || {},
+      animate = animateLayout(current.id);
     pageBySection = {
       ...pageBySection,
       [current.id]: Math.floor(current.absoluteIndex / (current.columns * current.rows)),
@@ -344,6 +393,7 @@
           }
         : { ...old, rows: current.rows },
     );
+    animate();
   }
   function keyResize(
     event: KeyboardEvent,
@@ -361,12 +411,14 @@
       return;
     event.preventDefault();
     const g = geometry(id),
-      old = view?.body.sectionLayouts?.[id] || {};
+      old = view?.body.sectionLayouts?.[id] || {},
+      animate = animateLayout(id);
     if (kind === 'section') {
       onResize(id, {
         ...old,
         rows: Math.max(1, Math.min(20, g.rows + (event.key === 'ArrowUp' ? -1 : 1))),
       });
+      animate();
       return;
     }
     // Moving a corner outward widens the panels (fewer columns); inward narrows them.
@@ -408,6 +460,7 @@
         ),
       ),
     });
+    animate();
   }
   function scrollResize() {
     if (!drag) return;
