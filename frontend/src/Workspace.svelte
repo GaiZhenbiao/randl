@@ -256,8 +256,15 @@
     rows: number;
     columns: number;
     startColumns: number;
+    /** The panel corner dragged: the left one widens panels as it moves left. */
+    side: 'left' | 'right';
   } | null>(null);
-  function startResize(event: PointerEvent, id: string, kind: 'panel' | 'section') {
+  function startResize(
+    event: PointerEvent,
+    id: string,
+    kind: 'panel' | 'section',
+    side: 'left' | 'right' = 'right',
+  ) {
     if (event.button !== 0) return;
     event.preventDefault();
     const handle = event.currentTarget as HTMLElement,
@@ -292,6 +299,7 @@
       rows: g.rows,
       columns: g.columns,
       startColumns: g.columns,
+      side,
     };
   }
   function moveResize(event: PointerEvent) {
@@ -301,7 +309,8 @@
     const g = geometry(drag.id);
     if (drag.kind === 'panel') {
       drag.height = Math.max(220, Math.min(800, drag.startHeight + event.clientY - drag.y));
-      const desired = Math.max(240, drag.startWidth + event.clientX - drag.x);
+      const dx = (event.clientX - drag.x) * (drag.side === 'left' ? -1 : 1),
+        desired = Math.max(240, drag.startWidth + dx);
       drag.columns = columnsFor(g.width, desired, g.count);
       drag.width = cardWidth(g.width, drag.columns);
     } else
@@ -336,7 +345,12 @@
         : { ...old, rows: current.rows },
     );
   }
-  function keyResize(event: KeyboardEvent, id: string, kind: 'panel' | 'section') {
+  function keyResize(
+    event: KeyboardEvent,
+    id: string,
+    kind: 'panel' | 'section',
+    side: 'left' | 'right' = 'right',
+  ) {
     if (
       !(
         kind === 'section'
@@ -355,12 +369,12 @@
       });
       return;
     }
+    // Moving a corner outward widens the panels (fewer columns); inward narrows them.
+    const outward = event.key === (side === 'left' ? 'ArrowLeft' : 'ArrowRight'),
+      inward = event.key === (side === 'left' ? 'ArrowRight' : 'ArrowLeft');
     const columns = Math.max(
       1,
-      Math.min(
-        columnLimit(g.width, g.count),
-        g.columns + (event.key === 'ArrowLeft' ? 1 : event.key === 'ArrowRight' ? -1 : 0),
-      ),
+      Math.min(columnLimit(g.width, g.count), g.columns + (inward ? 1 : outward ? -1 : 0)),
     );
     const handle = event.currentTarget as HTMLElement,
       chart = handle.closest<HTMLElement>('.chart');
@@ -376,7 +390,9 @@
     if (panelId)
       void tick().then(() =>
         document
-          .querySelector<HTMLElement>('[data-panel-id="' + CSS.escape(panelId) + '"] .panel-corner')
+          .querySelector<HTMLElement>(
+            '[data-panel-id="' + CSS.escape(panelId) + '"] .panel-corner:not([aria-hidden])',
+          )
           ?.focus(),
       );
     onResize(id, {
@@ -402,7 +418,8 @@
   $effect(() => {
     if (!drag) return;
     const previous = document.body.style.cursor;
-    document.body.style.cursor = drag.kind === 'panel' ? 'se-resize' : 'row-resize';
+    document.body.style.cursor =
+      drag.kind === 'section' ? 'row-resize' : drag.side === 'left' ? 'sw-resize' : 'se-resize';
     const selection = document.body.style.userSelect;
     document.body.style.userSelect = 'none';
     return () => {
@@ -1068,8 +1085,8 @@
                     position={content.indexOf(panel)}
                     count={content.length}
                     onmove={(direction, keyboard) => moveWithinSection(panel, direction, keyboard)}
-                    onresizestart={(event) => startResize(event, section.id, 'panel')}
-                    onresizekey={(event) => keyResize(event, section.id, 'panel')}
+                    onresizestart={(event, side) => startResize(event, section.id, 'panel', side)}
+                    onresizekey={(event, side) => keyResize(event, section.id, 'panel', side)}
                     onreorderstart={(event) =>
                       startReorder(event, 'panel', panel.id, panel.title || panel.metric)}
                     reordering={reorder?.kind === 'panel' &&

@@ -47,6 +47,7 @@
   import ZoomIn from 'carbon-icons-svelte/lib/ZoomIn.svelte';
   import ZoomOut from 'carbon-icons-svelte/lib/ZoomOut.svelte';
   import { mediaCount as fileCount } from '../../backend/src/media-items';
+  type ResizeSide = 'left' | 'right';
   let {
     panel,
     emptySelectionText = 'panel.empty.noVisibleRuns',
@@ -83,9 +84,10 @@
     onremove: () => void;
     onduplicate: () => void;
     onmove: (direction: number, keyboard?: boolean) => void;
-    onresizestart?: (event: PointerEvent) => void;
+    /** Starts a resize from the panel's bottom-left or bottom-right corner. */
+    onresizestart?: (event: PointerEvent, side: ResizeSide) => void;
     resizeLabel?: Message;
-    onresizekey?: (event: KeyboardEvent) => void;
+    onresizekey?: (event: KeyboardEvent, side: ResizeSide) => void;
     onreorderstart?: (event: PointerEvent) => void;
     reordering?: boolean;
     columns?: number;
@@ -98,6 +100,15 @@
     /** Keys of this tab's unsaved choices: the section's media step and the panel's own. */
     session?: { section: string; panel: string };
   } = $props();
+  // Resize handles at the bottom corners that face another panel: none at the section's left
+  // or right edge, but a one-column panel keeps its right one. The first is the one keyboard
+  // and assistive technology reach; the other repeats it for the pointer.
+  let corners = $derived.by((): ResizeSide[] => {
+    const column = position % Math.max(1, columns),
+      right = columns <= 1 || column < columns - 1,
+      left = columns > 1 && column > 0;
+    return right ? (left ? ['right', 'left'] : ['right']) : ['left'];
+  });
   let container: HTMLElement, plot: HTMLDivElement;
   let visible = $state(false),
     loading = $state(false),
@@ -1137,12 +1148,15 @@
         {$t(renderError || status || 'panel.empty.noData')}
       </div>{/if}
   </div>
-  {#if !expanded && !readonly && onresizestart}<button
-      class="panel-corner"
-      aria-label={$t(resizeLabel)}
-      aria-describedby="panel-resize-help"
-      title={$t('panel.resize')}
-      onpointerdown={onresizestart}
-      onkeydown={onresizekey}
-    ></button>{/if}
+  {#if !expanded && !readonly && onresizestart}{#each corners as side (side)}<button
+        class="panel-corner"
+        class:left={side === 'left'}
+        aria-label={$t(resizeLabel)}
+        aria-describedby="panel-resize-help"
+        aria-hidden={side === corners[0] ? undefined : 'true'}
+        tabindex={side === corners[0] ? undefined : -1}
+        title={$t('panel.resize')}
+        onpointerdown={(event) => onresizestart(event, side)}
+        onkeydown={(event) => onresizekey?.(event, side)}
+      ></button>{/each}{/if}
 </article>

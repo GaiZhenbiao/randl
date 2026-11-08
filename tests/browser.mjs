@@ -99,7 +99,7 @@ async function editorTab(editor, label) {
   }
 }
 
-async function withView(fixture, run) {
+async function withView(fixture, run, { touch = true } = {}) {
   const view = await createView(fixture.project);
   const sibling = await createView(fixture.project);
   await call('/api/tools/runs_select', {
@@ -109,7 +109,7 @@ async function withView(fixture, run) {
   });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 900 },
-    hasTouch: true,
+    hasTouch: touch,
   });
   const errors = [];
   await context.addInitScript(() => {
@@ -166,11 +166,12 @@ async function withView(fixture, run) {
   }
 }
 
-async function check(name, fixture, run) {
+// `options.touch: false` checks with a mouse only, where panel corners show on hover.
+async function check(name, fixture, run, options) {
   if (process.env.RANDL_BROWSER_FILTER && !name.includes(process.env.RANDL_BROWSER_FILTER)) return;
   checked++;
   try {
-    await withView(fixture, run);
+    await withView(fixture, run, options);
     console.log(`PASS ${name}`);
   } catch (error) {
     failures++;
@@ -1119,6 +1120,7 @@ try {
         otherSection.getByRole('article', { name: 'Layout panel 0', exact: true }),
       ).toBeVisible();
     },
+    { touch: false },
   );
 
   await check(
@@ -1249,6 +1251,7 @@ try {
         'Section dimensions did not survive reload',
       );
     },
+    { touch: false },
   );
 
   await check(
@@ -1261,6 +1264,31 @@ try {
         .getByRole('article')
         .last()
         .getByRole('button', { name: /^Resize (?:.* panels, |panels in section$)/ });
+      // Corners face other panels only: none at the section's left or right edge.
+      const cards = section.getByRole('article'),
+        corners = () =>
+          cards.evaluateAll((all) =>
+            all.map((card) =>
+              [...card.querySelectorAll('.panel-corner')].map((corner) => ({
+                side: corner.classList.contains('left') ? 'left' : 'right',
+                opacity: getComputedStyle(corner).opacity,
+              })),
+            ),
+          );
+      await page.mouse.move(0, 0);
+      const resting = await corners();
+      assert.deepEqual(
+        resting.map((card) => card.map((corner) => corner.side)),
+        [['right'], ['left']],
+        'Edge corners shown',
+      );
+      assert.ok(
+        resting.flat().every((corner) => corner.opacity === '0'),
+        'Corners shown at rest',
+      );
+      await cards.last().hover();
+      await expect.poll(async () => (await corners())[1][0].opacity).toBe('1');
+      assert.equal((await corners())[0][0].opacity, '0', 'Corner shown on an unhovered panel');
       const baseline = await persisted(viewId);
       await handle.click();
       await page.waitForTimeout(700);
@@ -1340,6 +1368,7 @@ try {
         await cdp.detach();
       }
     },
+    { touch: false },
   );
 
   await check(
@@ -1353,6 +1382,19 @@ try {
       const cards = section.getByRole('article');
       const initialHeight = (await cards.first().boundingBox()).height;
       const handle = section.getByRole('button', { name: /^Resize visible rows in Dense(?:,|$)/ });
+      // On a touch screen panel corners neither show nor take touches.
+      await cards.first().hover();
+      assert.deepEqual(
+        await section
+          .locator('.panel-corner')
+          .first()
+          .evaluate((corner) => [
+            getComputedStyle(corner).opacity,
+            getComputedStyle(corner).pointerEvents,
+          ]),
+        ['0', 'none'],
+        'Panel corners shown on a touch screen',
+      );
       // The handle takes no row of its own: it lies on the separator above the next section.
       const place = await section.evaluate((node) => {
         const box = node.getBoundingClientRect(),

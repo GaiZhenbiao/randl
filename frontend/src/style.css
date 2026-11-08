@@ -1467,8 +1467,24 @@ aside {
   border-right: 2px solid var(--cds-text-02);
   border-bottom: 2px solid var(--cds-text-02);
 }
-.chart:hover .panel-corner,
-.chart:focus-within .panel-corner {
+.panel-corner.left {
+  right: auto;
+  left: 0;
+  cursor: sw-resize;
+}
+.panel-corner.left::after {
+  right: auto;
+  left: 4px;
+  border-right: 0;
+  border-left: 2px solid var(--cds-text-02);
+}
+/* The corners show to a hovering mouse and to keyboard focus, not on touch screens. */
+@media (hover: hover) {
+  .chart:hover .panel-corner {
+    opacity: 1;
+  }
+}
+.panel-corner:focus-visible {
   opacity: 1;
 }
 /* The rows handle takes no row of its own: like the sidebar's, it is a strip on the section's
@@ -1527,7 +1543,7 @@ aside {
 }
 @media (hover: none) {
   .panel-corner {
-    opacity: 1;
+    pointer-events: none;
   }
 }
 @media (max-width: 760px) {
