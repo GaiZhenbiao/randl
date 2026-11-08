@@ -337,6 +337,17 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
     (await media({ runs: [ids[1]], metric: 'gallery', across: 'steps', run: ids[0] })).entries,
     [],
   );
+  // A client that already shows these media is told so instead of being sent them again.
+  const shown = await media({ runs: ids, metric: 'gallery' });
+  assert.match(shown.revision, /^[0-9a-f]{64}$/);
+  assert.deepEqual(await media({ runs: ids, metric: 'gallery', baseRevision: shown.revision }), {
+    unchanged: true,
+    revision: shown.revision,
+  });
+  assert.deepEqual(
+    (await media({ runs: ids, metric: 'gallery', baseRevision: 'older' })).entries,
+    shown.entries,
+  );
   for (const files of [0, 1001, 2.5])
     assert.equal(
       (

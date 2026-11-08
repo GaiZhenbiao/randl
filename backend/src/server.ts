@@ -404,15 +404,20 @@ export async function createServer(
             step: { type: ['number', 'null'] },
             run: str,
             files: { type: 'integer', minimum: 1, maximum: panelLimits.media.files.max },
+            baseRevision: str,
           },
           ['runs', 'metric'],
         ),
       },
     },
+    // A live run refetches its media whenever it logs anything: when the media are what the
+    // client already shows (its `baseRevision`), the reply says so instead of resending them.
     async (req) => {
-      const media = await db.call('media', req.body);
+      const { baseRevision, ...body } = req.body as any;
+      const media = await db.call('media', body);
       await sizeVideos(media.entries);
-      return media;
+      const revision = createHash('sha256').update(JSON.stringify(media)).digest('hex');
+      return revision === baseRevision ? { unchanged: true, revision } : { ...media, revision };
     },
   );
   // Video descriptors without a logged size get the file's size from its header (video-size.ts),
