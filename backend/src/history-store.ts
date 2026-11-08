@@ -738,16 +738,20 @@ export class HistoryStore {
     ).get(r, f) as Row | undefined;
     return b ? this.lineBlock(b).at(-1) : undefined;
   }
+  /**
+   * Lines after `from` in offset order, read a page at a time. Chart jobs suspend between
+   * lines to serve other requests, so no statement cursor may stay open across a yield: while
+   * a better-sqlite3 iterator is open, every write on the connection fails as busy.
+   */
   *lines(run: Key, file: Key, from = -1): Iterable<Line> {
     const r = this.run(run),
       f = this.file(file);
-    for (const b of this.sql(
-      'SELECT * FROM stream_blocks WHERE run=? AND file=? AND last>? ORDER BY first',
-    ).iterate(r, f, from) as Iterable<Row>)
-      for (const row of this.lineBlock(b)) if (row.offset > from) yield row;
-    yield* this.sql(
-      'SELECT offset,content FROM stream_tail WHERE run=? AND file=? AND offset>? ORDER BY offset',
-    ).iterate(r, f, from) as Iterable<Line>;
+    for (let cursor = from; ;) {
+      const page = this.linePage(r, f, cursor);
+      if (!page.length) return;
+      cursor = page.at(-1)!.offset;
+      yield* page;
+    }
   }
   linePage(run: Key, file: Key, cursor: number): Line[] {
     const rows: Line[] = [];

@@ -52,11 +52,19 @@ export type ErrorFields = Error & {
 };
 export const isManagementCode = (code: unknown): code is string =>
   typeof code === 'string' && codes.has(code);
+/**
+ * Whether an error is transient database contention that a later retry can pass: SQLite lock
+ * codes, or better-sqlite3 refusing a statement while another query on the connection runs.
+ */
+export const isDatabaseContention = (error: ErrorFields) =>
+  /^SQLITE_(BUSY|LOCKED)/.test(error.code ?? '') ||
+  /^This (database connection|statement) is busy executing a query$/.test(error.message);
 export function errorFields(error: ErrorFields) {
   const known = isManagementCode(error.code);
   return {
     message: error.message,
-    statusCode: error.statusCode,
+    // Contention is the server's condition, not a bad request: 503 tells clients to retry.
+    statusCode: error.statusCode ?? (isDatabaseContention(error) ? 503 : undefined),
     ...(known ? { code: error.code, params: error.params } : {}),
   };
 }

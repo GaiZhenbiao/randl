@@ -302,6 +302,8 @@ export async function createServer(
       e = selectionError(parent) || e;
     }
     const fields = errorFields(e);
+    // W&B clients back off by Retry-After and retry 503, but treat most 4xx as fatal.
+    if (fields.statusCode === 503) reply.header('Retry-After', '1');
     reply.code(fields.statusCode || 400).send({
       error: fields.message,
       ...(fields.code ? { code: fields.code, params: fields.params } : {}),
