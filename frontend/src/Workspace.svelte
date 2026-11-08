@@ -308,7 +308,7 @@
   function reflowPreview() {
     previewReflow = true;
     clearTimeout(reflowTimer);
-    reflowTimer = window.setTimeout(() => (previewReflow = false), 150);
+    reflowTimer = window.setTimeout(() => (previewReflow = false), 110);
   }
   function moveResize(event: PointerEvent) {
     if (!drag || event.pointerId !== drag.pointerId) return;
@@ -332,8 +332,8 @@
       );
     if (drag.columns !== columns || drag.rows !== rows) reflowPreview();
   }
-  // Motion for a layout change, as Carbon's productive standard easing.
-  const layoutMotion = { duration: 240, easing: 'cubic-bezier(0.2, 0, 0.38, 0.9)' };
+  // Motion for a layout change: a strong ease-out, which moves at once and settles gently.
+  const layoutMotion = { duration: 180, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' };
   /**
    * Notes where panels are before a resize or reorder changes the layout: those of section
    * `id`, or of every section; or, for `sections`, the sections themselves. The returned

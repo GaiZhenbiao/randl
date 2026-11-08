@@ -1521,8 +1521,8 @@ aside {
 /* A change of column or row count glides; otherwise the preview follows the pointer. */
 .resize-preview.reflow {
   transition-property: translate, width, height;
-  transition-duration: 150ms;
-  transition-timing-function: cubic-bezier(0.2, 0, 0.38, 0.9);
+  transition-duration: 110ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 .resize-preview > span {
   position: absolute;
