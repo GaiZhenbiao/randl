@@ -1177,8 +1177,9 @@ aside {
   flex-shrink: 0;
 }
 .metric-section {
+  --section-padding: 16px;
   margin: 0;
-  padding: 16px;
+  padding: var(--section-padding);
   border-bottom: 1px solid var(--cds-ui-03);
 }
 .section-heading .bx--assistive-text {
@@ -1291,7 +1292,7 @@ aside {
     font-size: 14px;
   }
   .metric-section {
-    padding: 12px;
+    --section-padding: 12px;
   }
   .nav-expanded .project-rail > .bx--btn {
     flex-direction: column;
@@ -1470,28 +1471,60 @@ aside {
 .chart:focus-within .panel-corner {
   opacity: 1;
 }
+/* The rows handle takes no row of its own: it lies on the section's bottom border, the
+   separator above the next section, which lights up under a pointer or focus. */
 .section-row-resize {
+  position: absolute;
+  left: calc(-1 * var(--section-padding));
+  right: calc(-1 * var(--section-padding));
+  bottom: calc(-1 * var(--section-padding) - 8.5px);
+  z-index: 2;
   display: block;
-  width: 100%;
   height: 16px;
+  padding: 0;
   border: 0;
   background: none;
   cursor: row-resize;
   touch-action: none;
   opacity: 0;
 }
+.section-row-resize::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  margin-top: -0.5px;
+  background: transparent;
+}
+/* Two lines either side of the separator, which runs between them: a three-line grip. */
 .section-row-resize::after {
   content: '';
-  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
   width: 32px;
-  height: 3px;
-  margin: auto;
+  height: 5px;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
   border-top: 1px solid var(--cds-text-02);
   border-bottom: 1px solid var(--cds-text-02);
 }
 .section-grid:hover > .section-row-resize,
 .section-grid:focus-within > .section-row-resize {
   opacity: 1;
+}
+.section-row-resize:hover::before,
+.section-row-resize:focus-visible::before {
+  background: var(--cds-focus);
+}
+.section-row-resize:focus-visible {
+  outline: none;
+}
+.section-row-resize:focus-visible::before {
+  height: 2px;
+  margin-top: -1px;
 }
 .resize-preview {
   position: fixed;

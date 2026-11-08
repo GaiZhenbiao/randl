@@ -1353,6 +1353,20 @@ try {
       const cards = section.getByRole('article');
       const initialHeight = (await cards.first().boundingBox()).height;
       const handle = section.getByRole('button', { name: /^Resize visible rows in Dense(?:,|$)/ });
+      // The handle takes no row of its own: it lies on the separator above the next section.
+      const place = await section.evaluate((node) => {
+        const box = node.getBoundingClientRect(),
+          grid = node.querySelector('.section-grid').getBoundingClientRect(),
+          handle = node.querySelector('.section-row-resize').getBoundingClientRect(),
+          padding = parseFloat(getComputedStyle(node).paddingBottom);
+        return {
+          border: box.bottom - 0.5,
+          handle: (handle.top + handle.bottom) / 2,
+          below: box.bottom - 1 - padding - grid.bottom,
+        };
+      });
+      near(place.handle, place.border, 'Row handle is off the section separator');
+      near(place.below, 0, 'Row handle takes its own row');
       const version = (await persisted(viewId)).version;
       await handle.click();
       await page.waitForTimeout(700);
