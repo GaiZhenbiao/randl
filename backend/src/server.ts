@@ -19,6 +19,14 @@ import { resolve, join, dirname, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { createGunzip } from 'node:zlib';
+import {
+  accepts,
+  compressBody,
+  compressStream,
+  compressibleType,
+  minimumBytes,
+  negotiate,
+} from './compression.js';
 import { DB } from './db.js';
 import { runFolder } from './project-store.js';
 import { ServerMetrics, routeGroup, BUCKET_MS } from './metrics.js';
@@ -230,6 +238,25 @@ export async function createServer(
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
       );
     return payload;
+  });
+  // API responses of JSON and other text are compressed for clients that accept it. Media,
+  // byte ranges and streamed responses are left to their handlers.
+  app.addHook('onSend', async (req, reply, payload) => {
+    if (
+      !req.url.startsWith('/api/') ||
+      (typeof payload !== 'string' && !Buffer.isBuffer(payload)) ||
+      reply.hasHeader('Content-Encoding') ||
+      reply.statusCode === 206 ||
+      !compressibleType(reply.getHeader('Content-Type'))
+    )
+      return payload;
+    const body = typeof payload === 'string' ? Buffer.from(payload) : payload;
+    if (body.length < minimumBytes) return payload;
+    reply.header('Vary', 'Accept-Encoding');
+    const encoding = negotiate(req.headers['accept-encoding']);
+    if (!encoding) return payload;
+    reply.header('Content-Encoding', encoding).removeHeader('Content-Length');
+    return compressBody(body, encoding);
   });
   app.addHook('preParsing', async (req, _reply, payload) => {
     if (req.headers['content-encoding'] !== 'gzip') return payload;
@@ -569,13 +596,26 @@ export async function createServer(
         plan = await db.job(abandoned.signal, 'chartPlan', body),
         { result: metadata } = plan;
       reply.hijack();
+      // Each part is compressed and flushed as it is written, so panels still draw runs as
+      // they arrive.
+      const encoding = negotiate(req.headers['accept-encoding']),
+        compressed = encoding ? compressStream(encoding) : undefined;
       reply.raw.writeHead(200, {
         'Content-Type': 'application/x-ndjson',
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
+        Vary: 'Accept-Encoding',
+        ...(encoding ? { 'Content-Encoding': encoding } : {}),
       });
+      if (compressed) {
+        compressed.on('error', () => reply.raw.destroy());
+        compressed.pipe(reply.raw);
+      }
+      const out = compressed ?? reply.raw;
       const emit = (value: unknown) => {
-        if (!reply.raw.destroyed) reply.raw.write(JSON.stringify(value) + '\n');
+        if (reply.raw.destroyed) return;
+        out.write(JSON.stringify(value) + '\n');
+        compressed?.send();
       };
       try {
         // The run order is sent only when it differs from the request's.
@@ -633,7 +673,7 @@ export async function createServer(
           ...(fields.code ? { code: fields.code, params: fields.params } : {}),
         });
       } finally {
-        reply.raw.end();
+        out.end();
       }
     },
   );
@@ -1191,15 +1231,20 @@ export async function createServer(
       reply.header('Cache-Control', 'public, max-age=31536000, immutable');
     }
     reply.type(types[extname(path)] || 'application/octet-stream');
-    if (String(req.headers['accept-encoding'] || '').includes('gzip')) {
+    // The build stores Brotli and gzip copies of text assets beside them.
+    for (const [name, suffix] of [
+      ['br', '.br'],
+      ['gzip', '.gz'],
+    ] as const) {
+      if (!accepts(req.headers['accept-encoding'], name)) continue;
       try {
-        await fs.access(path + '.gz');
+        await fs.access(path + suffix);
         return reply
-          .header('Content-Encoding', 'gzip')
+          .header('Content-Encoding', name)
           .header('Vary', 'Accept-Encoding')
-          .send(createReadStream(path + '.gz'));
+          .send(createReadStream(path + suffix));
       } catch {
-        /* Serve the uncompressed representation when none was built. */
+        /* Try the next representation, then the uncompressed one, when none was built. */
       }
     }
     return reply.send(createReadStream(path));

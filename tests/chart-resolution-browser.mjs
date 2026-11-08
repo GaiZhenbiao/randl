@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect as playwrightExpect, request } from '@playwright/test';
 import { createServer } from '../backend/dist/server.js';
-import { launchBrowser } from './helpers.mjs';
+import { launchBrowser, sentText } from './helpers.mjs';
 
 // Resolution levels, refinement on enlarging, live deltas and progressive drawing.
 // npm run build
@@ -31,7 +31,7 @@ try {
     };
     res.end = (chunk, ...rest) => {
       if (chunk && typeof chunk !== 'function') chunks.push(Buffer.from(chunk));
-      const text = Buffer.concat(chunks).toString(),
+      const text = sentText(res, Buffer.concat(chunks)),
         first = JSON.parse(text.split('\n')[0]);
       list.push({
         metric: (first.metadata || first).metrics?.[0],

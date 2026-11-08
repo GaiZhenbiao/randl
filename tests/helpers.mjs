@@ -1,3 +1,4 @@
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 // Shared harness for the browser and performance scripts.
 import { chromium } from '@playwright/test';
 
@@ -21,4 +22,19 @@ export function demoURL() {
   const url = process.env.RANDL_URL;
   if (!url) throw Error('Set RANDL_URL to the seeded demo server, for example http://127.0.0.1:8744.');
   return url;
+}
+
+/** A response body captured as the server wrote it, decoded from its Content-Encoding. */
+export function sentText(response, bytes) {
+  // Headers given to writeHead (as a streamed response's are) are only in the sent header.
+  const encoding =
+    response.getHeader('content-encoding') ??
+    /\r\ncontent-encoding: *([^\r]+)/i.exec(response._header || '')?.[1];
+  return (
+    encoding === 'br'
+      ? brotliDecompressSync(bytes)
+      : encoding === 'gzip'
+        ? gunzipSync(bytes)
+        : bytes
+  ).toString();
 }

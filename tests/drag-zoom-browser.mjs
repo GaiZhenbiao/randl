@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect as playwrightExpect, request } from '@playwright/test';
 import { createServer } from '../backend/dist/server.js';
-import { launchBrowser } from './helpers.mjs';
+import { launchBrowser, sentText } from './helpers.mjs';
 
 // Drag-to-zoom on X, click to reset, minimum drag, refinement requests and hover after zoom.
 // npm run build
@@ -30,7 +30,7 @@ try {
     };
     res.end = (chunk, ...rest) => {
       if (chunk && typeof chunk !== 'function') chunks.push(Buffer.from(chunk));
-      sent.push(Buffer.concat(chunks).toString());
+      sent.push(sentText(res, Buffer.concat(chunks)));
       return end(chunk, ...rest);
     };
   });
