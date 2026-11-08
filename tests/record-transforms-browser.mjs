@@ -313,6 +313,13 @@ try {
     'title',
     'Hit rate = ${hits} / ${total}',
   );
+  // The closing editor returns focus to the panel's settings button when its transition ends.
+  await page.waitForFunction(() =>
+    document
+      .getAnimations()
+      .every((motion) => !motion.effect?.target?.closest?.('.bx--modal')),
+  );
+  await expect(ratioPanel.locator('.chart-settings')).toBeFocused();
   await ratioPanel.getByRole('application').focus();
   await page.keyboard.press('Home');
   await expect(
