@@ -380,3 +380,33 @@ test('delete/restore preserves history and sends removed/restored SSE metadata',
     [[0, 3]],
   );
 });
+
+test('run fields follow config and summary changes and runs leaving the project', async (t) => {
+  const store = await storeFixture(t);
+  const first = store.upsert({
+    entity: 'e',
+    project: 'fields',
+    name: 'first',
+    config: { lr: { value: 0.1 }, model: { value: { depth: 4 } } },
+  });
+  const second = store.upsert({ entity: 'e', project: 'fields', name: 'second', config: {} });
+  const fields = () => store.runFields('e/fields').filter((field) => /^(config|summary)\./.test(field));
+  assert.deepEqual(fields(), ['config.lr', 'config.model', 'config.model.depth']);
+  // Asked again unchanged, the cached paths give the same answer.
+  assert.deepEqual(fields(), ['config.lr', 'config.model', 'config.model.depth']);
+  // A config change (the SDK resending it) and a new summary appear at once.
+  store.upsert({
+    entity: 'e',
+    project: 'fields',
+    name: 'first',
+    config: { lr: { value: 0.1 }, warmup: { value: 10 } },
+  });
+  store.ingest(second.id, {
+    files: { 'wandb-summary.json': { offset: 0, content: [JSON.stringify({ accuracy: 0.9 })] } },
+  });
+  assert.deepEqual(fields(), ['config.lr', 'config.warmup', 'summary.accuracy']);
+  // A deleted run's fields leave with it.
+  store.runManage({ ids: [second.id], action: 'delete' });
+  assert.deepEqual(fields(), ['config.lr', 'config.warmup']);
+  assert.ok(first.id);
+});

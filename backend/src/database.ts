@@ -1853,34 +1853,58 @@ export class Store {
       return { id: row.id, values };
     });
   }
+  /**
+   * The config and summary field paths of each run, by run and revision: every write to a
+   * run's config or summary raises its revision. Paths are shared strings across runs.
+   */
+  private fieldPaths = new Map<string, { revision: number; paths: string[] }>();
+  private fieldPathNames = new Map<string, string>();
+  private runFieldPaths(row: Row) {
+    const paths: string[] = [];
+    for (const column of ['config', 'summary']) {
+      const source = JSON.parse(row[column]);
+      const pending = Object.entries(source)
+        .filter(([key]) => !key.startsWith('_'))
+        .map(([key, value]) => ({
+          path: column + '.' + key,
+          value:
+            column === 'config' && value && typeof value === 'object' && 'value' in value
+              ? (value as any).value
+              : value,
+        }));
+      while (pending.length && paths.length < 5000) {
+        const { path, value } = pending.pop()!;
+        if (value && typeof value === 'object' && '_type' in value) continue;
+        let name = this.fieldPathNames.get(path);
+        if (name === undefined) this.fieldPathNames.set(path, (name = path));
+        paths.push(name);
+        if (value && typeof value === 'object' && !Array.isArray(value))
+          for (const [key, child] of Object.entries(value))
+            pending.push({ path: path + '.' + key, value: child });
+      }
+    }
+    return paths;
+  }
+  /** The run fields of a project's runs, or of all runs: catalog fields, then config and summary paths. */
   runFields(project = '') {
-    const keys=new Set(Object.keys(runFieldCatalog));
+    const keys = new Set(Object.keys(runFieldCatalog));
     const rows = this.db
       .prepare(
-        "SELECT config,summary FROM runs WHERE deleted_at IS NULL AND (?='' OR entity||'/'||project=?)",
+        "SELECT id,revision FROM runs WHERE deleted_at IS NULL AND (?='' OR entity||'/'||project=?)",
       )
       .all(project, project) as Row[];
-    for (const row of rows)
-      for (const column of ['config', 'summary']) {
-        const source = JSON.parse(row[column]);
-        const pending = Object.entries(source)
-          .filter(([key]) => !key.startsWith('_'))
-          .map(([key, value]) => ({
-            path: column + '.' + key,
-            value:
-              column === 'config' && value && typeof value === 'object' && 'value' in value
-                ? (value as any).value
-                : value,
-          }));
-        while (pending.length && keys.size < 5000) {
-          const { path, value } = pending.pop()!;
-          if (value && typeof value === 'object' && '_type' in value) continue;
-          keys.add(path);
-          if (value && typeof value === 'object' && !Array.isArray(value))
-            for (const [key, child] of Object.entries(value))
-              pending.push({ path: path + '.' + key, value: child });
-        }
+    const source = this.db.prepare('SELECT config,summary FROM runs WHERE id=?');
+    for (const row of rows) {
+      let cached = this.fieldPaths.get(row.id);
+      if (!cached || cached.revision !== row.revision) {
+        cached = { revision: row.revision, paths: this.runFieldPaths(source.get(row.id) as Row) };
+        this.fieldPaths.set(row.id, cached);
       }
+      for (const path of cached.paths) {
+        if (keys.size >= 5000) break;
+        keys.add(path);
+      }
+    }
     return [...keys].sort();
   }
   viewSave(a: Row) {
