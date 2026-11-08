@@ -248,6 +248,22 @@ try {
   await expect.poll(() => page.locator('main').evaluate((e) => e.scrollTop)).toBeGreaterThan(0);
   await expect(page.locator('.plot-inspector:visible')).toHaveCount(0);
   checks.push('plain wheel scrolls main content and dismisses hover');
+  // A click focuses the chart without starting keyboard inspection, so once the mouse leaves no
+  // popup comes back, on its plot or below it on the axis.
+  await panel.scrollIntoViewIfNeeded();
+  for (const where of ['plot', 'axis']) {
+    await host.evaluate((element) => element.blur());
+    const box = await host.boundingBox(),
+      y = where === 'plot' ? box.y + box.height / 2 : box.y + box.height - 4;
+    await page.mouse.move(box.x + box.width / 2, y, { steps: 3 });
+    await page.mouse.down();
+    await page.mouse.up();
+    await page.mouse.move(1, 1, { steps: 3 });
+    await page.waitForTimeout(300);
+    await expect(page.locator('.plot-inspector:visible')).toHaveCount(0);
+  }
+  await page.keyboard.press('Escape');
+  checks.push('no popup stays after a click on a chart and the mouse leaving');
   await panel.scrollIntoViewIfNeeded();
   const legend = panel.locator('.chart-legend');
   await legend.getByRole('button').first().focus();

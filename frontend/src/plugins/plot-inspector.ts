@@ -801,8 +801,10 @@ export function plotInspector(
     show(x, y, box.left + pixel, box.top + y, announce);
     onCursor(cursor.hidden ? null : { axis: axis(), value: x, runOrder: primaryRunOrder });
   }
+  // Only keyboard focus starts the keyboard inspector. A click that focuses the chart must not:
+  // its keyboard point would come back whenever the linked cursor clears, after the mouse left.
   function focus() {
-    if (!enabled || !ready) return;
+    if (!enabled || !ready || !canvas.matches(':focus-visible')) return;
     const steps = pointSteps();
     if (!steps.length || (local && popup && !popup.hidden)) return;
     keyboardPoint(lastX ?? steps[Math.floor(steps.length / 2)]);
