@@ -302,8 +302,17 @@
       side,
     };
   }
+  // The preview glides when its column or row count changes, and otherwise follows the pointer.
+  let previewReflow = $state(false),
+    reflowTimer = 0;
+  function reflowPreview() {
+    previewReflow = true;
+    clearTimeout(reflowTimer);
+    reflowTimer = window.setTimeout(() => (previewReflow = false), 150);
+  }
   function moveResize(event: PointerEvent) {
     if (!drag || event.pointerId !== drag.pointerId) return;
+    const { columns, rows } = drag;
     drag.moved ||= Math.abs(event.clientX - drag.x) + Math.abs(event.clientY - drag.y) > 4;
     if (!drag.moved) return;
     const g = geometry(drag.id);
@@ -321,6 +330,7 @@
           Math.round((drag.startRows * (g.height + 16) + event.clientY - drag.y) / (g.height + 16)),
         ),
       );
+    if (drag.columns !== columns || drag.rows !== rows) reflowPreview();
   }
   // Motion for a layout change, as Carbon's productive standard easing.
   const layoutMotion = { duration: 240, easing: 'cubic-bezier(0.2, 0, 0.38, 0.9)' };
@@ -1170,12 +1180,15 @@
   {@const index = drag.absoluteIndex % (drag.columns * drag.rows)}
   <div
     class="resize-preview"
-    style:left={drag.left +
-      (drag.kind === 'panel' ? (index % drag.columns) * (drag.width + 16) : 0) +
-      'px'}
-    style:top={drag.top +
-      (drag.kind === 'panel' ? Math.floor(index / drag.columns) * (drag.height + 16) : 0) +
-      'px'}
+    class:reflow={previewReflow}
+    style:left={drag.left + 'px'}
+    style:top={drag.top + 'px'}
+    style:translate={drag.kind === 'panel'
+      ? (index % drag.columns) * (drag.width + 16) +
+        'px ' +
+        Math.floor(index / drag.columns) * (drag.height + 16) +
+        'px'
+      : undefined}
     style:width={(drag.kind === 'panel' ? drag.width : g.width) + 'px'}
     style:height={(drag.kind === 'panel' ? drag.height : drag.rows * (g.height + 16) - 16) + 'px'}
   >

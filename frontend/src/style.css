@@ -1518,6 +1518,12 @@ aside {
   border: 2px dashed var(--cds-focus);
   background: color-mix(in srgb, var(--cds-focus) 8%, transparent);
 }
+/* A change of column or row count glides; otherwise the preview follows the pointer. */
+.resize-preview.reflow {
+  transition-property: translate, width, height;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.2, 0, 0.38, 0.9);
+}
 .resize-preview > span {
   position: absolute;
   right: 0;
@@ -5278,7 +5284,8 @@ aside {
   transition: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .carousel-item {
+  .carousel-item,
+  .resize-preview.reflow {
     transition: none;
   }
 }

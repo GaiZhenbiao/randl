@@ -346,15 +346,16 @@ async function beginResize(page, handle, dx, dy) {
   await page.mouse.move(box.x + box.width / 2 + dx, box.y + box.height / 2 + dy, { steps: 10 });
 }
 
-/** Waits for panels to finish moving to a new section layout. */
+/** Waits for panels, and a resize's preview, to finish moving to a new section layout. */
 async function laidOut(page) {
   await page.waitForFunction(() =>
     document
       .getAnimations()
       .every(
         (animation) =>
-          !animation.effect?.target?.classList?.contains('chart') ||
-          animation.playState === 'finished',
+          !['chart', 'resize-preview'].some((name) =>
+            animation.effect?.target?.classList?.contains(name),
+          ) || animation.playState === 'finished',
       ),
   );
 }
@@ -1162,6 +1163,7 @@ try {
         await beginResize(page, handle, first.width * (id === 'dense' ? 0.65 : -0.5), 45);
         const preview = page.locator('.resize-preview');
         await expect(preview).toBeVisible();
+        await laidOut(page);
         const ghost = await preview.boundingBox();
         const grid = await section.locator('.section-grid').boundingBox();
         assert.ok(
@@ -1335,6 +1337,7 @@ try {
       }
       await beginResize(page, handle, 0, 35);
       const preview = page.locator('.resize-preview');
+      await laidOut(page);
       const before = await preview.boundingBox();
       const beforeGrid = await section.locator('.section-grid').boundingBox();
       // Scroll during the gesture as well as starting from a section below the fold.
@@ -1353,6 +1356,7 @@ try {
           return Math.abs(ghost.y - grid.y - (before.y - beforeGrid.y));
         })
         .toBeLessThan(2);
+      await laidOut(page);
       const current = await preview.boundingBox();
       await page.mouse.up();
       await expect
