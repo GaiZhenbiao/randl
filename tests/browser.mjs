@@ -1286,9 +1286,16 @@ try {
         resting.flat().every((corner) => corner.opacity === '0'),
         'Corners shown at rest',
       );
+      // A corner shows only to a mouse near it, not anywhere over the panel.
       await cards.last().hover();
+      await page.waitForTimeout(200);
+      assert.equal((await corners())[1][0].opacity, '0', 'Corner shown far from the mouse');
+      const last = await cards.last().boundingBox();
+      await page.mouse.move(last.x + 30, last.y + last.height - 30, { steps: 4 });
       await expect.poll(async () => (await corners())[1][0].opacity).toBe('1');
       assert.equal((await corners())[0][0].opacity, '0', 'Corner shown on an unhovered panel');
+      await page.mouse.move(last.x + last.width / 2, last.y + last.height - 30, { steps: 4 });
+      await expect.poll(async () => (await corners())[1][0].opacity).toBe('0');
       const baseline = await persisted(viewId);
       await handle.click();
       await page.waitForTimeout(700);

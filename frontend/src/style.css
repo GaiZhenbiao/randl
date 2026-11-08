@@ -1445,6 +1445,7 @@ aside {
   touch-action: pan-y;
 }
 .panel-corner {
+  transition: opacity 100ms ease-out;
   position: absolute;
   right: 0;
   bottom: 0;
@@ -1478,9 +1479,11 @@ aside {
   border-right: 0;
   border-left: 2px solid var(--cds-text-02);
 }
-/* The corners show to a hovering mouse and to keyboard focus, not on touch screens. */
+/* A corner shows to a mouse near it (`near`, set by the panel) and to keyboard focus, not on
+   touch screens. */
 @media (hover: hover) {
-  .chart:hover .panel-corner {
+  .panel-corner.near,
+  .panel-corner:hover {
     opacity: 1;
   }
 }

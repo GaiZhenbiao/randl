@@ -109,6 +109,22 @@
       left = columns > 1 && column > 0;
     return right ? (left ? ['right', 'left'] : ['right']) : ['left'];
   });
+  /** The corner a mouse is within `nearCorner` px of, which shows its resize handle. */
+  const nearCorner = 40;
+  let near = $state<ResizeSide | undefined>();
+  function trackCorner(event: PointerEvent) {
+    if (event.pointerType !== 'mouse' || expanded || readonly || !onresizestart) return;
+    const box = container.getBoundingClientRect(),
+      low = box.bottom - event.clientY <= nearCorner,
+      side = !low
+        ? undefined
+        : event.clientX - box.left <= nearCorner
+          ? 'left'
+          : box.right - event.clientX <= nearCorner
+            ? 'right'
+            : undefined;
+    if (side !== near) near = side;
+  }
   let container: HTMLElement, plot: HTMLDivElement;
   let visible = $state(false),
     loading = $state(false),
@@ -864,6 +880,8 @@
   bind:this={container}
   onfocusin={() => (focusWithin = true)}
   onfocusout={(event) => (focusWithin = container.contains(event.relatedTarget as Node))}
+  onpointermovecapture={trackCorner}
+  onpointerleave={() => (near = undefined)}
   data-panel-id={panel.id}
   aria-busy={loading}
   style:height={expanded ? undefined : height + 'px'}
@@ -1151,6 +1169,7 @@
   {#if !expanded && !readonly && onresizestart}{#each corners as side (side)}<button
         class="panel-corner"
         class:left={side === 'left'}
+        class:near={near === side}
         aria-label={$t(resizeLabel)}
         aria-describedby="panel-resize-help"
         aria-hidden={side === corners[0] ? undefined : 'true'}
