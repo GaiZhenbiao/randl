@@ -727,6 +727,84 @@ try {
     .toBeGreaterThanOrEqual(1);
   checks.push('automatic panels for video and audio lists; audio lists tile per clip');
 
+  // The SDK logs a video's history row before it uploads the file. Coverflow shows a file that
+  // has not arrived as unavailable, then its first frame once the upload lands, on the current
+  // item and its neighbors alike.
+  const late = entity + '/late-' + Date.now(),
+    lateRuns = ['first', 'second', 'third'].map((name) => late + '/' + name);
+  projects.push(late);
+  const clipBytes = await (
+    await api.fetch('/api/run-files?' + new URLSearchParams({ run: run.id, path: clip.path }))
+  ).body();
+  for (const id of lateRuns)
+    await call('/graphql', {
+      query: 'mutation UpsertBucket { upsertBucket }',
+      variables: { entity, project: late.split('/')[1], name: id.split('/')[2] },
+    });
+  const lateUpload = async (id, step) => {
+    const put = await api.fetch(`/upload/${id}/media/videos/clip_${step}.mp4`, {
+      method: 'PUT',
+      data: clipBytes,
+    });
+    assert.ok(put.ok(), await put.text());
+  };
+  // No digest, so each step's file is its own poster.
+  const lateRow = (id, step) =>
+    call(`/files/${id}/file_stream`, {
+      files: {
+        'wandb-history.jsonl': {
+          offset: step,
+          content: [
+            JSON.stringify({
+              _step: step,
+              clip: { ...clip, sha256: undefined, path: `media/videos/clip_${step}.mp4` },
+            }),
+          ],
+        },
+      },
+    });
+  for (const id of lateRuns) {
+    await lateUpload(id, 0);
+    await lateRow(id, 0);
+  }
+  await open(
+    await createView(
+      late,
+      [
+        {
+          id: 'late',
+          plugin: 'video',
+          metric: 'clip',
+          title: 'late',
+          section: 'late',
+          settings: { layout: 'coverflow' },
+        },
+      ],
+      { visible: lateRuns, sections: [{ id: 'late', name: 'late' }] },
+    ),
+  );
+  const lateItems = panel('late').locator('.carousel-item');
+  const lateFrames = () =>
+    lateItems.evaluateAll((all) =>
+      all.map((item) => {
+        const poster = item.querySelector('.media-poster');
+        return poster
+          ? (poster.getAttribute('src')?.match(/clip_\d/)?.[0] ?? 'drawn') +
+              (poster.naturalWidth > 0 ? '' : ' blank')
+          : item.querySelector('.media-missing')?.textContent;
+      }),
+    );
+  await expect.poll(lateFrames).toEqual(['clip_0', 'clip_0', 'clip_0']);
+  for (const id of lateRuns) await lateRow(id, 1);
+  await expect
+    .poll(lateFrames)
+    .toEqual(['Preview unavailable', 'Preview unavailable', 'Preview unavailable']);
+  for (const id of lateRuns) await lateUpload(id, 1);
+  await expect.poll(lateFrames).toEqual(['clip_1', 'clip_1', 'clip_1']);
+  for (const id of lateRuns)
+    await call(`/files/${id}/file_stream`, { files: {}, complete: true, exitcode: 0 });
+  checks.push('videos uploaded after their rows show their first frames once they arrive');
+
   // Videos of several runs: first-frame posters, playback while partly visible, full screen
   // in the grid and Coverflow, and Coverflow's run strip. The runs log SDK media descriptors
   // for clips made here with ffmpeg: wide (64:27), tall (9:16) and the SDK's 4:3 reel.

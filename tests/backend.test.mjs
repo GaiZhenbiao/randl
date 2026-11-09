@@ -348,6 +348,27 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
     (await media({ runs: ids, metric: 'gallery', baseRevision: 'older' })).entries,
     shown.entries,
   );
+  // The SDK logs a file's row before it uploads the file: files not uploaded yet are listed as
+  // missing, in logged order, and their upload changes the revision.
+  const files = (step, count) =>
+    Array.from({ length: count }, (_, i) => `media/images/g_${step}_${i}.png`);
+  assert.deepEqual(
+    shown.entries.map((entry) => entry.missing),
+    [files(20, 4), files(15, 2), files(30, 1)],
+  );
+  const uploaded = await app.inject({
+    url: '/upload/e/m/a/media/images/g_20_1.png',
+    method: 'PUT',
+    payload: Buffer.from('png'),
+    headers: { 'content-type': 'application/octet-stream' },
+  });
+  assert.equal(uploaded.statusCode, 200, uploaded.body);
+  const arrived = await media({ runs: ids, metric: 'gallery', baseRevision: shown.revision });
+  assert.notEqual(arrived.revision, shown.revision);
+  assert.deepEqual(
+    arrived.entries[0].missing,
+    files(20, 4).filter((path) => !path.endsWith('_1.png')),
+  );
   for (const files of [0, 1001, 2.5])
     assert.equal(
       (

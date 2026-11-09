@@ -188,6 +188,8 @@ export type MediaEntry = {
   /** Set when `value` lists only the first of `files` logged files. */
   files?: number;
   filesTruncated?: boolean;
+  /** Paths of the value's files that have not been uploaded yet. */
+  missing?: string[];
 };
 export type PanelContext = {
   locale: string;

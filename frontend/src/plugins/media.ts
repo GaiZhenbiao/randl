@@ -11,7 +11,15 @@ import type { MediaEntry, PanelContext, Renderer } from '../types';
 // host's item size; a logged list (W&B `images/separated`, `videos`, `audio`) is one tile per
 // file. Coverflow shows one file at a time: a run's files, with run tabs, or the runs. Tables
 // keep one table at a time.
-type Tile = { entry: MediaEntry; item?: MediaItem; index: number; files: number };
+// A file whose history row arrived before its upload is `missing` until the upload changes
+// the entry; its tile then rebuilds and loads the file and its poster.
+type Tile = {
+  entry: MediaEntry;
+  item?: MediaItem;
+  index: number;
+  files: number;
+  missing?: boolean;
+};
 /** What a Coverflow shows: see `sync`. */
 type Flow = { key?: string; position: number; tab: number; tabs: boolean; items: Tile[] };
 const newFlow = (): Flow => ({ position: 0, tab: 0, tabs: false, items: [] });
@@ -300,9 +308,11 @@ export function create({ element }: { element: HTMLElement }): Renderer {
   function frame(tile: Tile, use: 'tile' | 'stage' | 'peek', host?: HTMLElement) {
     const frame = document.createElement('div');
     frame.className = 'media-frame';
-    if (!tile.item) {
+    if (!tile.item || tile.missing) {
       frame.classList.add('media-missing');
-      frame.textContent = ctx!.translate('media.tile.noEntry', { step: ctx!.data.step ?? 0 });
+      frame.textContent = tile.item
+        ? ctx!.translate('media.tile.unavailable')
+        : ctx!.translate('media.tile.noEntry', { step: ctx!.data.step ?? 0 });
       return frame;
     }
     if (kind() === 'image') {
@@ -630,9 +640,16 @@ export function create({ element }: { element: HTMLElement }): Renderer {
         return;
       }
       groups = entries.map((entry) => {
-        const items: (MediaItem | undefined)[] = entry.value ? mediaItems(entry.value) : [];
+        const items: (MediaItem | undefined)[] = entry.value ? mediaItems(entry.value) : [],
+          missing = new Set(entry.missing);
         if (!items.length) items.push(undefined);
-        return items.map((item, index) => ({ entry, item, index, files: items.length }));
+        return items.map((item, index) => ({
+          entry,
+          item,
+          index,
+          files: items.length,
+          ...(item && missing.has(item.path) ? { missing: true } : {}),
+        }));
       });
       tiles = groups.flat();
       // New content rebuilds the items in view (the browser cache serves their files); a new
@@ -702,7 +719,7 @@ export function create({ element }: { element: HTMLElement }): Renderer {
                 media.muted = !media.muted;
                 return true;
               }
-              if (event.key !== ' ' || kind() === 'image') return false;
+              if (event.key !== ' ' || kind() === 'image' || tiles[index].missing) return false;
               if (media) {
                 if (media.paused) void media.play();
                 else media.pause();

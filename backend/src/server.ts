@@ -12,6 +12,7 @@ import { writeUpload } from './upload.js';
 import { byteRange } from './byte-range.js';
 import { VideoPosters, posterTypes } from './video-poster.js';
 import { videoSize } from './video-size.js';
+import { mediaItems } from './media-items.js';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { promises as fs, createReadStream } from 'node:fs';
@@ -417,11 +418,39 @@ export async function createServer(
     async (req) => {
       const { baseRevision, ...body } = req.body as any;
       const media = await db.call('media', body);
-      await sizeVideos(media.entries);
+      await Promise.all([sizeVideos(media.entries), markMissing(media.entries)]);
       const revision = createHash('sha256').update(JSON.stringify(media)).digest('hex');
       return revision === baseRevision ? { unchanged: true, revision } : { ...media, revision };
     },
   );
+  // The SDK logs a file's history row before it uploads the file. Files not uploaded yet are
+  // listed in their entry's `missing`; the upload changes the revision, so the panel loads them
+  // then instead of keeping the failed first try.
+  async function markMissing(entries: { run: string; value: any; missing?: string[] }[]) {
+    const absent = new Set<string>(),
+      files = entries.flatMap((entry) =>
+        entry.value ? mediaItems(entry.value).map(({ path }) => ({ run: entry.run, path })) : [],
+      );
+    for (let start = 0; start < files.length; start += 32)
+      await Promise.all(
+        files.slice(start, start + 32).map(async ({ run, path }) => {
+          const folder = runFolder(directory, run),
+            file = resolve(folder, path);
+          const present =
+            contained(folder, file) && (await fs.stat(file).then((s) => s.isFile(), () => false));
+          if (!present) absent.add(run + '\0' + path);
+        }),
+      );
+    if (absent.size)
+      for (const entry of entries) {
+        const missing = entry.value
+          ? mediaItems(entry.value)
+              .map(({ path }) => path)
+              .filter((path) => absent.has(entry.run + '\0' + path))
+          : [];
+        if (missing.length) entry.missing = missing;
+      }
+  }
   // Video descriptors without a logged size get the file's size from its header (video-size.ts),
   // so tiles have their shape before any frame loads.
   async function sizeVideos(entries: { run: string; value: any }[]) {
