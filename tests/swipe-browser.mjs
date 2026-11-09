@@ -49,8 +49,14 @@ try {
       generation: 'manual',
       visible: runs,
       solo: [],
-      sections: [{ id: 'paged', name: 'Paged' }],
-      sectionLayouts: { paged: { width: 600, height: 300, rows: 1 } },
+      sections: [
+        { id: 'paged', name: 'Paged' },
+        { id: 'rows', name: 'Rows' },
+      ],
+      sectionLayouts: {
+        paged: { width: 600, height: 300, rows: 1 },
+        rows: { width: 600, height: 200, rows: 2 },
+      },
       panels: [
         {
           id: 'flow',
@@ -66,6 +72,14 @@ try {
           metric,
           title: 'Panel ' + index,
           section: 'paged',
+        })),
+        // Two columns of two rows: a full first page and a second of one row.
+        ...['a', 'b', 'c', 'a', 'b'].map((metric, index) => ({
+          id: 'r' + index,
+          plugin: 'line',
+          metric,
+          title: 'Row panel ' + index,
+          section: 'rows',
         })),
       ],
     },
@@ -151,8 +165,86 @@ try {
   await expect(label).toHaveText('3–4');
   checks.push('horizontal touchpad scrolls page; vertical ones do not');
 
+  // The page buttons move the pages as a swipe settles: the next page slides in beside the
+  // current one. Each frame's shift and section height, while `action` runs.
+  const frames = (target, action) =>
+    Promise.all([
+      target.evaluate(
+        (node) =>
+          new Promise((resolve) => {
+            const values = [],
+              start = performance.now(),
+              track = node.querySelector('.section-track');
+            const tick = () => {
+              values.push({
+                shift: Number(track.style.transform.match(/translateX\(([-\d.e]+)px/)?.[1] ?? 0),
+                height: node.getBoundingClientRect().height,
+              });
+              if (performance.now() - start < 700) requestAnimationFrame(tick);
+              else resolve(values);
+            };
+            requestAnimationFrame(tick);
+          }),
+      ),
+      action(),
+    ]).then(([values]) => values);
+  const moving = await frames(grid, () =>
+    page.getByRole('button', { name: 'Previous panels in Paged', exact: true }).click(),
+  );
+  await expect(label).toHaveText('1–2');
+  await rest();
+  const between = moving.filter((frame) => frame.shift < -0.1 * unit && frame.shift > -0.9 * unit);
+  assert.ok(between.length >= 3, 'the pages slide: ' + JSON.stringify(moving.map((f) => f.shift)));
+  checks.push('the page buttons slide the pages');
+  // A page with fewer rows: the section's height moves to it with the pages, and back.
+  const rowsSection = page.locator('section.metric-section[data-section-id="rows"]'),
+    rowsGrid = rowsSection.locator('.section-grid'),
+    rowsLabel = rowsSection.locator('.section-page');
+  await rowsSection.scrollIntoViewIfNeeded();
+  await expect(rowsLabel).toHaveText('1–4');
+  const tall = (await rowsGrid.boundingBox()).height;
+  const shrinking = await frames(rowsGrid, () =>
+    page.getByRole('button', { name: 'Next panels in Rows', exact: true }).click(),
+  );
+  await expect(rowsLabel).toHaveText('5–5');
+  await expect(rowsGrid).not.toHaveClass(/swiping/);
+  const short = (await rowsGrid.boundingBox()).height;
+  assert.ok(short < tall * 0.7, `${short} < ${tall}`);
+  const heights = shrinking.map((frame) => frame.height);
+  assert.ok(
+    heights.filter((height) => height < tall - 10 && height > short + 10).length >= 3,
+    'the height moves: ' + heights,
+  );
+  for (let index = 1; index < heights.length; index++)
+    assert.ok(heights[index] <= heights[index - 1] + 0.5, 'shrinks steadily: ' + heights);
+  assert.ok(Math.abs(heights.at(-1) - short) < 1, heights.at(-1) + ' ends at ' + short);
+  const growing = (
+    await frames(rowsGrid, () =>
+      page.getByRole('button', { name: 'Previous panels in Rows', exact: true }).click(),
+    )
+  ).map((frame) => frame.height);
+  assert.ok(
+    growing.filter((height) => height > short + 10 && height < tall - 10).length >= 3,
+    'the height moves back: ' + growing,
+  );
+  await expect(rowsGrid).not.toHaveClass(/swiping/);
+  assert.ok(Math.abs((await rowsGrid.boundingBox()).height - tall) < 1);
+  checks.push("a page with fewer rows: the section's height moves with the pages");
+  // Under reduced motion the buttons change the page at once.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const still = await frames(rowsGrid, () =>
+    page.getByRole('button', { name: 'Next panels in Rows', exact: true }).click(),
+  );
+  await expect(rowsLabel).toHaveText('5–5');
+  assert.ok(
+    still.every((frame) => frame.shift === 0),
+    'no slide: ' + still.map((f) => f.shift),
+  );
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  checks.push('reduced motion changes the page at once');
+
   // A swipe on the Coverflow panel moves its runs, not the section's pages.
-  await page.getByRole('button', { name: 'Previous panels in Paged', exact: true }).click();
+  await section.scrollIntoViewIfNeeded();
   await expect(label).toHaveText('1–2');
   const slide = section.locator('.carousel-slide');
   await expect(slide).toHaveAttribute('aria-label', /^1 of 6: /);

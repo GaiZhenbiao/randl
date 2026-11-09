@@ -168,6 +168,13 @@
   // finger, the page beside the current one mounted while it shows, and settle on a page.
   const pageGap = 32;
   let swipePages = $state<Record<string, number[]>>({});
+  /** Each shown section's pager, which the page buttons move. */
+  const pagers = new Map<string, Swipe>();
+  function turnPage(id: string, page: number) {
+    const swipe = pagers.get(id);
+    if (swipe) swipe.slide(page);
+    else pageBySection = { ...pageBySection, [id]: page };
+  }
   function pager(node: HTMLElement, params: { id: string; pages: number; page: number }) {
     let current = params,
       chosen = -1;
@@ -183,30 +190,44 @@
             const { [id]: _, ...rest } = swipePages;
             swipePages = rest;
             track?.style.removeProperty('transform');
+            node.style.removeProperty('height');
             return;
           }
           const first = Math.max(0, Math.min(current.pages - 1, Math.floor(position))),
             shown = position > first && first + 1 < current.pages ? [first, first + 1] : [first];
           if (swipePages[id]?.join() !== shown.join()) swipePages = { ...swipePages, [id]: shown };
           if (track) track.style.transform = `translateX(${-(position - first) * unit()}px)`;
+          // Pages with fewer rows are shorter: the section's height moves between the two
+          // pages' heights as the pages do, so what follows the section moves smoothly too.
+          const height = (page: number) =>
+            node.querySelector<HTMLElement>(`.section-track > .charts[data-page="${page}"]`)
+              ?.offsetHeight;
+          const from = height(first),
+            to = height(first + 1) ?? from,
+            t = Math.max(0, Math.min(1, position - first));
+          if (from !== undefined && to !== undefined)
+            node.style.height = from + (to - from) * t + 'px';
         },
         choose: (index) => {
           chosen = index;
           pageBySection = { ...pageBySection, [current.id]: index };
         },
       });
+    pagers.set(params.id, swipe);
     return {
       update(next: typeof params) {
-        // The page buttons, a resize or a reorder changing the page during a swipe end it.
+        // A resize or a reorder changing the page during a swipe ends it.
         if (swipe.active && next.page !== current.page && next.page !== chosen) {
           swipe.stop();
           const { [next.id]: _, ...rest } = swipePages;
           swipePages = rest;
           node.querySelector<HTMLElement>('.section-track')?.style.removeProperty('transform');
+          node.style.removeProperty('height');
         }
         current = next;
       },
       destroy() {
+        if (pagers.get(current.id) === swipe) pagers.delete(current.id);
         swipe.destroy();
       },
     };
@@ -1025,7 +1046,7 @@
             iconDescription={$t('workspace.section.previousPage', { name: section.name })}
             portalTooltip
             disabled={page === 0}
-            on:click={() => (pageBySection = { ...pageBySection, [section.id]: page - 1 })}
+            on:click={() => turnPage(section.id, page - 1)}
           /><Button
             kind="ghost"
             size="small"
@@ -1035,7 +1056,7 @@
             iconDescription={$t('workspace.section.nextPage', { name: section.name })}
             portalTooltip
             disabled={(page + 1) * size >= content.length}
-            on:click={() => (pageBySection = { ...pageBySection, [section.id]: page + 1 })}
+            on:click={() => turnPage(section.id, page + 1)}
           />{/if}<span class="section-heading-actions"
           >{#if content.length}<Button
               kind="ghost"
@@ -1116,6 +1137,7 @@
         <div class="section-track">
           {#each swipePages[section.id] ?? [page] as shownPage (shownPage)}<div
               class="charts"
+              data-page={shownPage}
               style:grid-template-columns={'repeat(' + g.columns + ', minmax(0,1fr))'}
               aria-hidden={shownPage === page ? undefined : 'true'}
               inert={shownPage !== page}

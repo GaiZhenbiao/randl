@@ -1437,8 +1437,9 @@ aside {
 .section-track > .charts {
   flex: 0 0 100%;
 }
+/* While the pages move, the section's height moves between theirs and clips the taller one. */
 .section-grid.swiping {
-  overflow-x: clip;
+  overflow: clip;
 }
 /* Horizontal touch drags on a section with pages are its own; vertical ones scroll. */
 .section-grid.pageable {

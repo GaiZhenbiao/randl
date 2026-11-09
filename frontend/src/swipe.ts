@@ -136,6 +136,26 @@ export class Swipe {
     this.position = undefined;
     this.element.classList.remove('swiping');
   }
+  /**
+   * Moves the items to `target` as a button does: it becomes current and the spring carries the
+   * items there from where they show, at once under reduced motion.
+   */
+  slide(target: number) {
+    const index = this.options.index();
+    target = Math.max(0, Math.min(this.options.count() - 1, target));
+    if (target === index && !this.active) return;
+    const from = this.position ?? index;
+    this.stop();
+    if (target !== index) this.options.choose(target);
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.options.show(undefined);
+      return;
+    }
+    this.position = from;
+    this.velocity = 0;
+    this.element.classList.add('swiping');
+    this.settle(target, this.options.unit());
+  }
   destroy() {
     this.halt();
     const element = this.element;
