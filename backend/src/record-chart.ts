@@ -57,15 +57,6 @@ type Store = {
 export type RecordTransform =
   | { kind: 'align'; normalization: 'none' | 'percent' }
   | { kind: 'compute'; expressions: ComputedMetric[]; align?: 'none' | 'percent' };
-export const recordTransformLimits = {
-  inputSlots: 500000,
-  // Stored values one chart request may read for runs not already cached (computed and
-  // grouped charts, whose per-run limits would otherwise multiply with the run count).
-  requestValues: 50_000_000,
-  sourceRecords: 1000000,
-  sourceBytes: 128 * 1024 ** 2,
-  recordBytes: 1024 ** 2,
-};
 const finite = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
 // One scan of every run's records: the inputs that must all be present in a record, the output
@@ -237,13 +228,46 @@ export function collectAligned(observations: Iterable<number[]>, budget: number)
   for (const point of observations) collector.add(point);
   return collector.finish();
 }
-// Request-wide work accounting, shared when one request computes runs separately.
-export type RecordUsage = { inspectedValues: number; scannedRecords: number; scannedBytes: number };
-export const recordUsage = (): RecordUsage => ({
-  inspectedValues: 0,
-  scannedRecords: 0,
-  scannedBytes: 0,
-});
+/**
+ * Computed points of one pass as columns ordered by X: `xs` and one array of values per
+ * output, 8 bytes a value, as compact as the stored series they come from.
+ */
+export type Columns = { xs: Float64Array; ys: Float64Array[] };
+/** Collects points into growing columns; `finish` orders them by X, ties in arrival order. */
+export function columnCollector(outputs: number) {
+  const stride = outputs + 1;
+  let data = new Float64Array(stride * 1024),
+    count = 0,
+    ordered = true;
+  return {
+    add(point: number[]) {
+      if (count * stride + stride > data.length) {
+        const grown = new Float64Array(data.length * 2);
+        grown.set(data);
+        data = grown;
+      }
+      if (count && point[0] < data[(count - 1) * stride]) ordered = false;
+      data.set(point, count++ * stride);
+    },
+    finish(): Columns {
+      let order: ArrayLike<number> | undefined;
+      if (!ordered) {
+        const indices = new Uint32Array(count);
+        for (let i = 0; i < count; i++) indices[i] = i;
+        indices.sort((a, b) => data[a * stride] - data[b * stride] || a - b);
+        order = indices;
+      }
+      const xs = new Float64Array(count),
+        ys = Array.from({ length: outputs }, () => new Float64Array(count));
+      for (let i = 0; i < count; i++) {
+        const at = (order ? order[i] : i) * stride;
+        xs[i] = data[at];
+        for (let o = 0; o < outputs; o++) ys[o][i] = data[at + 1 + o];
+      }
+      return { xs, ys };
+    },
+  };
+}
 // Records evaluated between yields of a record-chart job.
 const recordsPerYield = 4096;
 /**
@@ -258,13 +282,11 @@ export function* recordChartJob(
   args: Row,
   options: {
     raw?: boolean;
-    usage?: RecordUsage;
     visit?: (pass: Pass) => { add: (point: number[]) => void; finish: () => void };
     /** The request's validated passes, when the caller computes runs one at a time. */
     passes?: Pass[];
   } = {},
 ): Generator<void, Row> {
-  const usage = options.usage ?? recordUsage();
   const requested = [...new Set<string>(args.metrics || [])],
     transform = args.recordTransform as RecordTransform;
   const passes = options.passes ?? recordPasses(transform, requested, args.mode);
@@ -272,9 +294,6 @@ export function* recordChartJob(
   const metrics = passes.flatMap((pass) => pass.outputs);
   const settings = { ...args.settings },
     limit = typeof settings.maxRuns === 'number' ? settings.maxRuns : undefined;
-  // Aligned composition is reduced as it is read. Raw computed caches and independent
-  // computations keep the input-slot guard; visitors reduce what they are handed.
-  const aligned = transform.kind === 'align' || (transform.kind === 'compute' && !!transform.align);
   const ids = [...new Set<string>(args.runs)].slice(0, limit);
   if (!settings.xAxis) {
     const definitions = store.metricSettings(ids, [inputs[0]]);
@@ -312,39 +331,39 @@ export function* recordChartJob(
       omittedRecords++;
       return;
     }
-    usage.inspectedValues += Math.max(1, pass.inputs.length);
-    if (
-      (!aligned || options.raw) &&
-      !options.visit &&
-      usage.inspectedValues > recordTransformLimits.inputSlots
-    )
-      throw recordTransformError('inputLimit', {
-        limit: Math.floor(recordTransformLimits.inputSlots / Math.max(1, pass.inputs.length)),
-      });
     return output;
   }
-  // When every stored history record has its own numeric _step, the point store holds exactly
-  // one value per record and metric, so joining points on the step pairs the same record
-  // without parsing JSON. The record byte limits do not apply to this path.
+  // History is read from the point store, which holds one value per run, metric and step:
+  // a record's numeric fields at its _step (or, without one, its line offset), the latest
+  // record winning when a resumed run logs a step again, as plain charts show it. Joining
+  // the inputs on the step pairs each step's values without parsing JSON. The steps are
+  // those of _step and of the inputs, so records without _step take part too.
   function* pointObservations(
     pass: Pass,
     id: string,
-    total: number,
     bounded: boolean,
     missing: boolean,
     origin: number | null,
   ): Generator<number[] | null> {
-    const steps = store.history.series(id, '_step').steps,
-      xValues =
+    const xValues =
         xAxis === '_step'
           ? undefined
           : store.history.series(id, xAxis === '_relative_wall' ? '_timestamp' : xAxis),
       inputs = missing ? [] : pass.inputs.map((metric) => store.history.series(id, metric)),
-      positions = inputs.map(() => 0);
+      positions = inputs.map(() => 0),
+      sources = [store.history.series(id, '_step').steps, ...inputs.map((input) => input.steps)],
+      cursors = sources.map(() => 0);
     let xp = 0,
-      considered = bounded ? 0 : total,
+      considered = 0,
       retained = 0;
-    for (const step of steps) {
+    for (;;) {
+      // The next step of any source: their union, in order.
+      let step = Infinity;
+      for (let i = 0; i < sources.length; i++)
+        if (cursors[i] < sources[i].length && sources[i][cursors[i]] < step)
+          step = sources[i][cursors[i]];
+      if (step === Infinity) break;
+      for (let i = 0; i < sources.length; i++) if (sources[i][cursors[i]] === step) cursors[i]++;
       // null asks the job to yield.
       if (++work % recordsPerYield === 0) yield null;
       let x: number | null = step;
@@ -363,7 +382,7 @@ export function* recordChartJob(
           (finite(settings.xMax) && x > settings.xMax))
       )
         continue;
-      if (bounded) considered++;
+      considered++;
       if (missing || !finite(x)) continue;
       const values: number[] = [];
       for (let i = 0; i < inputs.length; i++) {
@@ -382,17 +401,10 @@ export function* recordChartJob(
   }
   function* observations(pass: Pass, id: string): Generator<number[] | null> {
     const file = system ? 'wandb-events.jsonl' : 'wandb-history.jsonl',
-      bounded = finite(settings.xMin) || finite(settings.xMax),
-      remaining = recordTransformLimits.sourceRecords - usage.scannedRecords,
-      size = store.history.lineStats(id, file);
-    if (size.records > remaining)
-      throw recordTransformError('sourceRecordLimit', {
-        limit: recordTransformLimits.sourceRecords,
-      });
-    usage.scannedRecords += size.records;
+      bounded = finite(settings.xMin) || finite(settings.xMax);
     const missing = pass.inputs.some((metric) => !store.history.hasPoints(id, metric));
     if (missing && !bounded) {
-      omittedRecords += size.records;
+      omittedRecords += store.history.lineStats(id, file).records;
       return;
     }
     const origin =
@@ -400,31 +412,24 @@ export function* recordChartJob(
         ? store.history.minValue(id, system ? 'system/_timestamp' : '_timestamp')
         : null;
     if (xAxis === '_relative_wall' && !finite(origin)) {
-      if (!bounded) omittedRecords += size.records;
+      if (!bounded) omittedRecords += store.history.lineStats(id, file).records;
       return;
     }
-    if (!system && size.records && store.history.stats(id, '_step').n === size.records) {
-      yield* pointObservations(pass, id, size.records, bounded, missing, origin);
+    if (!system) {
+      yield* pointObservations(pass, id, bounded, missing, origin);
       return;
     }
-    usage.scannedBytes += size.bytes;
-    if (usage.scannedBytes > recordTransformLimits.sourceBytes)
-      throw recordTransformError('sourceBytesLimit', { limit: 128 });
-    if (size.largest > recordTransformLimits.recordBytes)
-      throw recordTransformError('recordBytesLimit', { limit: 1 });
+    // System events are read record by record, a page of lines at a time: their custom axes
+    // follow the record's own keys.
     for (const entry of store.history.lines(id, file)) {
       if (++work % recordsPerYield === 0) yield null;
       const raw = JSON.parse(entry.content),
-        fallback = system
-          ? ['_step', '_timestamp', '_relative_wall'].includes(xAxis)
-          : xAxis === '_step';
-      let value: unknown;
-      if (fallback) value = raw[system ? '_timestamp' : '_step'] ?? entry.offset;
-      else if (system) value = systemAxisValue(raw, entry.content, xAxis);
-      else value = raw[xAxis === '_relative_wall' ? '_timestamp' : xAxis];
+        value = ['_step', '_timestamp', '_relative_wall'].includes(xAxis)
+          ? (raw._timestamp ?? entry.offset)
+          : systemAxisValue(raw, entry.content, xAxis);
       let x = typeof value === 'number' ? value : null;
       if (x !== null) {
-        if (xAxis === '_timestamp' || (system && xAxis === '_step')) x *= 1000;
+        if (xAxis === '_timestamp' || xAxis === '_step') x *= 1000;
         if (xAxis === '_relative_wall') x = origin === null ? null : x - origin;
       }
       if (
@@ -438,14 +443,12 @@ export function* recordChartJob(
         omittedRecords++;
         continue;
       }
-      const row: Row = system
-        ? Object.fromEntries(
-            Object.entries(raw).map(([key, value]) => [
-              'system/' + key.replace(/^system\./, ''),
-              value,
-            ]),
-          )
-        : raw;
+      const row: Row = Object.fromEntries(
+        Object.entries(raw).map(([key, value]) => [
+          'system/' + key.replace(/^system\./, ''),
+          value,
+        ]),
+      );
       const output = transformRecord(pass, (metric) =>
         Object.hasOwn(row, metric) ? row[metric] : undefined,
       );
@@ -464,31 +467,30 @@ export function* recordChartJob(
   }
   const series = [];
   for (const id of ids) {
-    const values: Record<string, number[][]> = {};
+    const values: Record<string, number[][] | Columns> = {};
     for (const pass of passes) {
       const outputs = pass.outputs;
-      let points: number[][];
-      if (aligned && !options.raw) {
-        const collector = alignedCollector(budgetFor(pass));
+      // With `raw`, every point is kept, as columns; otherwise points are reduced to the
+      // pass's budget as they are read.
+      if (options.raw) {
+        const collector = columnCollector(outputs.length);
         for (const point of observations(pass, id))
           if (point) collector.add(point);
           else yield;
-        const collected = collector.finish();
-        points = collected.points;
-        sampled ||= collected.sampled;
-        totalPoints += (collected.count - points.length) * outputs.length;
-      } else {
-        points = [];
-        for (const point of observations(pass, id))
-          if (point) points.push(point);
-          else yield;
-        points.sort((a, b) => a[0] - b[0]);
+        const { xs, ys } = collector.finish();
+        outputs.forEach((metric, index) => (values[metric] = { xs, ys: [ys[index]] }));
+        continue;
       }
-      totalPoints += points.length * outputs.length;
-      const selected = options.raw ? points : alignedSample(points, budgetFor(pass));
-      if (selected.length < points.length) sampled = true;
+      const collector = alignedCollector(budgetFor(pass));
+      for (const point of observations(pass, id))
+        if (point) collector.add(point);
+        else yield;
+      const collected = collector.finish(),
+        points = collected.points;
+      sampled ||= collected.sampled;
+      totalPoints += collected.count * outputs.length;
       outputs.forEach((metric, index) => {
-        values[metric] = selected.map((point) => [point[0], point[1 + index]]);
+        values[metric] = points.map((point) => [point[0], point[1 + index]]);
       });
     }
     series.push({ id, name: store.run(id)?.display_name || id, values });

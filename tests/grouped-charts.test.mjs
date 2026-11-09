@@ -7,7 +7,6 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Store } from '../backend/dist/database.js';
 import { createServer } from '../backend/dist/server.js';
-import { recordTransformLimits } from '../backend/dist/record-chart.js';
 import { GroupBuckets, RunBuckets, planGroupBuckets } from '../backend/dist/group-chart.js';
 import { ChartSelections, selectionToken } from '../backend/dist/chart-selection.js';
 
@@ -103,12 +102,8 @@ test('wall-clock groups aggregate runs whose timestamps never coincide', async (
   assert.ok(counts.at(-1) === 1, 'only the slowest run reaches the end');
 });
 
-test('grouped computed metrics use a per-run budget and match their per-run results', async (t) => {
-  const store = await fixture(t),
-    inputs = recordTransformLimits.inputSlots;
-  recordTransformLimits.inputSlots = 1000;
-  t.after(() => (recordTransformLimits.inputSlots = inputs));
-  // 400 records of two inputs per run: within the per-run limit, three runs exceed it together.
+test('grouped computed metrics match their per-run results', async (t) => {
+  const store = await fixture(t);
   const ids = [1, 2, 3].map((r) =>
     run(
       store,
@@ -144,16 +139,6 @@ test('grouped computed metrics use a per-run budget and match their per-run resu
   assert.ok(grouped.series[0].bands.rate.every((band) => band[1] === 0.25 && band[2] === 0.5));
   assert.ok(grouped.series[0].bands.rate.every((band) => band[3] === 2));
   assert.ok(grouped.series[0].values.rate.length <= 128 + 1);
-  // A single run above the per-run limit is still refused when its points are cached.
-  const large = run(
-    store,
-    'large',
-    steps(0, 600, 1, () => ({ hits: 1, total: 2 })),
-  );
-  assert.throws(
-    () => store.chart({ runs: [large], metrics: ['rate'], recordTransform: transform }),
-    { code: 'CHART_TRANSFORM_INPUT_LIMIT', params: { limit: 500 } },
-  );
 });
 
 test('grouped stacked areas bucket many distinct X values', async (t) => {
@@ -322,11 +307,9 @@ test('grouped charts aggregate selections beyond the chart run limit', async (t)
   await assert.rejects(abandoned, { name: 'AbortError' });
 });
 
-test('long computed and stacked charts are sliced jobs within a request-wide read limit', async (t) => {
+test('long computed and stacked charts are sliced jobs without a size limit', async (t) => {
   const store = await fixture(t),
-    { isJob } = await import('../backend/dist/database.js'),
-    limit = recordTransformLimits.requestValues;
-  t.after(() => (recordTransformLimits.requestValues = limit));
+    { isJob } = await import('../backend/dist/database.js');
   const ids = [1, 2, 3].map((r) =>
     run(
       store,
@@ -356,10 +339,14 @@ test('long computed and stacked charts are sliced jobs within a request-wide rea
     assert.ok(slices >= 7, String(slices));
   }
   assert.ok(isJob(store.chartPlan(request)));
-  // Each run is within its own budget; together they exceed a lowered request limit.
-  recordTransformLimits.requestValues = 25000;
-  assert.throws(() => store.chart({ ...request, settings: { xMax: 5e9 } }), {
-    code: 'CHART_TRANSFORM_REQUEST_SOURCE_LIMIT',
-    params: { limit: 25000 },
-  });
+  // Every record of every run is read, however many there are together.
+  const all = store.chart({ ...request, settings: { xMax: 5e9 }, pixels: 64 });
+  assert.deepEqual(
+    all.series.map((series) => series.values.rate.at(-1)),
+    [
+      [9999, 0.25],
+      [9999, 0.5],
+      [9999, 0.75],
+    ],
+  );
 });

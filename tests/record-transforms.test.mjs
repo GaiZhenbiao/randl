@@ -29,7 +29,7 @@ const compute = (...pairs) => ({
 });
 const divide = compute(['a / b', '${a} / ${b}']);
 const align = { kind: 'align', normalization: 'none' };
-test('division pairs only the same raw record, retains repeated custom X and skips missing/zero/nonfinite inputs', async (t) => {
+test("division pairs each step's latest values, retains repeated custom X and skips missing/zero/nonfinite inputs", async (t) => {
   const store = await fixture(t),
     id = run(store, 'ratio', [
       { _step: 0, epoch: 1, a: 2 },
@@ -47,11 +47,13 @@ test('division pairs only the same raw record, retains repeated custom X and ski
     recordTransform: divide,
   });
   assert.deepEqual(data.metrics, ['a / b']);
+  // Step 0 was logged twice, a then b: as plotted, the step has both (the latest of each).
   assert.deepEqual(data.series[0].values['a / b'], [
+    [1, 0.5],
     [2, 2],
     [2, 3],
   ]);
-  assert.equal(data.omittedRecords, 5);
+  assert.equal(data.omittedRecords, 3);
 });
 test('ratio is calculated before between-run aggregation and spread', async (t) => {
   const store = await fixture(t),
@@ -241,8 +243,8 @@ test('groups weight each run equally, whatever its records per X', async (t) => 
     settings: { groupBy: 'all' },
     recordTransform: align,
   });
-  // Run means 2 and 10; the point store keeps the last value per step (3 and 10).
-  assert.equal(result.series[0].values.a[0][1], 6);
+  // A step logged again keeps its last value (3 and 10), as the plain chart shows it.
+  assert.equal(result.series[0].values.a[0][1], 6.5);
   assert.equal(
     store.chart({ runs: [a, b], metrics: ['a'], settings: { groupBy: 'all' } }).series[0].values
       .a[0][1],
@@ -383,18 +385,15 @@ test('aligned charts exceed the old input budget; raw computation limits remain'
     Object.values(large.series[0].values).reduce((n, points) => n + points.length, 0) <= 100000,
   );
   assert.equal(large.series[0].values.m0.at(-1)[0], 62500);
-  assert.throws(
-    () =>
-      store.chart({
-        runs: [id],
-        metrics: ['sum'],
-        recordTransform: compute(['sum', metrics.map((m) => '${' + m + '}').join('+')]),
-      }),
-    {
-      code: 'CHART_TRANSFORM_INPUT_LIMIT',
-      params: { limit: 62500 },
-    },
-  );
+  // A computed metric of eight inputs over every record: 500,008 values, with no input limit.
+  const sum = store.chart({
+    runs: [id],
+    metrics: ['sum'],
+    pixels: 64,
+    recordTransform: compute(['sum', metrics.map((m) => '${' + m + '}').join('+')]),
+  });
+  assert.deepEqual(sum.series[0].values.sum.at(-1), [62500, 8 * 62500]);
+  assert.equal(sum.omittedRecords, 0);
   // Grouped aggregates are bucketed, so a long run needs no distinct-X limit.
   const grouped = store.chart({
     runs: [id],
@@ -501,21 +500,21 @@ test('literal metric/custom-X names and omitted-record range semantics stay exac
   assert.equal(ranged.omittedRecords, 0);
 });
 
-test('source-byte limits use UTF8 stored bytes before parsing oversized records', async (t) => {
+test('records without _step and oversized records are computed from stored points', async (t) => {
   const store = await fixture(t),
-    // Without its own _step the record must be parsed, so the byte limits apply.
+    // A record without _step is stored at its line offset.
     id = run(store, 'wide-record', [{ a: 1, note: '中'.repeat(350000) }]);
-  assert.throws(() => store.chart({ runs: [id], metrics: ['a'], recordTransform: align }), {
-    code: 'CHART_TRANSFORM_RECORD_BYTES_LIMIT',
-    params: { limit: 1 },
-  });
+  assert.deepEqual(
+    store.chart({ runs: [id], metrics: ['a'], recordTransform: align }).series[0].values.a,
+    [[0, 1]],
+  );
   assert.deepEqual(store.chart({ runs: [id], metrics: ['a'] }).series[0].values.a, [[0, 1]]);
-  // With unique steps the point store answers without reading the record.
   const stepped = run(store, 'wide-stepped', [{ _step: 0, a: 1, note: '中'.repeat(350000) }]);
   assert.deepEqual(
     store.chart({ runs: [stepped], metrics: ['a'], recordTransform: align }).series[0].values.a,
     [[0, 1]],
   );
+  // More than 128 MiB of stored lines are not parsed: the points answer.
   const overflow = store.upsert({ entity: 'local', project: 'transform', name: 'wide-source' });
   store.history.pointPut(store.history.runKey(overflow.id),store.history.ensureMetricId('a'),0,1);
   const insert = store.db.prepare(
@@ -524,13 +523,38 @@ test('source-byte limits use UTF8 stored bytes before parsing oversized records'
   store.db.transaction(() => {
     for (let i = 0; i < 129; i++) insert.run(store.history.runKey(overflow.id),store.history.ensureFileId('wandb-history.jsonl'),i,JSON.stringify({a:1,note:'x'.repeat(1048400)}));
   })();
-  assert.throws(
-    () => store.chart({ runs: [overflow.id], metrics: ['a'], recordTransform: align }),
-    { code: 'CHART_TRANSFORM_SOURCE_BYTES_LIMIT', params: { limit: 128 } },
+  assert.deepEqual(
+    store.chart({ runs: [overflow.id], metrics: ['a'], recordTransform: align }).series[0].values.a,
+    [[0, 1]],
   );
 });
 
-test('sparse eval metrics consume only usable records under the input limit', async (t) => {
+test('a resumed run that logs steps again is computed from the latest values, as plotted', async (t) => {
+  const store = await fixture(t),
+    row = (step, base) => ({ _step: step, a: base + step, b: 1 });
+  // Steps 0–9, then a resume from step 5 that logs 5–14 again with other values.
+  const id = run(store, 'resumed', [
+    ...Array.from({ length: 10 }, (_, step) => row(step, 0)),
+    ...Array.from({ length: 10 }, (_, i) => row(5 + i, 100)),
+  ]);
+  const plain = store.chart({ runs: [id], metrics: ['a'] }).series[0].values.a,
+    stacked = store.chart({ runs: [id], metrics: ['a', 'b'], recordTransform: align }),
+    computed = store.chart({
+      runs: [id],
+      metrics: ['sum'],
+      recordTransform: compute(['sum', '${a} + ${b}']),
+    });
+  assert.equal(plain.length, 15);
+  assert.deepEqual(plain.at(-1), [14, 114]);
+  assert.deepEqual(stacked.series[0].values.a, plain);
+  assert.deepEqual(
+    computed.series[0].values.sum,
+    plain.map(([x, y]) => [x, y + 1]),
+  );
+  assert.equal(stacked.omittedRecords, 0);
+});
+
+test('sparse eval metrics compute only their usable records', async (t) => {
   const store = await fixture(t),
     rows = Array.from({ length: 130000 }, (_, i) => ({
       _step: i,
@@ -548,7 +572,7 @@ test('sparse eval metrics consume only usable records under the input limit', as
   assert.ok(result.series[0].values.ratio.every((point) => point[1] === 0.5));
 });
 
-test('source-record preflight bounds scans even with a narrow requested range', async (t) => {
+test('a narrow range over a million stored records reads only the points', async (t) => {
   const store = await fixture(t),
     r = store.upsert({ entity: 'local', project: 'transform', name: 'source-count' });
   store.history.pointPut(store.history.runKey(r.id),store.history.ensureMetricId('a'),0,1);
@@ -557,16 +581,13 @@ test('source-record preflight bounds scans even with a narrow requested range', 
       "WITH RECURSIVE records(n) AS (VALUES(0) UNION ALL SELECT n+1 FROM records WHERE n<1000000) INSERT INTO stream_tail SELECT ?,?,n,? FROM records",
     )
     .run(store.history.runKey(r.id),store.history.ensureFileId('wandb-history.jsonl'),JSON.stringify({ _step: 0, a: 1 }));
-  assert.throws(
-    () =>
-      store.chart({
-        runs: [r.id],
-        metrics: ['a'],
-        settings: { xMin: 0, xMax: 0 },
-        recordTransform: align,
-      }),
-    { code: 'CHART_TRANSFORM_SOURCE_RECORD_LIMIT', params: { limit: 1000000 } },
-  );
+  const result = store.chart({
+    runs: [r.id],
+    metrics: ['a'],
+    settings: { xMin: 0, xMax: 0 },
+    recordTransform: align,
+  });
+  assert.deepEqual(result.series[0].values.a, [[0, 1]]);
 });
 
 test('computed metrics are stored through the shared tools and refused where unsupported', async (t) => {

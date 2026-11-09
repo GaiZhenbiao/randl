@@ -9,12 +9,10 @@ import { snapshotStopError } from './run-snapshot.js';
 import {
   recordChartJob,
   recordPasses,
-  recordTransformLimits,
-  recordUsage,
   streamedTransform,
+  type Columns,
   type Pass,
 } from './record-chart.js';
-import { recordTransformError } from './record-chart-errors.js';
 import { GroupBuckets, RunBuckets, planGroupBuckets, type Extent } from './group-chart.js';
 import { Conversations } from './conversations.js';
 import { runFieldCatalog, liveRuntimeSQL, groupRuns, groupSeries } from './run-fields.js';
@@ -30,15 +28,6 @@ import { limitMedia, mediaCount } from './media-items.js';
 export type Row = Record<string, any>;
 const summaryBytes = (value: { summaries: Float64Array[] }) =>
   value.summaries.reduce((sum, item) => sum + item.byteLength + 64, 64);
-// Stored values a request has read for uncached runs, within recordTransformLimits.requestValues.
-type RequestWork = { values: number };
-function charge(work: RequestWork, values: number) {
-  work.values += values;
-  if (work.values > recordTransformLimits.requestValues)
-    throw recordTransformError('requestSourceLimit', {
-      limit: recordTransformLimits.requestValues,
-    });
-}
 /** Runs a job to completion. */
 function drain<T>(job: Generator<void, T>) {
   for (;;) {
@@ -1235,7 +1224,6 @@ export class Store {
     transform: Row | undefined,
     settings: Row,
     width: number | null,
-    work: RequestWork,
   ): Generator<void, { summaries: Float64Array[]; points: number; merged: number; omitted: number }[]> {
     type Summary = { summaries: Float64Array[]; points: number; merged: number; omitted: number };
     const suffix = JSON.stringify([
@@ -1246,10 +1234,6 @@ export class Store {
       keys = ids.map((id) => JSON.stringify(['group', id, revisions.get(id)]) + suffix),
       result: Summary[] = keys.map((key) => this.cachedValue(key)),
       missing = ids.filter((_, i) => !result[i]);
-    const finished = (summary: Summary) => {
-      charge(work, summary.points);
-      return summary;
-    };
     const axis = settings.xAxis || '_step',
       batched = (metric: string) =>
         axis === '_step' || (metric.startsWith('system/') && axis === '_timestamp');
@@ -1282,7 +1266,7 @@ export class Store {
       }
       ids.forEach((id, i) => {
         if (result[i]) return;
-        result[i] = finished(computed.get(id)!);
+        result[i] = computed.get(id)!;
         this.rememberValue(keys[i], result[i], summaryBytes(result[i]), true);
       });
       return result;
@@ -1316,8 +1300,6 @@ export class Store {
             settings: { xAxis: settings.xAxis, xMin: settings.xMin, xMax: settings.xMax },
           },
           {
-            // Each run has its own source and input budget.
-            usage: recordUsage(),
             passes,
             visit: (pass) => {
               const buckets = new RunBuckets(width, pass.outputs.length);
@@ -1334,7 +1316,7 @@ export class Store {
             },
           },
         )).omittedRecords;
-      result[i] = finished({ summaries, points, merged, omitted });
+      result[i] = { summaries, points, merged, omitted };
       this.rememberValue(keys[i], result[i], summaryBytes(result[i]), true);
       yield;
     }
@@ -1395,8 +1377,7 @@ export class Store {
       plan = planGroupBuckets(extents.flat(), resolution, shown.length * outputs.length, median);
     const revisions = new Map(this.runRevisions(members).map((row) => [row.id, row.revision]));
     yield;
-    const work = { values: 0 },
-      series = [];
+    const series = [];
     let total = 0,
       sampled = false,
       omittedRecords = 0;
@@ -1418,7 +1399,6 @@ export class Store {
           transform,
           settings,
           plan.width,
-          work,
         );
         for (const run of runs) {
           run.summaries.forEach((summary, index) => groups[index].addRun(summary));
@@ -1499,23 +1479,20 @@ export class Store {
     this.derived.set(key, { value, bytes: size, epoch: this.derivedEpoch });
     this.derivedBytes += size;
   }
-  // Every computed point of one run, ordered by X, with the records the computation
-  // omitted. Cached by run revision, transform and X source. Each run has its own source
-  // and input budget, so the number of compared runs does not lower it; `work` bounds the
-  // request.
+  // Every computed point of one run as columns ordered by X, with the records the computation
+  // omitted. Cached by run revision, transform and X source, within the derived-value cache;
+  // a run too large for it is computed again for the next request.
   private *computedRun(
     id: string,
     revision: unknown,
     transform: Row,
     settings: Row,
-    work: RequestWork,
-  ): Generator<void, { values: Record<string, number[][]>; omitted: number }> {
+  ): Generator<void, { values: Record<string, Columns>; omitted: number }> {
     const source = [settings.xAxis, settings.xMin, settings.xMax],
       key = JSON.stringify(['computed', id, revision, transform, source]),
       hit = this.cachedValue(key);
     if (hit) return hit;
-    const usage = recordUsage(),
-      data = yield* recordChartJob(
+    const data = yield* recordChartJob(
         this,
         {
           runs: [id],
@@ -1523,17 +1500,17 @@ export class Store {
           recordTransform: transform,
           settings: { xAxis: settings.xAxis, xMin: settings.xMin, xMax: settings.xMax },
         },
-        { raw: true, usage },
+        { raw: true },
       ),
       value = {
-        values: data.series[0].values as Record<string, number[][]>,
+        values: data.series[0].values as Record<string, Columns>,
         omitted: data.omittedRecords as number,
       };
-    charge(work, usage.scannedRecords);
+    const arrays = new Set(Object.values(value.values).flatMap(({ xs, ys }) => [xs, ...ys]));
     this.rememberValue(
       key,
       value,
-      64 + Object.values(value.values).reduce((sum, points) => sum + points.length * 48, 0),
+      64 + [...arrays].reduce((sum, array) => sum + array.byteLength, 0),
     );
     return value;
   }
@@ -1552,7 +1529,6 @@ export class Store {
     settings.xAxis ||= inputs.every((metric) => metric.startsWith('system/')) ? '_timestamp' : '_step';
     const resolution = chartResolution(settings.resolution, args.pixels),
       runs = ids.map((id) => this.run(id)),
-      work = { values: 0 },
       // Only each run's statistics are retained; its points stay in the bounded cache.
       computed: { omitted: number; stats: Extent[] }[] = [];
     for (let i = 0; i < ids.length; i++) {
@@ -1561,14 +1537,13 @@ export class Store {
         runs[i]?.revision,
         args.recordTransform,
         settings,
-        work,
       );
       computed.push({
         omitted: run.omitted,
         stats: metrics.map((m) => {
-          const points = run.values[m] || [];
-          return points.length
-            ? { n: points.length, lo: points[0][0], hi: points.at(-1)![0] }
+          const xs = run.values[m]?.xs;
+          return xs?.length
+            ? { n: xs.length, lo: xs[0], hi: xs[xs.length - 1] }
             : { n: 0, lo: null, hi: null };
         }),
       });
@@ -1599,21 +1574,19 @@ export class Store {
   }
   /** chartSeries for computed metrics: cached computed points decimated to the plan's width. */
   *computedSeries(plan: Row, ids: string[]): Generator<void, Series[]> {
-    const work = { values: 0 },
-      series: Series[] = [];
+    const series: Series[] = [];
     for (const id of ids) {
       const run = yield* this.computedRun(
         id,
         plan.revisions[id],
         plan.recordTransform,
         plan.settings,
-        work,
       );
       series.push(
         sampledSeries(
           id,
           plan.names[id],
-          plan.metrics.map((m: string) => [m, sampleSeries(run.values[m] || [], plan.width)]),
+          plan.metrics.map((m: string) => [m, sampleColumns(run.values[m], plan.width)]),
         ),
       );
       yield;
@@ -2101,6 +2074,46 @@ export function bucketMeans(points: number[][], width: number) {
     mean[1] += point[1] / count - mean[1] / count;
   }
   return merged ? means : undefined;
+}
+/**
+ * `sampleSeries` for a computed metric's columns, without building every point: the kept
+ * extrema and, when a bucket holds several points, the bucket means.
+ */
+export function sampleColumns(columns: Columns | undefined, width: number | null): SampledSeries {
+  if (!columns) return { points: [] };
+  const xs = columns.xs,
+    ys = columns.ys[0],
+    n = xs.length,
+    pair = (i: number) => [xs[i], ys[i]];
+  if (width === null || !n) return { points: Array.from({ length: n }, (_, i) => pair(i)) };
+  const keep = new Set([0, n - 1]),
+    means: number[][] = [];
+  let bucket = NaN,
+    low = 0,
+    high = 0,
+    count = 0,
+    merged = false;
+  for (let i = 0; i < n; i++) {
+    const next = Math.floor(xs[i] / width);
+    if (next !== bucket) {
+      if (i) keep.add(low).add(high);
+      bucket = next;
+      low = high = i;
+      count = 1;
+      means.push(pair(i));
+      continue;
+    }
+    if (ys[i] < ys[low]) low = i;
+    if (ys[i] > ys[high]) high = i;
+    merged = true;
+    const mean = means[means.length - 1];
+    count++;
+    mean[0] = xs[i];
+    mean[1] += ys[i] / count - mean[1] / count;
+  }
+  keep.add(low).add(high);
+  const points = [...keep].sort((a, b) => a - b).map(pair);
+  return merged ? { points, means } : { points };
 }
 /** A series sampled to a bucket width: its extrema and, unless they equal them, its bucket means. */
 export type SampledSeries = { points: number[][]; means?: number[][] };
