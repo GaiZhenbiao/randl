@@ -36,7 +36,7 @@ export type PlotSettings = {
   sharedY?: boolean;
   /** Media panels: every run at one step, or every step of one run. */
   mediaAcross?: 'runs' | 'steps';
-  /** Media panels: files shown per step, shared among runs. */
+  /** Media panels: the most files each run shows at a step. */
   mediaFiles?: number;
   /** Plugin option values by plugin ID, checked against each plugin's descriptors. */
   options?: Record<string, Record<string, OptionValue>>;

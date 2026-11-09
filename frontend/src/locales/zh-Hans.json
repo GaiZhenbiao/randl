@@ -522,7 +522,7 @@
   "panelSettings.data.mediaAcross.label": "比较方式",
   "panelSettings.data.mediaAcross.runs": "同一步的各个运行",
   "panelSettings.data.mediaAcross.steps": "一个运行的各步",
-  "panelSettings.data.mediaFiles.help": "由同一步的各个运行共享；每个运行至少显示一个。",
+  "panelSettings.data.mediaFiles.help": "每个运行在一步中最多显示的文件数。",
   "panelSettings.data.mediaFiles.label": "每步文件数",
   "panelSettings.data.metric": "指标",
   "panelSettings.data.noOtherMetrics": "没有其他可用的指标。",

@@ -522,7 +522,7 @@
   "panelSettings.data.mediaAcross.label": "Comparer",
   "panelSettings.data.mediaAcross.runs": "Les exécutions à une étape",
   "panelSettings.data.mediaAcross.steps": "Les étapes d’une exécution",
-  "panelSettings.data.mediaFiles.help": "Partagés entre les exécutions d’une étape ; chaque exécution en affiche au moins un.",
+  "panelSettings.data.mediaFiles.help": "Nombre maximal de fichiers affichés par chaque exécution à une étape.",
   "panelSettings.data.mediaFiles.label": "Fichiers par étape",
   "panelSettings.data.metric": "Métrique",
   "panelSettings.data.noOtherMetrics": "Aucune autre métrique n’est disponible.",

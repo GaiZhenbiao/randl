@@ -522,7 +522,7 @@
   "panelSettings.data.mediaAcross.label": "比較方式",
   "panelSettings.data.mediaAcross.runs": "同一步的各個執行",
   "panelSettings.data.mediaAcross.steps": "一個執行的各步",
-  "panelSettings.data.mediaFiles.help": "由同一步的各個執行共用；每個執行至少顯示一個。",
+  "panelSettings.data.mediaFiles.help": "每個執行在一步中最多顯示的檔案數。",
   "panelSettings.data.mediaFiles.label": "每步檔案數",
   "panelSettings.data.metric": "指標",
   "panelSettings.data.noOtherMetrics": "沒有其他可用的指標。",

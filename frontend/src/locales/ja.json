@@ -522,7 +522,7 @@
   "panelSettings.data.mediaAcross.label": "比較の対象",
   "panelSettings.data.mediaAcross.runs": "1 つのステップの各実行",
   "panelSettings.data.mediaAcross.steps": "1 つの実行の各ステップ",
-  "panelSettings.data.mediaFiles.help": "同じステップの実行で分け合います。各実行に少なくとも 1 つ表示されます。",
+  "panelSettings.data.mediaFiles.help": "各実行が 1 つのステップで表示するファイルの最大数です。",
   "panelSettings.data.mediaFiles.label": "ステップあたりのファイル数",
   "panelSettings.data.metric": "メトリクス",
   "panelSettings.data.noOtherMetrics": "他に利用可能なメトリクスはありません。",

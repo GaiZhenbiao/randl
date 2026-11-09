@@ -818,13 +818,13 @@ export class Store {
       });
       total = entries.filter((item) => item.value).length;
     }
-    // Each entry keeps at least one file; the rest of the limit is shared evenly.
+    // Across runs, each run shows up to `files` of its own files, whatever the other runs log.
+    // The steps of one run share the response limit, each keeping at least one file.
     const counts = entries.map((item) => mediaCount(item.value));
-    const quotas = allocateFiles(
-      counts,
-      files,
-      args.across === 'steps' ? limits.responseFiles : files,
-    );
+    const quotas =
+      args.across === 'steps'
+        ? allocateFiles(counts, files, limits.responseFiles)
+        : counts.map((count) => Math.min(count, files));
     for (const [index, item] of entries.entries())
       if (item.value && quotas[index] < counts[index]) {
         item.value = limitMedia(item.value, quotas[index]);

@@ -522,7 +522,7 @@
   "panelSettings.data.mediaAcross.label": "Compare across",
   "panelSettings.data.mediaAcross.runs": "Runs at one step",
   "panelSettings.data.mediaAcross.steps": "Steps of one run",
-  "panelSettings.data.mediaFiles.help": "Shared among the runs at a step; each run shows at least one.",
+  "panelSettings.data.mediaFiles.help": "The most files each run shows at a step.",
   "panelSettings.data.mediaFiles.label": "Files per step",
   "panelSettings.data.metric": "Metric",
   "panelSettings.data.noOtherMetrics": "No other metrics are available.",

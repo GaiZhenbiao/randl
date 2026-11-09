@@ -522,7 +522,7 @@
   "panelSettings.data.mediaAcross.label": "비교 기준",
   "panelSettings.data.mediaAcross.runs": "한 스텝의 실행들",
   "panelSettings.data.mediaAcross.steps": "한 실행의 스텝들",
-  "panelSettings.data.mediaFiles.help": "한 스텝의 실행들이 나누어 쓰며, 각 실행은 최소 하나를 표시합니다.",
+  "panelSettings.data.mediaFiles.help": "각 실행이 한 스텝에서 표시하는 최대 파일 수입니다.",
   "panelSettings.data.mediaFiles.label": "스텝당 파일 수",
   "panelSettings.data.metric": "메트릭",
   "panelSettings.data.noOtherMetrics": "사용 가능한 다른 메트릭이 없습니다.",

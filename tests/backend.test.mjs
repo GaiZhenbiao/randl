@@ -298,7 +298,7 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
     ],
   );
   assert.equal(at.total, 2);
-  // Files per step are shared among runs, at least one each.
+  // The files limit applies to each run on its own: A keeps three of its four, B both of its two.
   const limited = await media({ runs: ids, metric: 'gallery', step: 12, files: 3 });
   assert.deepEqual(
     limited.entries.map((entry) => [
@@ -307,12 +307,12 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
       entry.filesTruncated,
     ]),
     [
-      [2, 4, true],
-      [1, 2, true],
+      [3, 4, true],
+      [2, undefined, undefined],
       [undefined, undefined, undefined],
     ],
   );
-  assert.deepEqual(limited.entries[0].value.captions, ['item 0', 'item 1']);
+  assert.deepEqual(limited.entries[0].value.captions, ['item 0', 'item 1', 'item 2']);
   // Steps of one run: every entry by step, each within the files limit.
   const steps = await media({
     runs: ids,

@@ -593,7 +593,7 @@ try {
     await expect(flowSlide).toHaveAttribute('aria-label', new RegExp(`^2 of ${perRun}: `));
     await expect(samples.locator('.carousel-peek img')).toHaveCount(perRun - 1);
     checks.push("Quick Look and Coverflow show a run's files, with run tabs");
-    // Files per step are shared among the runs.
+    // The files-per-step limit applies to each run on its own.
     const limited = await call('/api/views/' + lazy.id);
     limited.body.panels[0].settings = { itemSize: 320, mediaFiles: 12 };
     limited.body.panels[0].settings.layout = 'grid';
@@ -608,8 +608,13 @@ try {
       'PUT',
     );
     await open(lazy);
-    await expect(samples.locator('.cell-count')).toHaveText(`12 of ${files} items`);
-    checks.push('images load only for tiles in view; files per step are shared among runs');
+    const perRunShown = (
+      await call('/api/media', { runs: demo.map((item) => item.id), metric: 'samples', files: 12 })
+    ).entries.reduce((sum, entry) => sum + Math.min(entry.value.filenames.length, 12), 0);
+    await expect(samples.locator('.cell-count')).toHaveText(
+      perRunShown < files ? `${perRunShown} of ${files} items` : `${files} items`,
+    );
+    checks.push('images load only for tiles in view; files per step apply to each run');
   }
 
   // Latest follows newly logged steps, in a project of this test's own that it removes.
