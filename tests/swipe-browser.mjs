@@ -52,10 +52,12 @@ try {
       sections: [
         { id: 'paged', name: 'Paged' },
         { id: 'rows', name: 'Rows' },
+        { id: 'after', name: 'After' },
       ],
       sectionLayouts: {
         paged: { width: 600, height: 300, rows: 1 },
         rows: { width: 600, height: 200, rows: 2 },
+        after: { width: 600, height: 200, rows: 1 },
       },
       panels: [
         {
@@ -80,6 +82,13 @@ try {
           metric,
           title: 'Row panel ' + index,
           section: 'rows',
+        })),
+        ...['a', 'b'].map((metric, index) => ({
+          id: 'after' + index,
+          plugin: 'line',
+          metric,
+          title: 'After panel ' + index,
+          section: 'after',
         })),
       ],
     },
@@ -230,6 +239,75 @@ try {
   await expect(rowsGrid).not.toHaveClass(/swiping/);
   assert.ok(Math.abs((await rowsGrid.boundingBox()).height - tall) < 1);
   checks.push("a page with fewer rows: the section's height moves with the pages");
+  // Other sections keep their compositor layers while a section's pages move: a chart moved
+  // into or out of a layer is drawn again, which flickers.
+  const afterSection = page.locator('section.metric-section[data-section-id="after"]');
+  await expect(afterSection.locator('canvas').first()).toBeVisible();
+  const turn = async () => {
+    for (const name of ['Next panels in Rows', 'Previous panels in Rows']) {
+      await page.getByRole('button', { name, exact: true }).click();
+      await expect(rowsGrid).toHaveClass(/swiping/);
+      await expect(rowsGrid).not.toHaveClass(/swiping/);
+    }
+  };
+  await turn();
+  await cdp.send('DOM.getDocument', { depth: -1 });
+  const trees = [];
+  const record = (event) => trees.push(event.layers || []);
+  cdp.on('LayerTree.layerTreeDidChange', record);
+  await cdp.send('LayerTree.enable');
+  await page.waitForTimeout(200);
+  await turn();
+  await turn();
+  await cdp.send('LayerTree.disable');
+  cdp.off('LayerTree.layerTreeDidChange', record);
+  const changed = new Set();
+  for (let index = 1; index < trees.length; index++) {
+    const before = new Map(trees[index - 1].map((layer) => [layer.layerId, layer.backendNodeId])),
+      after = new Map(trees[index].map((layer) => [layer.layerId, layer.backendNodeId]));
+    for (const [id, node] of after) if (!before.has(id) && node) changed.add(node);
+    for (const [id, node] of before) if (!after.has(id) && node) changed.add(node);
+  }
+  const outside = [];
+  for (const backendNodeId of changed) {
+    const resolved = await cdp.send('DOM.resolveNode', { backendNodeId }).catch(() => null);
+    if (!resolved) continue;
+    const { result } = await cdp.send('Runtime.callFunctionOn', {
+      objectId: resolved.object.objectId,
+      functionDeclaration: `function () {
+        const element = this.nodeType === 1 ? this : this.parentElement;
+        if (!element?.isConnected || element.closest('[data-section-id="rows"]')) return '';
+        return (element.closest('[data-section-id]')?.dataset.sectionId || 'page') + ' ' +
+          element.nodeName + '.' + String(element.className);
+      }`,
+      returnByValue: true,
+    });
+    if (result.value) outside.push(result.value);
+  }
+  assert.ok(trees.length > 2, 'the layer tree was recorded: ' + trees.length);
+  assert.deepEqual(outside, [], 'layers outside the moving section changed');
+  checks.push("other sections keep their layers while a section's pages move");
+  // A panel menu still opens over the section after its own.
+  const lastRow = rowsSection.locator('[data-panel-id="r2"]');
+  await lastRow.hover();
+  await lastRow.getByRole('button', { name: 'Panel actions', exact: true }).click();
+  const lastItem = page.locator('.panel-actions-menu .bx--overflow-menu-options__btn').last();
+  await expect(lastItem).toBeVisible();
+  await lastItem.scrollIntoViewIfNeeded();
+  const itemBox = await lastItem.boundingBox();
+  assert.ok(
+    itemBox.y + itemBox.height > (await afterSection.boundingBox()).y,
+    'the menu reaches past the section',
+  );
+  assert.ok(
+    await lastItem.evaluate((element, [x, y]) => element.contains(document.elementFromPoint(x, y)), [
+      itemBox.x + itemBox.width / 2,
+      itemBox.y + itemBox.height / 2,
+    ]),
+    'the menu is on top',
+  );
+  await page.keyboard.press('Escape');
+  checks.push('a panel menu opens over the section after its own');
   // Under reduced motion the buttons change the page at once.
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const still = await frames(rowsGrid, () =>

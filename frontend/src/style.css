@@ -868,6 +868,8 @@ aside {
   cursor: col-resize;
   z-index: 5;
   touch-action: none;
+  /* Its own layer: moving section pages beside it would otherwise move it into and out of one. */
+  will-change: transform;
 }
 .sidebar-resize:hover,
 .sidebar-resize:focus-visible {
@@ -1427,12 +1429,23 @@ aside {
 .section-grid {
   position: relative;
   min-width: 0;
+  /* Each section paints on its own, so another section's moving pages never move its charts
+     into and out of compositor layers, which flickers them. */
+  isolation: isolate;
 }
-/* A section's pages side by side while a swipe moves between them (gap: pageGap). */
+/* An open panel menu still shows over the sections after its own. */
+.section-grid:has(.bx--overflow-menu--open) {
+  z-index: 1;
+}
+/* A section's pages side by side while a swipe moves between them (gap: pageGap). They keep
+   their layer between swipes rather than gaining and dropping one with each. */
 .section-track {
   display: flex;
   align-items: flex-start;
   gap: 32px;
+}
+.section-grid.pageable .section-track {
+  will-change: transform;
 }
 .section-track > .charts {
   flex: 0 0 100%;
