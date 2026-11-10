@@ -733,8 +733,6 @@
   "projects.overview.stats.finished": "已完成",
   "projects.overview.stats.running": "執行中",
   "projects.overview.stats.runs": "執行",
-  "projects.picker.all": "所有專案",
-  "projects.picker.label": "專案",
   "projects.restore.action": "還原專案",
   "projects.restoreHelp": "此專案已封存。還原後會重新出現在專案選擇器中。",
   "projects.restored": "已還原 {name}",

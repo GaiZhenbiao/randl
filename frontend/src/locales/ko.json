@@ -733,8 +733,6 @@
   "projects.overview.stats.finished": "완료",
   "projects.overview.stats.running": "실행 중",
   "projects.overview.stats.runs": "실행",
-  "projects.picker.all": "모든 프로젝트",
-  "projects.picker.label": "프로젝트",
   "projects.restore.action": "프로젝트 복원",
   "projects.restoreHelp": "이 프로젝트는 보관되어 있습니다. 복원하면 프로젝트 선택기에 다시 표시됩니다.",
   "projects.restored": "{name} 복원됨",

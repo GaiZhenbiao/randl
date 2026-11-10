@@ -4638,12 +4638,6 @@ aside {
   text-align: left;
   cursor: pointer;
 }
-.phone-navigation-project {
-  padding: 8px 16px 12px;
-}
-.phone-navigation-project .bx--select-input {
-  min-height: 40px;
-}
 /* The X range being selected for zoom spans the plot's full height. */
 .chart-zoom-band {
   position: absolute;

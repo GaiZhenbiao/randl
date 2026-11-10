@@ -733,8 +733,6 @@
   "projects.overview.stats.finished": "Terminées",
   "projects.overview.stats.running": "En cours",
   "projects.overview.stats.runs": "Exécutions",
-  "projects.picker.all": "Tous les projets",
-  "projects.picker.label": "Projet",
   "projects.restore.action": "Restaurer le projet",
   "projects.restoreHelp": "Ce projet est archivé. Restaurez-le pour l’afficher de nouveau dans le sélecteur de projet.",
   "projects.restored": "{name} restauré",

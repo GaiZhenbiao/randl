@@ -2757,25 +2757,7 @@
               await navigate('server');
             })}
         />
-        {#if projects.length}<SideNavDivider /><li class="phone-navigation-project">
-            <Select
-              size="sm"
-              labelText={$t('projects.picker.label')}
-              selected={project}
-              on:change={(event) => {
-                const next = (event.target as HTMLSelectElement).value;
-                menuOpen = false;
-                void changeProject(next);
-              }}
-              ><SelectItem
-                value=""
-                text={$t('projects.picker.all')}
-              />{#each projects.filter((p) => !p.archived || p.id === project) as p (p.id)}<SelectItem
-                  value={p.id}
-                  text={p.name}
-                />{/each}</Select
-            >
-          </li>{/if}{#if project}{#each pages as item (item.id)}<SideNavLink
+        {#if project}<SideNavDivider />{#each pages as item (item.id)}<SideNavLink
               href={pageURL(project, item.id)}
               icon={item.icon}
               text={item.name === 'nav.settings' ? $t('nav.settingsShort') : $t(item.name)}

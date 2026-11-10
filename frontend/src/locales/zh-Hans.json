@@ -733,8 +733,6 @@
   "projects.overview.stats.finished": "已完成",
   "projects.overview.stats.running": "运行中",
   "projects.overview.stats.runs": "运行",
-  "projects.picker.all": "所有项目",
-  "projects.picker.label": "项目",
   "projects.restore.action": "恢复项目",
   "projects.restoreHelp": "此项目已归档。恢复后会重新出现在项目选择器中。",
   "projects.restored": "已恢复 {name}",

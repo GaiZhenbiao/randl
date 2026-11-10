@@ -733,8 +733,6 @@
   "projects.overview.stats.finished": "完了",
   "projects.overview.stats.running": "実行中",
   "projects.overview.stats.runs": "実行",
-  "projects.picker.all": "すべてのプロジェクト",
-  "projects.picker.label": "プロジェクト",
   "projects.restore.action": "プロジェクトを復元",
   "projects.restoreHelp": "このプロジェクトはアーカイブされています。復元するとプロジェクト選択に再び表示されます。",
   "projects.restored": "{name} を復元しました",

@@ -89,9 +89,8 @@ try {
     'Settings',
   ])
     await expect(link(name)).toBeVisible();
-  await expect(navigation.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(
-    'phone/nav',
-  );
+  // Projects are switched from the project list; the menu has no project picker.
+  await expect(navigation.getByRole('combobox')).toHaveCount(0);
   await expect(navigation.getByRole('button', { name: 'Connect SDK', exact: true })).toBeVisible();
   checks.push('menu button opens the side navigation at the current page with 48 px targets');
 
