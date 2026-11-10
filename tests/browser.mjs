@@ -1212,7 +1212,7 @@ try {
       await expect
         .poll(async () =>
           dense
-            .locator('.charts')
+            .locator('.charts.current')
             .evaluate((e) => getComputedStyle(e).gridTemplateColumns.split(' ').length),
         )
         .toBe(1);

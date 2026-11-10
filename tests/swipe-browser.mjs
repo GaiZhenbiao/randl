@@ -101,18 +101,21 @@ try {
   const section = page.locator('section.metric-section[data-section-id="paged"]'),
     grid = section.locator('.section-grid'),
     label = section.locator('.section-page'),
-    pages = grid.locator('.charts'),
+    pageAt = (index) => grid.locator(`.charts[data-page="${index}"]`),
     track = grid.locator('.section-track');
   await expect(label).toHaveText('1–2');
   await expect(section.locator('[data-panel-id="p0"] canvas').first()).toBeVisible();
   const unit = (await grid.evaluate((node) => node.clientWidth)) + 32,
+    // How far the current page sits from its place in the section.
     shift = () =>
-      track.evaluate((node) =>
-        Number(node.style.transform.match(/translateX\(([-\d.e]+)px/)?.[1] ?? 0),
+      grid.evaluate(
+        (node) =>
+          node.querySelector('.charts.current').getBoundingClientRect().left -
+          node.getBoundingClientRect().left,
       ),
     rest = async () => {
       await expect(grid).not.toHaveClass(/swiping/);
-      await expect(pages).toHaveCount(1);
+      await expect(track).not.toHaveAttribute('style', /transform/);
     },
     cdp = await page.context().newCDPSession(page);
   // A touch drag that starts on a chart takes the pages with the finger, the next page beside
@@ -137,7 +140,7 @@ try {
   }
   await drag(section.locator('[data-panel-id="p0"] canvas').first(), 0.6, async () => {
     await expect(grid).toHaveClass(/swiping/);
-    await expect(pages).toHaveCount(2);
+    await expect(pageAt(1)).toHaveCSS('visibility', 'visible');
     await expect.poll(shift).toBeLessThan(-0.55 * unit);
     assert.ok((await shift()) > -0.65 * unit, String(await shift()));
     await expect(label).toHaveText('1–2');
@@ -154,6 +157,7 @@ try {
   // Past the last page the pages stretch like a rubber band and spring back.
   await page.getByRole('button', { name: 'Next panels in Paged', exact: true }).click();
   await expect(label).toHaveText('5–6');
+  await rest();
   const shifts = [];
   await drag(section.locator('[data-panel-id="p3"] canvas').first(), 0.5, async () => {
     shifts.push(await shift());
@@ -182,11 +186,12 @@ try {
         (node) =>
           new Promise((resolve) => {
             const values = [],
-              start = performance.now(),
-              track = node.querySelector('.section-track');
+              start = performance.now();
             const tick = () => {
               values.push({
-                shift: Number(track.style.transform.match(/translateX\(([-\d.e]+)px/)?.[1] ?? 0),
+                shift:
+                  node.querySelector('.charts.current').getBoundingClientRect().left -
+                  node.getBoundingClientRect().left,
                 height: node.getBoundingClientRect().height,
               });
               if (performance.now() - start < 700) requestAnimationFrame(tick);
@@ -308,6 +313,56 @@ try {
   );
   await page.keyboard.press('Escape');
   checks.push('a panel menu opens over the section after its own');
+  // The pages beside the current one stay mounted: turning back and forth moves charts that
+  // are drawn already, rather than building them again. Those beside are hidden at rest.
+  await expect(rowsGrid.locator('.charts[data-page="1"]')).toHaveCSS('visibility', 'hidden');
+  const canvasesOf = () =>
+    rowsGrid.evaluate((node) => {
+      window.rowCanvases ??= new WeakMap();
+      return [...node.querySelectorAll('canvas')].map((canvas) => {
+        if (!window.rowCanvases.has(canvas)) window.rowCanvases.set(canvas, Math.random());
+        return window.rowCanvases.get(canvas);
+      });
+    });
+  const kept = await canvasesOf();
+  await turn();
+  assert.deepEqual(await canvasesOf(), kept, 'the same charts stay drawn');
+  checks.push('turning pages keeps the charts beside the current page drawn');
+  // Panels draw half a screen before they come into view.
+  await page.evaluate(() => (document.querySelector('main').scrollTop = 0));
+  const afterTop = await afterSection.evaluate((node) => node.getBoundingClientRect().top),
+    fresh = await browser.newPage({ viewport: { width: 1440, height: Math.round(afterTop - 250) } });
+  fresh.on('pageerror', (error) => errors.push(error.message));
+  await fresh.goto(`${origin}/test/pages/workspace?view=${view.id}`);
+  const below = fresh.locator('section.metric-section[data-section-id="after"]');
+  await expect(below.locator('[data-panel-id="after0"] canvas').first()).toBeAttached();
+  const ahead = await below.evaluate((node) => node.getBoundingClientRect().top - innerHeight);
+  assert.ok(ahead > 200 && ahead < 0.5 * (afterTop - 250), 'below the screen: ' + ahead);
+  await fresh.close();
+  checks.push('panels draw before they come into view');
+  // A live update that changes no data and no colors redraws no chart.
+  await rowsSection.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(500);
+  await page.evaluate(() => {
+    window.clears = 0;
+    const clear = CanvasRenderingContext2D.prototype.clearRect;
+    CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+      window.clears++;
+      return clear.apply(this, args);
+    };
+  });
+  await cdp.send('Network.enable');
+  const arrived = new Promise((resolve) =>
+    cdp.on('Network.eventSourceMessageReceived', (event) => {
+      if (event.data.includes(runs[0])) resolve();
+    }),
+  );
+  server.live.changedRun(runs[0]);
+  await arrived;
+  await page.waitForTimeout(800);
+  assert.equal(await page.evaluate(() => window.clears), 0, 'charts redrew');
+  await cdp.send('Network.disable');
+  checks.push('a live update without changes redraws no chart');
   // Under reduced motion the buttons change the page at once.
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const still = await frames(rowsGrid, () =>

@@ -481,7 +481,7 @@ try {
   const firstId = await keyboardSection.locator('.chart').first().getAttribute('data-panel-id');
   const firstGrip = page.locator('[data-panel-id="' + firstId + '"] .panel-drag-handle');
   const columns = await keyboardSection
-    .locator('.charts')
+    .locator('.charts.current')
     .evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length);
   assert.ok(columns > 1);
   await firstGrip.focus();

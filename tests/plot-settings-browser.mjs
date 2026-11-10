@@ -147,7 +147,7 @@ try {
       settings: !!visible('.section-settings'),
       aligned:
         !!menu &&
-        Math.abs(menu.right - node.querySelector('.charts').getBoundingClientRect().right) < 1,
+        Math.abs(menu.right - node.querySelector('.charts.current').getBoundingClientRect().right) < 1,
     };
   });
   assert.deepEqual(actionsAtRest, { add: true, settings: true, aligned: true });

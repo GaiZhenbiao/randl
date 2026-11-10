@@ -1437,18 +1437,26 @@ aside {
 .section-grid:has(.bx--overflow-menu--open) {
   z-index: 1;
 }
-/* A section's pages side by side while a swipe moves between them (gap: pageGap). They keep
-   their layer between swipes rather than gaining and dropping one with each. */
+/* A section's mounted pages: the one a turn began on (or the current one) sets the height, and
+   the others sit beside it, a page and pageGap apart, clipped from view and hidden at rest. The
+   track keeps its layer between turns rather than gaining and dropping one with each. */
+.section-pages {
+  overflow-x: clip;
+}
 .section-track {
-  display: flex;
-  align-items: flex-start;
-  gap: 32px;
+  position: relative;
 }
 .section-grid.pageable .section-track {
   will-change: transform;
 }
-.section-track > .charts {
-  flex: 0 0 100%;
+.section-track > .charts.beside {
+  position: absolute;
+  top: 0;
+  left: calc(var(--page-offset) * (100% + 32px));
+  width: 100%;
+}
+.section-grid:not(.swiping) .section-track > .charts:not(.current) {
+  visibility: hidden;
 }
 /* While the pages move, the section's height moves between theirs and clips the taller one. */
 .section-grid.swiping {

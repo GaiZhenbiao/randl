@@ -513,9 +513,12 @@
     }
   });
   onMount(() => {
+    // Panels draw half a screen before they come into view, so those a section's change in
+    // height or a short scroll brings in are drawn already. Pages beside a section's current
+    // one are clipped from the area, so they stay hidden.
     const observer = new IntersectionObserver(([entry]) => (visible = entry.isIntersecting), {
       root: readonly ? null : document.querySelector('main'),
-      rootMargin: '100px',
+      rootMargin: '50% 0px',
     });
     observer.observe(container);
     plotWidth = plot.clientWidth;

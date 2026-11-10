@@ -617,13 +617,29 @@
       : projectRuns.reduce((count, run) => count + (comparisonIds.has(run.id) ? 1 : 0), 0) -
           selected.length,
   );
+  // Every live run update rebuilds these maps; unchanged ones keep their identity, so panels
+  // redraw for the data and colors that changed rather than all at once.
+  function steady(previous: Record<string, string>, next: Record<string, string>) {
+    const keys = Object.keys(next);
+    return keys.length === Object.keys(previous).length &&
+      keys.every((key) => previous[key] === next[key])
+      ? previous
+      : next;
+  }
+  let shownStored: Record<string, string> = {},
+    shownResolved: Record<string, string> = {};
   const storedColors = $derived(
-    resolveRunColors(projectRuns, {
-      ...sidebarView?.body.runColors,
-      ...view?.body.runColors,
-    }),
+    (shownStored = steady(
+      shownStored,
+      resolveRunColors(projectRuns, {
+        ...sidebarView?.body.runColors,
+        ...view?.body.runColors,
+      }),
+    )),
   );
-  const resolvedColors = $derived(resolveRunColors(projectRuns, storedColors, dark));
+  const resolvedColors = $derived(
+    (shownResolved = steady(shownResolved, resolveRunColors(projectRuns, storedColors, dark))),
+  );
   let help = $state(false),
     settings = $state(false),
     panelDialog = $state(false),

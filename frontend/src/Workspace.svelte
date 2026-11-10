@@ -165,9 +165,26 @@
     ),
   );
   // Swiping between a section's pages: touch drags and touchpad scrolls move the pages with the
-  // finger, the page beside the current one mounted while it shows, and settle on a page.
+  // finger and settle on a page. A section keeps the pages beside the current one mounted, so a
+  // turn moves panels that are already drawn: off the page they are hidden panels, keeping or
+  // releasing their renderers like panels outside the viewport. Pages sit beside the one a turn
+  // began on (`turning`) until it settles, so nothing mounts or moves under it mid-turn.
   const pageGap = 32;
-  let swipePages = $state<Record<string, number[]>>({});
+  let turning = $state<Record<string, number>>({});
+  function mountedPages(id: string, page: number, pages: number) {
+    const base = turning[id] ?? page;
+    return [...new Set([base - 1, base, base + 1, page])]
+      .filter((index) => index >= 0 && index < pages)
+      .sort((a, b) => a - b);
+  }
+  function endTurn(node: HTMLElement, id: string) {
+    if (id in turning) {
+      const { [id]: _, ...rest } = turning;
+      turning = rest;
+    }
+    node.querySelector<HTMLElement>('.section-track')?.style.removeProperty('transform');
+    node.style.removeProperty('height');
+  }
   /** Each shown section's pager, which the page buttons move. */
   const pagers = new Map<string, Swipe>();
   function turnPage(id: string, page: number) {
@@ -186,17 +203,11 @@
         show: (position) => {
           const id = current.id,
             track = node.querySelector<HTMLElement>('.section-track');
-          if (position === undefined) {
-            const { [id]: _, ...rest } = swipePages;
-            swipePages = rest;
-            track?.style.removeProperty('transform');
-            node.style.removeProperty('height');
-            return;
-          }
-          const first = Math.max(0, Math.min(current.pages - 1, Math.floor(position))),
-            shown = position > first && first + 1 < current.pages ? [first, first + 1] : [first];
-          if (swipePages[id]?.join() !== shown.join()) swipePages = { ...swipePages, [id]: shown };
-          if (track) track.style.transform = `translateX(${-(position - first) * unit()}px)`;
+          if (position === undefined) return endTurn(node, id);
+          let base = turning[id];
+          if (base === undefined) turning = { ...turning, [id]: (base = current.page) };
+          const first = Math.max(0, Math.min(current.pages - 1, Math.floor(position)));
+          if (track) track.style.transform = `translateX(${-(position - base) * unit()}px)`;
           // Pages with fewer rows are shorter: the section's height moves between the two
           // pages' heights as the pages do, so what follows the section moves smoothly too.
           const height = (page: number) =>
@@ -219,10 +230,7 @@
         // A resize or a reorder changing the page during a swipe ends it.
         if (swipe.active && next.page !== current.page && next.page !== chosen) {
           swipe.stop();
-          const { [next.id]: _, ...rest } = swipePages;
-          swipePages = rest;
-          node.querySelector<HTMLElement>('.section-track')?.style.removeProperty('transform');
-          node.style.removeProperty('height');
+          endTurn(node, next.id);
         }
         current = next;
       },
@@ -305,7 +313,7 @@
         ) *
           g.columns *
           g.rows +
-        Math.max(0, [...grid.querySelectorAll('.chart')].indexOf(host)),
+        Math.max(0, [...grid.querySelectorAll('.charts.current .chart')].indexOf(host)),
       grid,
       kind,
       x: event.clientX,
@@ -314,7 +322,10 @@
       top: rect.top,
       startWidth: g.cardWidth,
       startHeight: g.height,
-      startRows: Math.max(1, Math.ceil(grid.querySelectorAll('.chart').length / g.columns)),
+      startRows: Math.max(
+        1,
+        Math.ceil(grid.querySelectorAll('.charts.current .chart').length / g.columns),
+      ),
       width: g.cardWidth,
       height: g.height,
       rows: g.rows,
@@ -367,7 +378,8 @@
       ? document.querySelector<HTMLElement>(`[data-section-id="${CSS.escape(id)}"] .section-grid`)
       : document.body;
     if (!scope || matchMedia('(prefers-reduced-motion: reduce)').matches) return () => {};
-    const selector = items === 'panels' ? '.chart[data-panel-id]' : '.metric-section',
+    const selector =
+        items === 'panels' ? '.charts.current .chart[data-panel-id]' : '.metric-section',
       keyOf = (node: HTMLElement) => node.dataset.panelId ?? node.dataset.sectionId,
       cards = () => [...scope.querySelectorAll<HTMLElement>(selector)],
       before = new Map(cards().map((card) => [keyOf(card), card.getBoundingClientRect()]));
@@ -466,7 +478,8 @@
     const handle = event.currentTarget as HTMLElement,
       chart = handle.closest<HTMLElement>('.chart');
     const grid = handle.closest('.section-grid');
-    const index = grid && chart ? [...grid.querySelectorAll('.chart')].indexOf(chart) : 0;
+    const index =
+      grid && chart ? [...grid.querySelectorAll('.charts.current .chart')].indexOf(chart) : 0;
     const absolute =
       Math.min(pageBySection[id] || 0, Math.max(0, Math.ceil(g.count / (g.columns * g.rows)) - 1)) *
         g.columns *
@@ -955,10 +968,10 @@
   </section>{/if}
 {#each sections as section, sectionIndex (section.id)}{@const content = panels.filter(
     (p) => panelSection(p) === section.id,
-  )}{@const g = geometry(section.id)}{@const size = g.columns * g.rows}{@const page = Math.min(
-    pageBySection[section.id] || 0,
-    Math.max(0, Math.ceil(content.length / size) - 1),
-  )}
+  )}{@const g = geometry(section.id)}{@const size = g.columns * g.rows}{@const pageCount = Math.max(
+    1,
+    Math.ceil(content.length / size),
+  )}{@const page = Math.min(pageBySection[section.id] || 0, pageCount - 1)}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Section drop has panel editor and menu alternatives.) -->
   <section
     class="metric-section"
@@ -1132,12 +1145,15 @@
         class="section-grid"
         class:pageable={content.length > size}
         use:measure={section.id}
-        use:pager={{ id: section.id, pages: Math.ceil(content.length / size), page }}
+        use:pager={{ id: section.id, pages: pageCount, page }}
       >
-        <div class="section-track">
-          {#each swipePages[section.id] ?? [page] as shownPage (shownPage)}<div
+        <div class="section-pages"><div class="section-track">
+          {#each mountedPages(section.id, page, pageCount) as shownPage (shownPage)}<div
               class="charts"
+              class:current={shownPage === page}
+              class:beside={shownPage !== (turning[section.id] ?? page)}
               data-page={shownPage}
+              style:--page-offset={shownPage - (turning[section.id] ?? page)}
               style:grid-template-columns={'repeat(' + g.columns + ', minmax(0,1fr))'}
               aria-hidden={shownPage === page ? undefined : 'true'}
               inert={shownPage !== page}
@@ -1193,7 +1209,7 @@
                   />
                 </div>{/each}
             </div>{/each}
-        </div>
+        </div></div>
         {#if !content.length}<button class="empty-section" onclick={() => onAdd(section.id)}
             >{$t('workspace.addPanel')}</button
           >{:else}<button
