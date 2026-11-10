@@ -83,6 +83,11 @@ checkout does not change the running app.
 - JSON API requests are limited to 32 MiB and file uploads to 10 GiB per file. Make sure
   your reverse proxy's timeouts and body limits fit your model files. Interrupted
   uploads never replace completed files.
+- Each run keeps at most 500 MiB of logged media files (images, video, audio and the
+  like). A run that uploads more loses media entries permanently, thinned evenly over its
+  steps so that early media remain. Change the limit, or turn it off with 0, in **App
+  settings → Storage**; `npm run randl -- tool media_limit_apply --json '{"dryRun":true}'` reports what applying
+  it to every existing run would remove.
 - A running run with no SDK contact for `--run-timeout` seconds (default 600, minimum 60)
   is marked crashed; renewed contact returns it to running.
 - With `ffmpeg` on `PATH` (or `RANDL_FFMPEG` set to its path), randl makes video poster

@@ -43,7 +43,8 @@
   import { Select, SelectItem, Slider } from 'carbon-components-svelte';
   import ChevronLeft from 'carbon-icons-svelte/lib/ChevronLeft.svelte';
   import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
-  import { coverflowItems, mediaRuns, mediaSteps } from './panel-session';
+  import { coverflowItems, mediaRuns, mediaPositions } from './panel-session';
+  import { axisName, axisPosition, nearestIndex } from './media-axis';
   import ZoomIn from 'carbon-icons-svelte/lib/ZoomIn.svelte';
   import ZoomOut from 'carbon-icons-svelte/lib/ZoomOut.svelte';
   import { mediaCount as fileCount } from '../../backend/src/media-items';
@@ -274,38 +275,89 @@
   let fetchRuns = $derived(
     demandRun ? requestedRuns.filter((run) => run.id === demandRun.id) : requestedRuns,
   );
-  // Media: the step shown across runs is shared by a section's media panels in this tab
-  // (absent: the latest step, following new data). Steps of one run show the run chosen
-  // here, by default the newest.
+  // Media: the position shown across runs, a value on the panel's X axis (the step by
+  // default), is shared by a section's media panels on that axis in this tab (absent: the
+  // latest, following new data). Steps of one run show the run chosen here, by default the
+  // newest.
   let mediaPanel = $derived(plugin?.dataKind === 'media');
   let tiled = $derived(!!plugin?.settings.common.includes('itemLayout'));
   let mediaAcross = $derived(tiled && plotSettings.mediaAcross === 'steps' ? 'steps' : 'runs');
+  let mediaAxis = $derived(plotSettings.xAxis || '_step');
   let sessionKeys = $derived(session ?? { section: panel.id, panel: panel.id });
-  let mediaStep = $derived($mediaSteps.get(sessionKeys.section));
+  let positionKey = $derived(
+    sessionKeys.section + (mediaAxis === '_step' ? '' : '\0' + mediaAxis),
+  );
+  let mediaPosition = $derived($mediaPositions.get(positionKey));
   let mediaRun = $derived(
     mediaAcross === 'steps'
       ? (fetchRuns.find((run) => run.id === $mediaRuns.get(sessionKeys.panel)) ??
           focusedRun(fetchRuns, null, panel.id))
       : undefined,
   );
-  let draggedStep = $state<number | undefined>();
-  function chooseStep(index: number) {
-    const steps = data?.steps || [];
-    draggedStep = undefined;
-    // Choosing the last step follows the latest again.
-    mediaSteps.set(
-      sessionKeys.section,
-      index >= steps.length - 1 ? undefined : steps[Math.max(0, index)],
+  let xValues = $derived(data?.xValues || []);
+  /** The value the slider's thumb is on while it is dragged; released, it is chosen. */
+  let draggedPosition = $state<number | undefined>();
+  /** Set while the pointer holds the slider; the slider also writes back values it is given. */
+  let sliding = false;
+  function choosePosition(index: number) {
+    sliding = false;
+    draggedPosition = undefined;
+    // Choosing the last value follows the latest again.
+    mediaPositions.set(
+      positionKey,
+      index >= xValues.length - 1 ? undefined : xValues[Math.max(0, index)],
     );
   }
-  let stepIndex = $derived.by(() => {
-    const steps = data?.steps || [],
-      step = data?.step;
-    if (step == null) return steps.length - 1;
-    let index = steps.length - 1;
-    while (index > 0 && steps[index] > step) index--;
+  let positionIndex = $derived.by(() => {
+    const x = data?.x;
+    if (x == null) return xValues.length - 1;
+    let index = xValues.length - 1;
+    while (index > 0 && xValues[index] > x) index--;
     return index;
   });
+  let positionShown = $derived(draggedPosition ?? xValues[positionIndex] ?? data?.x ?? 0);
+  // The slider's track is the axis, and its thumb rests only on values with media: the
+  // pointer takes the nearest one, and the keys step through them.
+  const sliderSteps = 1000;
+  let sliderRange = $derived.by(() => {
+    const min = xValues[0] ?? 0,
+      max = xValues.at(-1) ?? 0;
+    return { min, max: max > min ? max : min + 1, step: max > min ? (max - min) / sliderSteps : 1 };
+  });
+  // The value under the thumb is chosen when the pointer lets go. The slider's own change
+  // event is not enough: it misses a press released before its listeners are in place.
+  function sliderPress() {
+    sliding = true;
+    const release = () => {
+      removeEventListener('pointerup', release, true);
+      removeEventListener('pointercancel', release, true);
+      setTimeout(() => {
+        if (!sliding) return;
+        if (draggedPosition !== undefined) choosePosition(xValues.indexOf(draggedPosition));
+        sliding = false;
+      });
+    };
+    addEventListener('pointerup', release, true);
+    addEventListener('pointercancel', release, true);
+  }
+  function sliderKey(event: KeyboardEvent) {
+    const last = xValues.length - 1,
+      page = Math.max(1, Math.round(last / 10)),
+      moves: Record<string, number> = {
+        ArrowLeft: positionIndex - 1,
+        ArrowDown: positionIndex - 1,
+        ArrowRight: positionIndex + 1,
+        ArrowUp: positionIndex + 1,
+        PageDown: positionIndex - page,
+        PageUp: positionIndex + page,
+        Home: 0,
+        End: last,
+      };
+    if (!(event.key in moves) || !(event.target as HTMLElement).matches('[role="slider"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    choosePosition(Math.max(0, Math.min(last, moves[event.key])));
+  }
   let mediaCount = $derived.by(() => {
     let shown = 0,
       total = 0;
@@ -322,20 +374,23 @@
   let announcement = $state('');
   $effect(() => {
     const text =
-      mediaPanel && data?.step != null
-        ? $t('media.toolbar.stepAnnounce', { step: data.step, count: mediaCount.shown })
+      mediaPanel && data?.x != null
+        ? $t('media.toolbar.announce', {
+            position: axisPosition(mediaAxis, data.x, $t, $locale),
+            count: mediaCount.shown,
+          })
         : '';
     const timer = setTimeout(() => (announcement = text), 500);
     return () => clearTimeout(timer);
   });
-  // Keys on a grid tile or Coverflow: [ and ] step through logged media steps; + and - resize
+  // Keys on a grid tile or Coverflow: [ and ] step through the values with media; + and - resize
   // grid items.
   function plotKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     if (!target.closest('[role="gridcell"], .carousel-slide, .carousel-chip')) return;
     if ((event.key === '[' || event.key === ']') && mediaPanel && mediaAcross === 'runs') {
       event.preventDefault();
-      chooseStep(stepIndex + (event.key === ']' ? 1 : -1));
+      choosePosition(positionIndex + (event.key === ']' ? 1 : -1));
     } else if (['+', '=', '-'].includes(event.key) && target.closest('[role="gridcell"]')) {
       event.preventDefault();
       commitSize(sizeShown + (event.key === '-' ? -40 : 40));
@@ -441,9 +496,10 @@
               files: plotSettings.mediaFiles ?? panelLimits.media.files.default,
               ...(mediaAcross === 'steps'
                 ? { across: 'steps', run: mediaRun?.id }
-                : mediaStep === undefined
-                  ? {}
-                  : { step: mediaStep }),
+                : {
+                    ...(mediaAxis === '_step' ? {} : { xAxis: mediaAxis }),
+                    ...(mediaPosition === undefined ? {} : { x: mediaPosition }),
+                  }),
             }
           : {
               metrics: requestMetrics,
@@ -641,8 +697,8 @@
       // An unchanged media response keeps the mounted tiles and any playback.
       if (
         !result.entries ||
-        JSON.stringify([result.entries, result.steps]) !==
-          JSON.stringify(untrack(() => [data?.entries, data?.steps]))
+        JSON.stringify([result.entries, result.xValues, result.x, result.xAxis]) !==
+          JSON.stringify(untrack(() => [data?.entries, data?.xValues, data?.x, data?.xAxis]))
       )
         data = result;
       const empty = !(
@@ -1072,45 +1128,62 @@
               ? $t('media.toolbar.countTruncated', mediaCount)
               : $t('media.toolbar.count', { count: mediaCount.shown })}</span
         >
-        {#if mediaToolbar && mediaAcross === 'runs' && data?.steps?.length}<div class="media-step">
+        {#if mediaToolbar && mediaAcross === 'runs' && xValues.length}{@const stepAxis =
+            mediaAxis === '_step'}<div class="media-step">
             <Button
               kind="ghost"
               size="small"
               icon={ChevronLeft}
               hideTooltip
-              title={$t('media.toolbar.previousStep')}
-              iconDescription={$t('media.toolbar.previousStep')}
-              disabled={stepIndex <= 0}
-              on:click={() => chooseStep(stepIndex - 1)}
-            />{#if plotWidth >= 560}<Slider
-                labelText={$t('media.toolbar.stepSlider')}
-                hideLabel
-                hideTextInput
-                min={0}
-                max={Math.max(1, data.steps.length - 1)}
-                step={1}
-                disabled={data.steps.length < 2}
-                formatValue={(index: number) => String(data?.steps?.[index] ?? '')}
-                value={draggedStep ?? stepIndex}
-                on:input={(event) => (draggedStep = Number(event.detail))}
-                on:change={(event) => chooseStep(Number(event.detail))}
-              />{/if}<Button
+              title={$t(stepAxis ? 'media.toolbar.previousStep' : 'media.toolbar.previousValue')}
+              iconDescription={$t(
+                stepAxis ? 'media.toolbar.previousStep' : 'media.toolbar.previousValue',
+              )}
+              disabled={positionIndex <= 0}
+              on:click={() => choosePosition(positionIndex - 1)}
+            />{#if plotWidth >= 360}<div
+                class="media-step-slider"
+                onkeydowncapture={sliderKey}
+                onpointerdowncapture={sliderPress}
+              >
+                <Slider
+                  labelText={axisName(mediaAxis, $t)}
+                  hideLabel
+                  hideTextInput
+                  fullWidth
+                  min={sliderRange.min}
+                  max={sliderRange.max}
+                  step={sliderRange.step}
+                  disabled={xValues.length < 2}
+                  formatValue={() => axisPosition(mediaAxis, positionShown, $t, $locale)}
+                  bind:value={
+                    () => positionShown,
+                    (value) => {
+                      const index = sliding ? nearestIndex(xValues, Number(value)) : -1;
+                      if (index >= 0) draggedPosition = xValues[index];
+                    }
+                  }
+                  on:change={() => {
+                    if (draggedPosition !== undefined)
+                      choosePosition(xValues.indexOf(draggedPosition));
+                    sliding = false;
+                  }}
+                />
+              </div>{/if}<Button
               kind="ghost"
               size="small"
               icon={ChevronRight}
               hideTooltip
-              title={$t('media.toolbar.nextStep')}
-              iconDescription={$t('media.toolbar.nextStep')}
-              disabled={stepIndex >= data.steps.length - 1}
-              on:click={() => chooseStep(stepIndex + 1)}
+              title={$t(stepAxis ? 'media.toolbar.nextStep' : 'media.toolbar.nextValue')}
+              iconDescription={$t(stepAxis ? 'media.toolbar.nextStep' : 'media.toolbar.nextValue')}
+              disabled={positionIndex >= xValues.length - 1}
+              on:click={() => choosePosition(positionIndex + 1)}
             /><span class="media-step-label"
-              >{$t('media.toolbar.step', {
-                step: data.steps[draggedStep ?? stepIndex] ?? data.step ?? 0,
-              })}</span
-            >{#if mediaStep !== undefined}<Button
+              >{axisPosition(mediaAxis, positionShown, $t, $locale)}</span
+            >{#if mediaPosition !== undefined}<Button
                 kind="ghost"
                 size="small"
-                on:click={() => mediaSteps.set(sessionKeys.section, undefined)}
+                on:click={() => mediaPositions.set(positionKey, undefined)}
                 >{$t('media.toolbar.latest')}</Button
               >{/if}
           </div>{:else if mediaToolbar && mediaAcross === 'steps' && fetchRuns.length}<div

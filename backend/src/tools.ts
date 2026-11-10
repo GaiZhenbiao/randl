@@ -6,6 +6,7 @@ import {KeyedLocks} from './locks.js';
 import { invalidOption, optionKeyPattern, optionLimits, pluginIdPattern } from './plugin-options.js';
 import { randomUUID } from 'node:crypto';
 import type { DB } from './db.js';
+import { mediaCapMax, mediaCapSetting, mediaLimit } from './media-cap.js';
 import type { Plugins } from './plugins.js';
 type Args = Record<string, any>;
 const string = { type: 'string', maxLength: 4096 },
@@ -183,6 +184,29 @@ export const toolCatalog = [
     description: 'List all lightweight run metadata. Optional project id filters entity/project.',
     parameters: schema({ project: string }),
   },
+  {
+    name: 'settings_get',
+    description:
+      'Read the server settings. mediaLimitMB is the most megabytes of logged media files a run keeps; 0 means no limit.',
+    parameters: schema(),
+  },
+  {
+    name: 'settings_update',
+    description:
+      'Change server settings. Not available to the Assistant. mediaLimitMB (megabytes, 0 for no limit) applies to each run the next time it uploads media: a run over the limit permanently loses media entries, thinned evenly over its steps, keeping the first and the newest of every key.',
+    agent: false,
+    parameters: schema(
+      { mediaLimitMB: { type: 'integer', minimum: 0, maximum: mediaCapMax } },
+      ['mediaLimitMB'],
+    ),
+  },
+  {
+    name: 'media_limit_apply',
+    description:
+      'Apply the media limit to every run now instead of waiting for its next upload. Permanently deletes media of runs over the limit. With dryRun, only reports the runs, entries, files and bytes that would be removed.',
+    agent: false,
+    parameters: schema({ dryRun: { type: 'boolean' } }),
+  },
   {name:'run_get',description:'Read a run, its environment, configuration, summary, runtime, and logged alerts.',parameters:schema({id:string},['id'])},
   {
     name: 'metrics_list',
@@ -289,6 +313,7 @@ export class Tools {
     readonly plugins: Plugins,
     readonly changed: (ids?: string[]) => void = () => {},
     readonly cleanupProject: (result:Args)=>Promise<number> = async()=>0,
+    readonly applyMediaLimit: (dryRun: boolean) => Promise<Args> = async () => ({}),
   ) {}
   async execute(name: string, a: Args) {
     const tool = toolCatalog.find((t) => t.name === name);
@@ -351,6 +376,16 @@ export class Tools {
           views: await this.db.call('views'),
           plugins: await this.plugins.list(),
         };
+      case 'settings_get':
+        return { mediaLimitMB: await mediaLimit(this.db) };
+      case 'settings_update':
+        await this.db.call('settingSet', mediaCapSetting, a.mediaLimitMB);
+        result = { mediaLimitMB: a.mediaLimitMB };
+        break;
+      case 'media_limit_apply':
+        if (a.dryRun) return this.applyMediaLimit(true);
+        result = await this.applyMediaLimit(false);
+        break;
       case 'runs_list':
         return (await this.db.call('runs')).filter(
           (r: any) => !a.project || r.entity + '/' + r.project === a.project,

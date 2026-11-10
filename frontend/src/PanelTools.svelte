@@ -9,6 +9,8 @@
     search = $bindable(''),
     header = false,
     compact,
+    settings = true,
+    add = true,
     onDefaults,
     onAdd,
   }: {
@@ -16,6 +18,9 @@
     header?: boolean;
     /** Add panel shows only its icon. */
     compact: boolean;
+    /** Whether workspace settings and Add panel show here; a crowded header moves them to its menu. */
+    settings?: boolean;
+    add?: boolean;
     onDefaults: () => void;
     onAdd: () => void;
   } = $props();
@@ -42,7 +47,7 @@
 <div class="panel-group" class:header>
   {#if !header}{@render searchField()}{/if}
   <div class="chart-actions">
-    <Button
+    {#if settings}<Button
       kind="ghost"
       size="small"
       icon={Settings}
@@ -53,7 +58,7 @@
       portalTooltip
       tooltipAlignment="end"
       on:click={() => onDefaults()}
-    />{#if compact}<Button
+    />{/if}{#if !add}<!-- In the header's menu. -->{:else if compact}<Button
         size="small"
         icon={Add}
         aria-pressed={undefined}

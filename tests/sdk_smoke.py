@@ -150,19 +150,19 @@ def main():
                     assert (decoded.getnchannels(), decoded.getframerate(), decoded.getnframes()) == (1, 8000, 800)
 
         gallery = post("/api/media", {"runs": [run_id], "metric": "gallery"})
-        assert gallery["steps"] == [0, 4, 8] and gallery["step"] == 8, gallery
+        assert gallery["xValues"] == [0, 4, 8] and gallery["x"] == 8, gallery
         latest = gallery["entries"][0]["value"]
         assert latest["_type"] == "images/separated" and len(latest["filenames"]) == 3, latest
         assert (latest["width"], latest["height"]) == (4, 3), latest
         for path in latest["filenames"]:
             assert get("/api/run-file-preview", run=run_id, path=path) == image_path.read_bytes()
-        at_step = post("/api/media", {"runs": [run_id], "metric": "gallery", "step": 5})
+        at_step = post("/api/media", {"runs": [run_id], "metric": "gallery", "x": 5})
         assert [entry["step"] for entry in at_step["entries"]] == [4], at_step
         limited = post("/api/media", {"runs": [run_id], "metric": "gallery", "files": 2})
         entry = limited["entries"][0]
         assert len(entry["value"]["filenames"]) == 2 and entry["files"] == 3, entry
         reels = post("/api/media", {"runs": [run_id], "metric": "reels"})
-        assert reels["steps"] == [0, 4, 8], reels
+        assert reels["xValues"] == [0, 4, 8], reels
         reel = reels["entries"][0]["value"]
         assert reel["_type"] == "videos" and reel["count"] == 3, reel
         reel_bytes = reel_path.read_bytes()

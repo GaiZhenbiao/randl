@@ -2042,24 +2042,12 @@ try {
       await addLinePanel(page, fixture.metric, 'Context comparison');
       const rail = page.getByRole('navigation', { name: 'Project pages', exact: true });
       const initialRailWidth = (await rail.boundingBox()).width;
-      const initialRunsWidth = (await page.locator('aside').boundingBox()).width;
-      await page.getByRole('button', { name: 'Expand project navigation', exact: true }).click();
-      assert.ok((await rail.boundingBox()).width > initialRailWidth);
-      assert.equal(
-        (await page.locator('aside').boundingBox()).width,
-        initialRunsWidth,
-        'Navigation expansion changed the selected sidebar width',
-      );
+      await expect(rail.getByRole('button', { name: /project navigation/ })).toHaveCount(0);
       await page.getByRole('button', { name: 'Hide runs', exact: true }).click();
       await expect(page.locator('aside')).toHaveAttribute('inert', '');
-      assert.ok(
-        (await rail.boundingBox()).width > initialRailWidth,
-        'Hiding runs collapsed project navigation',
-      );
+      assert.equal((await rail.boundingBox()).width, initialRailWidth);
       await page.getByRole('button', { name: 'Show runs', exact: true }).click();
       await page.setViewportSize({ width: 761, height: 900 });
-      await expect(page.locator('aside')).toBeHidden();
-      await page.getByRole('button', { name: 'Show runs', exact: true }).click();
       await expect(page.locator('aside')).toBeVisible();
       await expect
         .poll(async () => Math.round((await rail.boundingBox()).width))

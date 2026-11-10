@@ -763,10 +763,10 @@
   }
 </script>
 
-{#snippet xAxisChoice()}
+{#snippet xAxisChoice(label: string = $t('panelSettings.data.xAxis'))}
   <EditorChoice
     onRequestClose={requestClose}
-    labelText={$t('panelSettings.data.xAxis')}
+    labelText={label}
     disabled={metricsLoading}
     items={[
       { id: '_step', text: $t('charts.xAxis.step') },
@@ -790,7 +790,7 @@
       {$t('metrics.notLogged', { metric: missingXAxis })}
     </p>{/if}
   {#if !runs.length}<p class="bx--form__helper-text">{$t('panelSettings.data.noRuns')}</p>{/if}
-  {@render origin(['xAxis'], $t('panelSettings.data.xAxis'))}
+  {@render origin(['xAxis'], label)}
 {/snippet}
 
 {#snippet origin(keys: SettingKey[], label: string)}
@@ -927,7 +927,10 @@
         labelText={$t('panelSettings.data.mediaAcross.steps')}
         value="steps"
       /></RadioButtonGroup
-    >{@render origin(['mediaAcross'], $t('panelSettings.data.mediaAcross.label'))}<Slider
+    >{@render origin(['mediaAcross'], $t('panelSettings.data.mediaAcross.label'))}{#if !settingsOnly && manifest?.dataKind === 'media' && (effective.mediaAcross || 'runs') === 'runs'}{@render xAxisChoice(
+        $t('panelSettings.data.browseBy.label'),
+      )}
+      <p class="bx--form__helper-text">{$t('panelSettings.data.browseBy.help')}</p>{/if}<Slider
       aria-label={$t('panelSettings.data.mediaFiles.label')}
       labelText={$t('panelSettings.data.mediaFiles.label')}
       helperText={$t('panelSettings.data.mediaFiles.help')}

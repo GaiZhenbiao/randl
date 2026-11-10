@@ -382,19 +382,19 @@ try {
     });
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${origin}/test/header/workspace?view=${first.id}`);
-    // Wider windows hold the controls in the header; phones give them a row under it.
-    const bar = width > 760 ? '.bx--header .page-bar' : 'main .page-row';
+    // The header holds the controls in one row at every width.
+    const bar = '.bx--header .page-bar';
+    await expect(page.locator('.page-row')).toHaveCount(0);
     await expect(page.locator(bar)).toHaveCount(1);
     await expect(page.locator('.chart')).toHaveCount(1);
     const geometry = await page.locator(bar).evaluate((toolbar) => {
       const b = toolbar.getBoundingClientRect(),
         view = toolbar.querySelector('.view-controls > *').getBoundingClientRect(),
-        // The header's controls are its bar's own items; the phone row groups them.
-        panels = (
-          toolbar.matches('.page-bar') ? toolbar : toolbar.querySelector('.panel-group')
-        ).getBoundingClientRect(),
-        add = toolbar.querySelector('.chart-actions > button').getBoundingClientRect();
-      const childrenFit = [...toolbar.querySelectorAll('.panel-group > *, .chart-actions > button')]
+        // The header's controls are its bar's own items. A crowded bar moves workspace
+        // settings and Add panel into the view menu.
+        panels = toolbar.getBoundingClientRect(),
+        add = toolbar.querySelector('.chart-actions > button')?.getBoundingClientRect();
+      const childrenFit = [...toolbar.querySelectorAll('button, select, .view-name')]
         .filter((element) => element.getBoundingClientRect().width)
         .every((element) => {
           const r = element.getBoundingClientRect();
@@ -404,7 +404,7 @@ try {
         height: b.height,
         viewY: view.top,
         viewHeight: view.height,
-        panelMid: add.top + add.height / 2,
+        panelMid: add ? add.top + add.height / 2 : null,
         childrenFit,
         overflow: document.documentElement.scrollWidth - innerWidth,
       };
@@ -414,9 +414,16 @@ try {
       geometry.childrenFit,
       `${width}: panel controls stay inside their group's aligned gutters`,
     );
-    if (width > 760) {
+    if (geometry.panelMid !== null)
       assert.ok(Math.abs(geometry.viewY + geometry.viewHeight / 2 - geometry.panelMid) <= 1);
-      assert.ok(geometry.height <= 48);
+    assert.ok(geometry.height <= 48, `${width}: one row`);
+    // Workspace settings and Add panel are each available once: in the bar or in the menu.
+    for (const name of ['Workspace settings', 'Add panel']) {
+      const inBar = await page.locator(bar).getByRole('button', { name, exact: true }).count();
+      await page.getByRole('button', { name: 'View actions', exact: true }).click();
+      const inMenu = await page.getByRole('menuitem', { name, exact: true }).count();
+      await page.keyboard.press('Escape');
+      assert.equal(inBar + inMenu, 1, `${width}: ${name} is available once`);
     }
     const newView = page.getByRole('button', { name: 'New view', exact: true });
     const newViewVisible = await newView.isVisible();

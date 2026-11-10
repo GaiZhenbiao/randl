@@ -240,7 +240,7 @@ test('plugin options: install checks descriptors and catalogs, and every writer 
   );
   assert.equal((await shape({ 'stat-card': { Bad: 1 } })).statusCode, 400);
 });
-test('media: steps catalog, latest at or before a step per run, steps of one run, file limits', async (t) => {
+test('media: X value catalog, latest at or before a value per run, steps of one run, file limits', async (t) => {
   const { app, db } = await serverTest(t);
   const images = (step, count) => ({
     _step: step,
@@ -276,8 +276,9 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
   };
   // Latest: each run's newest entry at or before the newest logged step, in input order.
   const latest = await media({ runs: [ids[2], ids[1], ids[0], ids[3]], metric: 'gallery' });
-  assert.deepEqual(latest.steps, [0, 5, 10, 15, 20, 30]);
-  assert.equal(latest.step, 30);
+  assert.deepEqual(latest.xValues, [0, 5, 10, 15, 20, 30]);
+  assert.equal(latest.x, 30);
+  assert.equal(latest.xAxis, '_step');
   assert.deepEqual(
     latest.entries.map((entry) => [entry.runName, entry.step]),
     [
@@ -288,7 +289,7 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
   );
   assert.equal(latest.total, 3);
   // At step 12: B shows step 5, A step 10, and the late run keeps its place without media.
-  const at = await media({ runs: ids, metric: 'gallery', step: 12 });
+  const at = await media({ runs: ids, metric: 'gallery', x: 12 });
   assert.deepEqual(
     at.entries.map((entry) => [entry.runName, entry.step, entry.value?.filenames.length ?? null]),
     [
@@ -299,7 +300,7 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
   );
   assert.equal(at.total, 2);
   // The files limit applies to each run on its own: A keeps three of its four, B both of its two.
-  const limited = await media({ runs: ids, metric: 'gallery', step: 12, files: 3 });
+  const limited = await media({ runs: ids, metric: 'gallery', x: 12, files: 3 });
   assert.deepEqual(
     limited.entries.map((entry) => [
       entry.value?.filenames.length,
@@ -330,7 +331,8 @@ test('media: steps catalog, latest at or before a step per run, steps of one run
     ],
   );
   assert.equal(steps.total, 3);
-  assert.equal(steps.step, null);
+  assert.equal(steps.x, null);
+  assert.deepEqual(steps.xValues, []);
   // Unknown metrics, runs outside the request and invalid limits.
   assert.deepEqual((await media({ runs: ids, metric: 'missing' })).entries, []);
   assert.deepEqual(

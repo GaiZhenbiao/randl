@@ -162,7 +162,8 @@ cells.
 </table>
 
 Media panels show every logged file as a tile, either for all runs at one step or for
-one run across its steps, with a step slider shared by the section. Images and video
+one run across its steps, with a slider shared by the section that steps through the
+logged media by step, time or any metric, such as the epoch. Images and video
 posters load only for tiles in view. Videos autoplay muted and loop while on screen
 (both can be turned off) and stream with seeking. **Coverflow** presents the files one
 at a time, and Enter on a tile opens it full screen.
@@ -215,7 +216,7 @@ project is the one action that needs your confirmation: a card in the conversati
 for you to type the project's name, and the model cannot confirm it.
 
 The Assistant is built on the Pi coding agent and loads only randl's management tools,
-with no shell or file access. Choose a provider and model in **App settings →
+with no shell or file access; it cannot change server settings such as the media limit. Choose a provider and model in **App settings →
 Assistant**: save an API key for Anthropic, OpenAI, Google, Mistral, OpenRouter or
 another provider Pi supports, sign in with Pi on the server, or add your own endpoint to
 Pi's `models.json`. Prompts and tool results are sent to the model's provider.

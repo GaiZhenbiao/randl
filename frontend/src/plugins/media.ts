@@ -1,6 +1,7 @@
 import { chevronIcon, mutedIcon, playIcon } from './icons';
 import { Carousel, TileGrid } from './tile-view';
 import { attachPlayer, detach, detachPlayers, pausePlayers } from '../media-playback';
+import { axisPosition } from '../media-axis';
 import { cachedPoster, loadPoster } from '../media-poster';
 import { color } from '../run-colors';
 import panelLimits from '../../../backend/src/panel-limits.json';
@@ -76,6 +77,16 @@ export function create({ element }: { element: HTMLElement }): Renderer {
     /** What Coverflow shows, kept while the panel stays. */
     flow = newFlow();
   const kind = () => ctx!.panel.plugin;
+  /** Says that a run has no media at or before the position shown on the X axis. */
+  const noEntry = () => {
+    const axis = ctx!.data.xAxis || '_step',
+      x = ctx!.data.x ?? 0;
+    return axis === '_step'
+      ? ctx!.translate('media.tile.noEntry', { step: x })
+      : ctx!.translate('media.tile.noEntryAt', {
+          position: axisPosition(axis, x, ctx!.translate, ctx!.locale),
+        });
+  };
   const fullscreen = () => {
     const shown = document.fullscreenElement;
     return !!shown && element.contains(shown);
@@ -312,7 +323,7 @@ export function create({ element }: { element: HTMLElement }): Renderer {
       frame.classList.add('media-missing');
       frame.textContent = tile.item
         ? ctx!.translate('media.tile.unavailable')
-        : ctx!.translate('media.tile.noEntry', { step: ctx!.data.step ?? 0 });
+        : noEntry();
       return frame;
     }
     if (kind() === 'image') {
@@ -379,7 +390,7 @@ export function create({ element }: { element: HTMLElement }): Renderer {
         })
       : tile.entry.runName +
           ', ' +
-          ctx!.translate('media.tile.noEntry', { step: ctx!.data.step ?? 0 });
+          noEntry();
   }
   // A tile with a player keeps it while the grid rebuilds its rows, as when the panel expands
   // or new data arrive: the frame moves to the file's new cell in the same pass, so the media
@@ -660,6 +671,8 @@ export function create({ element }: { element: HTMLElement }): Renderer {
           next.locale,
           next.dark,
           next.panel.settings?.mediaAcross,
+          next.data.xAxis,
+          next.data.x,
         ]),
         rebuild = content !== shown;
       shown = content;

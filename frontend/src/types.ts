@@ -144,13 +144,16 @@ export type ChartData = {
   pointLimit?: { limit: number; total: number };
   snapshot?: boolean;
   revision?: string;
-  /** Media responses: the entries shown, and the steps the runs logged (ascending). */
+  /**
+   * Media responses: the entries shown, and across runs the values on the X axis (`xAxis`)
+   * at which the runs logged media, ascending.
+   */
   entries?: MediaEntry[];
-  steps?: number[];
-  stepsTruncated?: boolean;
-  /** The step shown across runs; null across the steps of one run. */
-  step?: number | null;
-  /** Runs with media at the step, or the entries the run logged. */
+  xValues?: number[];
+  xValuesTruncated?: boolean;
+  /** The X value shown across runs; null across the steps of one run. */
+  x?: number | null;
+  /** Runs with media at the X value, or the entries the run logged. */
   total?: number;
   sampled: boolean;
   groupCount?: number;
@@ -181,8 +184,10 @@ export type MediaEntry = {
   run: string;
   runName: string;
   metric: string;
-  /** Null when the run logs this metric only after the step shown. */
+  /** Null when the run logs this metric only after the X value shown. */
   step: number | null;
+  /** The entry's value on the X axis; its step on the step axis. */
+  x?: number | null;
   /** The SDK media descriptor, or null with `step`. */
   value: any;
   /** Set when `value` lists only the first of `files` logged files. */

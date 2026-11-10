@@ -1,7 +1,7 @@
 import { writable } from 'svelte/store';
 
-// Choices that belong to this browser tab and are never saved: the media step a section's
-// media panels show together (W&B's synchronized step slider), each panel's own run for
+// Choices that belong to this browser tab and are never saved: the position on the X axis a
+// section's media panels show together (W&B's synchronized step slider), each panel's own run for
 // "Steps of one run" and its Coverflow item. They survive navigation within the tab and are
 // lost on reload.
 const limit = 500;
@@ -21,8 +21,11 @@ function bounded<T>() {
     },
   };
 }
-/** Media steps by section key; absent means the latest step, following new data. */
-export const mediaSteps = bounded<number>();
+/**
+ * Media positions (values on the panel's X axis) by section and axis; absent means the
+ * latest, following new data.
+ */
+export const mediaPositions = bounded<number>();
 /** The run shown by "Steps of one run", by panel key. */
 export const mediaRuns = bounded<string>();
 /** Coverflow's current item (a run, group or media file key), by panel key. */

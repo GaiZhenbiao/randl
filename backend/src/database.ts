@@ -24,7 +24,7 @@ import Database from 'better-sqlite3';
 import { bucketWidth, chartResolution, chartSampled, type Series } from './chart-diff.js';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { limitMedia, mediaCount } from './media-items.js';
+import { limitMedia, mediaCount, mediaPaths } from './media-items.js';
 export type Row = Record<string, any>;
 const summaryBytes = (value: { summaries: Float64Array[] }) =>
   value.summaries.reduce((sum, item) => sum + item.byteLength + 64, 64);
@@ -737,15 +737,17 @@ export class Store {
   }
   /**
    * Logged media of one metric for a set of runs (docs/plugins.md#media-data). Across runs,
-   * each run's entry at or before a step (the latest by default), in the order of `runs`;
-   * across steps, one run's entries by step. Every response carries the steps catalog.
-   * Files per entry are allocated within the panel's files-per-step limit.
+   * each run's entry at or before a value on the X axis (the latest by default), in the order
+   * of `runs`; across steps, one run's entries by step. Across runs the response carries the
+   * catalog of X values with media. Files per entry are allocated within the panel's
+   * files-per-step limit.
    */
   media(args: Row) {
     const limits = panelLimits.media,
       files = args.files ?? limits.files.default,
-      empty = { steps: [], stepsTruncated: false, step: null, entries: [], total: 0 },
-      base = { metrics: [args.metric], series: [], sampled: false };
+      xAxis: string = args.xAxis || '_step',
+      empty = { xValues: [], xValuesTruncated: false, x: null, entries: [], total: 0 },
+      base = { metrics: [args.metric], series: [], sampled: false, xAxis };
     const metric = this.db.prepare('SELECT id FROM metric_names WHERE name=?').get(args.metric) as
       | Row
       | undefined;
@@ -760,25 +762,22 @@ export class Store {
       ).map((row) => [row.id, row]),
     );
     const runs = (args.runs as string[]).flatMap((id) => (keys.has(id) ? [keys.get(id)!] : []));
-    const newest = (
-      this.db
-        .prepare(
-          `SELECT DISTINCT step FROM media WHERE metric=? AND run IN (SELECT value FROM json_each(?)) ORDER BY step DESC LIMIT ?`,
-        )
-        .all(metric.id, JSON.stringify(runs.map((run) => run.key)), limits.steps + 1) as Row[]
-    ).map((row) => row.step as number);
-    const steps = newest.slice(0, limits.steps).reverse();
-    const entry = (run: Row, row: Row | undefined) => ({
+    const entry = (run: Row, row: Row | undefined, x: number | null = row ? row.step : null) => ({
       run: run.id,
       runName: run.runName,
       metric: args.metric,
       step: row ? row.step : null,
+      x,
       value: row ? JSON.parse(row.value) : null,
     });
-    let entries: ReturnType<typeof entry>[], total: number, step: number | null;
+    let entries: ReturnType<typeof entry>[],
+      total: number,
+      x: number | null = null,
+      xValues: number[] = [],
+      xValuesTruncated = false;
     if (args.across === 'steps') {
       const run = runs.find((item) => item.id === args.run);
-      if (!run) return { ...empty, steps, stepsTruncated: newest.length > limits.steps, ...base };
+      if (!run) return { ...empty, ...base };
       entries = (
         this.db
           .prepare(
@@ -793,17 +792,51 @@ export class Store {
           .prepare('SELECT count(*) n FROM media WHERE run=? AND metric=?')
           .get(run.key, metric.id) as Row
       ).n;
-      step = null;
-    } else {
-      step = args.step ?? steps.at(-1) ?? null;
+    } else if (xAxis === '_step') {
+      const newest = (
+        this.db
+          .prepare(
+            `SELECT DISTINCT step FROM media WHERE metric=? AND run IN (SELECT value FROM json_each(?)) ORDER BY step DESC LIMIT ?`,
+          )
+          .all(metric.id, JSON.stringify(runs.map((run) => run.key)), limits.steps + 1) as Row[]
+      ).map((row) => row.step as number);
+      xValues = newest.slice(0, limits.steps).reverse();
+      xValuesTruncated = newest.length > limits.steps;
+      x = args.x ?? xValues.at(-1) ?? null;
       const at = this.db.prepare(
           'SELECT step,value FROM media WHERE run=? AND metric=? AND step<=? ORDER BY step DESC LIMIT 1',
         ),
         logged = this.db.prepare('SELECT 1 FROM media WHERE run=? AND metric=? LIMIT 1');
       // A run that logs the metric only after the step keeps its place without media.
       entries = runs.flatMap((run) => {
-        const row = step === null ? undefined : (at.get(run.key, metric.id, step) as Row);
+        const row = x === null ? undefined : (at.get(run.key, metric.id, x) as Row);
         return row || logged.get(run.key, metric.id) ? [entry(run, row)] : [];
+      });
+      total = entries.filter((item) => item.value).length;
+    } else {
+      // Another X axis: each media step takes the axis metric's value at that step, or its
+      // last value before it, so media logged between two values of the axis stay reachable.
+      const positions = runs.map((run) => this.mediaPositions(run.key, metric.id, xAxis)),
+        distinct = [...new Set(positions.flatMap((item) => item.xs))].sort((a, b) => a - b);
+      xValuesTruncated = distinct.length > limits.steps;
+      xValues = xValuesTruncated ? distinct.slice(-limits.steps) : distinct;
+      x = args.x ?? xValues.at(-1) ?? null;
+      const value = this.db.prepare(
+          'SELECT step,value FROM media WHERE run=? AND metric=? AND step=?',
+        ),
+        logged = this.db.prepare('SELECT 1 FROM media WHERE run=? AND metric=? LIMIT 1');
+      entries = runs.flatMap((run, index) => {
+        const { steps, xs } = positions[index];
+        if (!steps.length && !logged.get(run.key, metric.id)) return [];
+        let found = -1;
+        if (x !== null)
+          for (let i = 0; i < xs.length; i++)
+            if (xs[i] <= x && (found < 0 || xs[i] >= xs[found])) found = i;
+        return [
+          found < 0
+            ? entry(run, undefined)
+            : entry(run, value.get(run.key, metric.id, steps[found]) as Row, xs[found]),
+        ];
       });
       total = entries.filter((item) => item.value).length;
     }
@@ -819,7 +852,62 @@ export class Store {
         item.value = limitMedia(item.value, quotas[index]);
         Object.assign(item, { files: counts[index], filesTruncated: true });
       }
-    return { steps, stepsTruncated: newest.length > limits.steps, step, entries, total, ...base };
+    return { xValues, xValuesTruncated, x, entries, total, ...base };
+  }
+  /**
+   * A run's newest media steps of one metric that have a value on an X axis other than the
+   * step, with those values, by step.
+   */
+  private mediaPositions(run: number, metric: number, axis: string) {
+    const steps = (
+        this.db
+          .prepare('SELECT step FROM media WHERE run=? AND metric=? ORDER BY step DESC LIMIT ?')
+          .pluck()
+          .all(run, metric, panelLimits.media.steps) as number[]
+      ).reverse(),
+      result = { steps: [] as number[], xs: [] as number[] };
+    if (!steps.length) return result;
+    const source = axis === '_relative_wall' ? '_timestamp' : axis,
+      origin = axis === '_relative_wall' ? this.history.minValue(run, source) : 0;
+    if (this.history.metricId(source) === undefined || origin === null) return result;
+    const series = this.history.series(run, source, { hi: steps.at(-1) }),
+      scale = axis === '_timestamp' ? 1000 : 1;
+    let at = 0;
+    for (const step of steps) {
+      while (at < series.steps.length && series.steps[at] <= step) at++;
+      if (!at) continue;
+      result.steps.push(step);
+      result.xs.push(series.values[at - 1] * scale - origin);
+    }
+    return result;
+  }
+  /** Runs that logged media. */
+  runsWithMedia() {
+    return this.db
+      .prepare('SELECT k.id FROM run_keys k WHERE EXISTS(SELECT 1 FROM media m WHERE m.run=k.key)')
+      .pluck()
+      .all() as string[];
+  }
+  /** A run's media entries with every run file each names, for the media limit. */
+  runMediaFiles(id: string) {
+    const run = this.history.runKey(id);
+    if (run === undefined) return [];
+    return this.history.mediaRows(run).map((row) => ({
+      metric: row.metric,
+      step: row.step,
+      paths: [...mediaPaths(JSON.parse(row.value))],
+    }));
+  }
+  /** Removes media entries of a run, as `[metric key, step]` pairs. */
+  runMediaDelete(id: string, entries: [number, number][]) {
+    const run = this.history.runKey(id);
+    if (run === undefined) return 0;
+    return this.history.transaction(() => {
+      let removed = 0;
+      for (const [metric, step] of entries) removed += this.history.mediaDelete(run, metric, step);
+      if (removed) this.db.prepare('UPDATE runs SET revision=revision+1 WHERE id=?').run(id);
+      return removed;
+    });
   }
   metricSettings(ids: string[], names?: string[]) {
     if (!ids.length) return {};

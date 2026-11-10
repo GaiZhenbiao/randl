@@ -78,3 +78,21 @@ export function limitMedia<T>(value: T, count: number): T {
     ]),
   ) as T;
 }
+/**
+ * Every run file a logged value names: its own files and the files of what is drawn on them
+ * (masks, boxes), wherever the descriptor nests them.
+ */
+export function mediaPaths(value: unknown, found = new Set<string>(), depth = 0): Set<string> {
+  if (!value || typeof value !== 'object' || depth > 8) return found;
+  if (Array.isArray(value)) {
+    for (const item of value) mediaPaths(item, found, depth + 1);
+    return found;
+  }
+  for (const [name, field] of Object.entries(value as Value)) {
+    if (name === 'path' && typeof field === 'string' && field) found.add(field);
+    else if (name === 'filenames' && Array.isArray(field)) {
+      for (const path of field) if (typeof path === 'string' && path) found.add(path);
+    } else if (field && typeof field === 'object') mediaPaths(field, found, depth + 1);
+  }
+  return found;
+}

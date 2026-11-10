@@ -52,8 +52,8 @@ button:focus-visible {
   font-size: 18px;
   letter-spacing: -0.4px;
 }
-/* The page bar fills the header beside the brand with the page's title and controls. On
-   phones it keeps the title, and the controls take a row of their own under the header. */
+/* The page bar fills the header beside the brand with the page's title and controls, in one
+   row at every width. */
 .page-bar {
   flex: 1 1 0;
   align-self: stretch;
@@ -63,16 +63,6 @@ button:focus-visible {
   min-width: 0;
   padding-inline: 8px;
   border-left: 1px solid var(--cds-ui-03);
-}
-.page-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  min-height: 48px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--cds-ui-03);
-  background: var(--cds-ui-01);
 }
 /* The title's parts are items of the bar, so a visually hidden title takes no gap. */
 .page-title {
@@ -202,38 +192,48 @@ button:focus-visible {
 }
 @media (max-width: 760px) {
   .page-bar {
-    padding-inline: 4px;
+    position: relative;
+    gap: 0;
+    padding-inline: 0 4px;
     border-left: 0;
   }
   .page-title h1 {
     font-size: 14px;
   }
-  .page-row .view-controls {
-    flex: 1 1 auto;
+  /* Names give way to the controls; the bar compacts before they get too small. */
+  .view-controls .bx--form-item {
+    flex: 1 4 216px;
+    min-width: 72px;
   }
-  .page-row .view-controls .bx--form-item {
-    flex: 1 1 auto;
+  .page-bar .view-name {
+    flex: 1 4 auto;
   }
-  /* Phones give the search and panel actions a full row of their own. */
-  .page-row .panel-group {
-    display: flex;
-    flex: 1 1 100%;
-    align-items: center;
-    gap: 4px;
+  .page-bar .chart-actions > :first-child {
+    margin-inline-start: 0;
   }
-  .page-row .panel-search {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .page-row .run-actions {
+  .page-bar .run-actions {
+    gap: 0;
     margin-inline-start: auto;
+  }
+  /* An open panel search covers the bar until it closes. */
+  .panel-group.header .panel-search:has(.bx--search--expanded) {
+    position: absolute;
+    inset: 4px 4px 4px 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    background: var(--cds-ui-01);
+  }
+  .header-actions {
+    padding-right: 0;
   }
   .save-status {
     display: none;
   }
 }
 @media (max-width: 760px), (hover: none) {
-  :is(.page-bar, .page-row) :is(.bx--btn--icon-only, .bx--overflow-menu) {
+  .page-bar :is(.bx--btn--icon-only, .bx--overflow-menu) {
     width: 40px;
     min-width: 40px;
     height: 40px;
@@ -241,7 +241,7 @@ button:focus-visible {
     padding: 0;
     justify-content: center;
   }
-  :is(.page-bar, .page-row) .bx--btn {
+  .page-bar .bx--btn {
     min-height: 40px;
   }
 }
@@ -1091,9 +1091,6 @@ aside {
   grid-template-rows: minmax(0, 1fr);
   height: calc(100dvh - 48px);
 }
-.layered-shell.nav-expanded {
-  --nav-width: 208px;
-}
 .layered-shell.runs-collapsed {
   grid-template-columns: var(--nav-width) 0 minmax(0, 1fr);
 }
@@ -1138,28 +1135,10 @@ aside {
   width: 20px;
   height: 20px;
 }
-.project-rail > .bx--btn:first-child {
-  height: 32px;
-  min-height: 32px;
-}
 .project-rail > .bx--btn[aria-pressed='true'] {
   background: var(--cds-selected-ui);
   color: var(--cds-text-01);
   box-shadow: inset 3px 0 var(--cds-interactive-04);
-}
-.nav-expanded .project-rail > .bx--btn {
-  height: 40px;
-  min-height: 40px;
-  flex-direction: row;
-  justify-content: flex-start;
-  padding-inline: 16px;
-  gap: 12px;
-  font-size: 14px;
-  text-align: start;
-  white-space: nowrap;
-}
-.nav-expanded .project-rail > .bx--btn:first-child {
-  justify-content: flex-end;
 }
 .layered-shell .run-sidebar {
   grid-column: 2;
@@ -1272,19 +1251,6 @@ aside {
   }
   .metric-section {
     --section-padding: 12px;
-  }
-  .nav-expanded .project-rail > .bx--btn {
-    flex-direction: column;
-    height: 60px;
-    min-height: 60px;
-    font-size: 10px;
-    padding: 6px 2px;
-    gap: 4px;
-  }
-  .nav-expanded .project-rail > .bx--btn:first-child {
-    justify-content: center;
-    height: 32px;
-    min-height: 32px;
   }
 }
 .run-row {
@@ -2140,9 +2106,6 @@ aside {
   color: var(--cds-text-02);
 }
 @media (max-width: 760px) {
-  .project-rail > .bx--btn:first-child {
-    display: none;
-  }
   .layered-shell.project-only .project-rail {
     width: 240px;
   }
@@ -2154,9 +2117,6 @@ aside {
     font-size: 14px;
     min-height: 44px;
     height: 44px;
-  }
-  .nav-expanded .project-rail > .bx--btn {
-    font-size: 12px;
   }
 }
 .trash-list {
@@ -2351,6 +2311,23 @@ aside {
     grid-column: 1;
   }
 }
+/* Category tabs (or their compact select) stay in place while the settings under them scroll. */
+.editor-categories > .bx--tabs,
+.editor-categories > .bx--form-item,
+.editor-categories > .bx--select,
+.side-drawer-content > .bx--tabs {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--cds-ui-01);
+}
+.side-drawer-content:has(> .bx--tabs, > .editor-categories) {
+  padding-top: 0;
+}
+.side-drawer-content > .bx--tabs,
+.side-drawer-content > .editor-categories > :is(.bx--tabs, .bx--form-item, .bx--select) {
+  padding-top: 16px;
+}
 .editor-categories.compact-categories > .bx--tabs {
   display: none;
 }
@@ -2404,8 +2381,14 @@ aside {
     height: auto;
     overflow: visible;
   }
+  /* The content scrolls as a whole; its top padding moves inside, so the pinned category
+     control meets the heading. */
   .panel-editor-modal .bx--modal-content {
     overflow: auto;
+    padding-top: 0;
+  }
+  .panel-editor-layout {
+    padding-top: 12px;
   }
 }
 @media (max-width: 600px) {
@@ -4902,18 +4885,33 @@ aside {
   align-items: center;
   min-width: 0;
 }
+/* The slider takes the toolbar's free width, so close values stay apart. */
+.media-step {
+  flex: 1;
+}
+.media-step-slider {
+  flex: 1;
+  min-width: 48px;
+  padding: 0 8px;
+}
 .media-step .bx--form-item,
+.media-step .bx--slider-container {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
 .media-run .bx--form-item {
   flex: none;
 }
-.media-step .bx--slider-container {
-  width: 160px;
-}
 .media-step .bx--slider {
+  flex: 1;
   min-width: 0;
-  width: 136px;
+  max-width: none;
+  margin: 0;
 }
-.media-step .bx--slider__range-label {
+.media-step .bx--slider__range-label,
+.media-step .bx--slider-text-input-wrapper {
   display: none;
 }
 .media-step-label {

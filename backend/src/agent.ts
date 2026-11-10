@@ -6,6 +6,8 @@ import { resolve } from 'node:path';
 import type { ChatTurn } from './conversations.js';
 import type { Tools } from './tools.js';
 import { toolCatalog } from './tools.js';
+/** Tools the Assistant may call; server settings and bulk deletion stay with the owner. */
+const agentTools = toolCatalog.filter((tool) => (tool as { agent?: boolean }).agent !== false);
 import type {
   AgentSession,
   SessionManager,
@@ -370,7 +372,7 @@ export class Agent {
           this.sessions.delete(key);
         }
         const resourceLoader = await this.profile.resources();
-        const customTools = toolCatalog.map((t) => ({
+        const customTools = agentTools.map((t) => ({
           ...t,
           label: t.name,
           parameters: (t.agentParameters||t.parameters) as ToolDefinition['parameters'],
@@ -392,7 +394,7 @@ export class Agent {
           agentDir: this.profile.directory,
           modelRuntime: requestedRuntime,
           model: requestedModel,
-          tools: toolCatalog.map((t) => t.name),
+          tools: agentTools.map((t) => t.name),
           customTools,
           resourceLoader,
           sessionManager: manager,

@@ -317,7 +317,7 @@ try {
   checks.push('App settings labels, drawer field fill and Install height');
   await page.close();
 
-  // Mobile: the page title stays visible and the runs drawer closes from the trailing edge.
+  // Mobile: the page's name stays visible in the header's one row and the runs drawer closes from the trailing edge.
   const mobile = await browser.newPage({
     viewport: { width: 390, height: 844 },
     hasTouch: true,
@@ -325,8 +325,12 @@ try {
   });
   for (const path of ['/overview', '/workspace', '/runs/run-118']) {
     await mobile.goto(origin + '/' + project + path);
-    await expect(mobile.locator('.page-bar h1')).toBeVisible();
-    const current = await mobile.locator('.page-bar h1').evaluate((e) => {
+    // The workspace is named by its view; other pages by their title.
+    const title = mobile.locator(
+      path === '/workspace' ? '.page-bar :is(.view-name, select)' : '.page-bar h1',
+    );
+    await expect(title).toBeVisible();
+    const current = await title.evaluate((e) => {
       const r = e.getBoundingClientRect();
       return { width: r.width, right: r.right };
     });

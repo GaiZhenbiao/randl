@@ -43,6 +43,7 @@
   import Undo from 'carbon-icons-svelte/lib/Undo.svelte';
   import Redo from 'carbon-icons-svelte/lib/Redo.svelte';
   import SideDrawer from './SideDrawer.svelte';
+  import StorageSettings from './StorageSettings.svelte';
   import ContextPopover from './ContextPopover.svelte';
   import ViewIcon from 'carbon-icons-svelte/lib/View.svelte';
   import ViewFilled from 'carbon-icons-svelte/lib/ViewFilled.svelte';
@@ -53,7 +54,6 @@
   import ArrowLeft from 'carbon-icons-svelte/lib/ArrowLeft.svelte';
   import SidePanelOpen from 'carbon-icons-svelte/lib/SidePanelOpen.svelte';
   import SidePanelClose from 'carbon-icons-svelte/lib/SidePanelClose.svelte';
-  import Menu from 'carbon-icons-svelte/lib/Menu.svelte';
   import Close from 'carbon-icons-svelte/lib/Close.svelte';
   import { parseRoute, pageURL } from './routes';
   import Login from './Login.svelte';
@@ -107,8 +107,7 @@
       },
     };
   }
-  let projectNavExpanded = $state(localStorage.getItem('randl.project-nav') === 'expanded'),
-    runsPreference = $state(localStorage.getItem('randl.runs-sidebar') || 'auto'),
+  let runsPreference = $state(localStorage.getItem('randl.runs-sidebar') || 'auto'),
     menuOpen = $state(false);
   // The brand and missing-object pages link to the project list; modified clicks open it elsewhere.
   async function openProjectList(event: MouseEvent) {
@@ -118,7 +117,8 @@
     await loadProject('');
     await navigate('overview');
   }
-  const textMeasure = document.createElement('canvas').getContext('2d')!;
+  const textMeasure = document.createElement('canvas').getContext('2d')!,
+    barStages = 5;
   // Whether the page bar's controls fit: nothing overflows, names keep a readable width, and
   // an open, empty search shows its whole placeholder.
   function pageBarFits(bar: HTMLElement) {
@@ -129,14 +129,17 @@
     for (const control of bar.querySelectorAll<HTMLElement>(
       'button, input, select, .view-name, .save-status',
     )) {
+      // On phones an open search covers the bar instead of taking room in it.
+      if (width <= 760 && control.closest('.bx--search--expanded')) continue;
       const rect = control.getBoundingClientRect();
       if (rect.width && (rect.left < left - 0.5 || rect.right > right + 0.5)) return false;
     }
     for (const name of bar.querySelectorAll<HTMLElement>(
       '.view-name, h1:not(.bx--visually-hidden)',
     ))
-      if (name.clientWidth < Math.min(120, name.scrollWidth)) return false;
-    const search = bar.querySelector<HTMLInputElement>('.bx--search--expanded input');
+      if (name.clientWidth < Math.min(width <= 760 ? 72 : 120, name.scrollWidth)) return false;
+    const search =
+      width <= 760 ? null : bar.querySelector<HTMLInputElement>('.bx--search--expanded input');
     if (search && !search.value) {
       const style = getComputedStyle(search);
       textMeasure.font = style.font;
@@ -150,18 +153,19 @@
   // Compacts the header's controls by measuring them rather than by fixed widths, since
   // translations and names differ: the bar shows everything, then moves New view, Undo and
   // Redo into the view menu, then shows Add panel as an icon, then hides the visible save
-  // status (the live region still announces it), until it fits. The steps run
-  // before the browser paints, after any width or content change. An open view menu keeps
-  // its items until it closes.
+  // status (the live region still announces it), then moves workspace settings into the view
+  // menu and hides the run's state, then moves Add panel into the menu, until it fits. The
+  // steps run before the browser paints, after any width or content change. An open view
+  // menu keeps its items until it closes.
   function fitPageBar(bar: HTMLElement) {
     let fitting = false;
     const fit = () => {
-      if (fitting || viewMenuOpen || width <= 760) return;
+      if (fitting || viewMenuOpen) return;
       fitting = true;
       try {
         barStage = 0;
         flushSync();
-        while (barStage < 3 && !pageBarFits(bar)) {
+        while (barStage < barStages && !pageBarFits(bar)) {
           barStage++;
           flushSync();
         }
@@ -484,13 +488,14 @@
     drawer = $state(false),
     width = $state(1200);
   let workspaceSearch = $state('');
-  // Page controls sit in the header beside the brand, where they compact in stages until
-  // they fit (see fitPageBar). On phones they take a row under the header and compact by
-  // its width.
+  // Page controls sit in the header's one row at every width, where they compact in stages
+  // until they fit (see fitPageBar).
   let barStage = $state(0);
-  let inlineViewActions = $derived(width > 760 ? barStage < 1 : canvasWidth >= 620);
-  let iconRunActions = $derived(width > 760 ? barStage >= 1 : canvasWidth < 620);
-  let compactAdd = $derived(width > 760 ? barStage >= 2 : canvasWidth < 480);
+  let inlineViewActions = $derived(barStage < 1);
+  let iconRunActions = $derived(barStage >= 1);
+  let compactAdd = $derived(barStage >= 2);
+  let menuDefaults = $derived(barStage >= 4);
+  let menuAdd = $derived(barStage >= 5);
   let sidebarView = $derived(activeRun && parentView?.project === project ? parentView : view);
   let sidebarFilterCount = $derived(sidebarView?.body.filters?.length || 0);
   $effect(() => {
@@ -520,7 +525,7 @@
     localStorage.setItem('randl.accent', accent);
     document.documentElement.style.setProperty('--randl-on-primary', colors.onPrimary);
   });
-  let navWidth = $derived(projectNavExpanded ? 208 : 72);
+  const navWidth = 72;
   let sidebarLimit = $derived(Math.max(240, Math.min(600, width - navWidth - 320)));
   let displayedSidebarWidth = $derived(Math.min(sidebarWidth, sidebarLimit));
   let showRunSidebar = $derived(
@@ -555,7 +560,6 @@
       drawer = !drawer;
     } else {
       runsPreference = showRunSidebar ? 'closed' : 'open';
-      if (width < 1056) projectNavExpanded = false;
       localStorage.setItem('randl.runs-sidebar', runsPreference);
     }
   }
@@ -748,6 +752,10 @@
           },
         }
       : view,
+  );
+  let workspaceTools = $derived(
+    page === 'workspace' &&
+      !!(displayView?.body.panels.length || displayView?.body.sections?.length),
   );
   let fields = $state<string[]>([]);
   $effect(() => {
@@ -2356,27 +2364,22 @@
 {/snippet}
 
 {#snippet runsToggle()}
-  <!-- On phones the runs drawer opens from a labeled button; wider screens keep the icon. -->
-  {#if width <= 760}<Button
-      id="open-runs"
-      kind="ghost"
-      size="small"
-      icon={drawer ? SidePanelClose : SidePanelOpen}
-      class="runs-drawer-toggle"
-      aria-label={drawer ? $t('runs.list.hide') : $t('runs.list.show')}
-      aria-expanded={drawer}
-      on:click={toggleRuns}>{$t('runs.list.toggle')}</Button
-    >{:else}<Button
-      kind="ghost"
-      size="small"
-      icon={showRunSidebar ? SidePanelClose : SidePanelOpen}
-      aria-pressed={undefined}
-      hideTooltip
-      title={showRunSidebar ? $t('runs.list.hide') : $t('runs.list.show')}
-      iconDescription={showRunSidebar ? $t('runs.list.hide') : $t('runs.list.show')}
-      tooltipAlignment="start"
-      on:click={toggleRuns}
-    />{/if}
+  <!-- On phones the button opens the runs drawer; wider screens show or hide the sidebar. -->
+  {@const shown = width <= 760 ? drawer : showRunSidebar}
+  <Button
+    id={width <= 760 ? 'open-runs' : undefined}
+    kind="ghost"
+    size="small"
+    icon={shown ? SidePanelClose : SidePanelOpen}
+    class={width <= 760 ? 'runs-drawer-toggle' : undefined}
+    aria-pressed={undefined}
+    aria-expanded={width <= 760 ? drawer : undefined}
+    hideTooltip
+    title={shown ? $t('runs.list.hide') : $t('runs.list.show')}
+    iconDescription={shown ? $t('runs.list.hide') : $t('runs.list.show')}
+    tooltipAlignment="start"
+    on:click={toggleRuns}
+  />
 {/snippet}
 {#snippet viewControls()}
   <div class="view-controls" data-view-id={view?.id}>
@@ -2420,7 +2423,13 @@
       title={$t('views.actions.menu')}
       aria-label={$t('views.actions.menu')}
       iconDescription={$t('views.actions.menu')}
-      >{#if !inlineViewActions}<OverflowMenuItem
+      >{#if menuAdd && workspaceTools}<OverflowMenuItem
+          text={$t('workspace.addPanel')}
+          on:click={() => openPanel()}
+        />{/if}{#if menuDefaults && workspaceTools}<OverflowMenuItem
+          text={$t('workspace.settings')}
+          on:click={() => openDefaults()}
+        />{/if}{#if !inlineViewActions}<OverflowMenuItem
           text={$t('views.actions.new')}
           on:click={() => openViewDialog('create')}
         /><OverflowMenuItem
@@ -2480,15 +2489,14 @@
   <span
     class="save-status"
     class:has-notice={failed}
-    hidden={width > 760 && barStage >= 3}
+    hidden={barStage >= 3}
     aria-hidden="true">{$t(saving)}</span
   ><span
     class="bx--visually-hidden"
     aria-live="polite">{failed ? '' : $t(saving)}</span
   >
 {/snippet}
-<!-- The page's title and controls: one row in the header, or the title there and the
-     controls in a row under it on phones. -->
+<!-- The page's title and controls: one row in the header at every width. -->
 {#snippet pageLead()}{#if page === 'workspace' || page === 'run'}{@render runsToggle()}{/if}{/snippet}
 {#snippet pageTitle()}
   <div class="page-title">
@@ -2502,8 +2510,8 @@
         tooltipAlignment="start"
         on:click={backToOrigin}
       />{/if}
-    <!-- On wider screens the workspace's view picker names the page. -->
-    <h1 class:bx--visually-hidden={page === 'workspace' && width > 760}>
+    <!-- The workspace's view picker names the page. -->
+    <h1 class:bx--visually-hidden={page === 'workspace'}>
       {currentRun?.display_name ||
         (page === 'workspace'
           ? $t('nav.workspace')
@@ -2517,21 +2525,21 @@
                 ? $t(routeError || 'app.errors.pageNotFound')
                 : $t(pages.find((p) => p.id === page)?.name))}
     </h1>
-    <!-- Phones keep the header for the name; the state joins the controls under it. -->
-    {#if page === 'run' && currentRun && width > 760}<RunStateTag run={currentRun} />{/if}
+    {#if page === 'run' && currentRun && barStage < 4}<RunStateTag run={currentRun} />{/if}
   </div>
 {/snippet}
 {#snippet pageTools()}
-  {#if page === 'workspace'}{@render viewControls()}{#if displayView?.body.panels.length || displayView?.body.sections?.length}<PanelTools
-        header={width > 760}
+  {#if page === 'workspace'}{@render viewControls()}{#if workspaceTools}<PanelTools
+        header
         bind:search={workspaceSearch}
         compact={compactAdd}
+        settings={!menuDefaults}
+        add={!menuAdd}
         onDefaults={() => openDefaults()}
         onAdd={() => openPanel()}
       />{/if}{@render saveStatus()}{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
       class="run-actions"
     >
-      {#if width <= 760}<RunStateTag run={currentRun} />{/if}
       {#if page === 'run' && currentRun?.state === 'running' && currentRun.snapshot_at == null}{@const stopLabel =
           $t(
             currentRun.stop_requested ? 'runs.stop.requested' : 'runs.actions.stop',
@@ -2578,8 +2586,6 @@
           />{/if}{/if}
     </div>{/if}
 {/snippet}
-
-{#snippet workspaceRow()}{@render pageLead()}{@render pageTools()}{/snippet}
 
 {#snippet saveFailureNotice()}
   {#if dirty && (saving === 'views.saveStatus.notSaved' || retrying)}<InlineNotification
@@ -2674,7 +2680,7 @@
     uiShellAriaLabel="randl"
     on:click={openProjectList}
     ><div class="page-bar" data-stage={barStage} use:fitPageBar>
-      {#if width > 760}{@render pageLead()}{/if}{@render pageTitle()}{#if width > 760}{@render pageTools()}{/if}
+      {@render pageLead()}{@render pageTitle()}{@render pageTools()}
     </div>
     <div class="header-actions">
       {#if project && !routeError && width > 760}{#if width < 1280}<Button
@@ -2711,7 +2717,7 @@
           >{$t('assistant.title')}{#if $pendingProjectConfirmation && !agentDialog}<span
               class="confirmation-badge">{$t('projects.confirmation.needed')}</span
             >{/if}</Button
-        >{/if}<Button
+        >{/if}{#if width > 760}<Button
         kind="ghost"
         size="small"
         icon={Settings}
@@ -2727,7 +2733,7 @@
           drawer = false;
           settings = true;
         }}
-      />
+      />{/if}
     </div></Header
   >
   <!-- Phones navigate through Carbon's overlay side navigation, opened from the header's menu button. -->
@@ -2789,6 +2795,24 @@
               class="bx--side-nav__link-text">{$t('projects.create.action')}</span
             ></button
           >
+        </li>
+        <li class="bx--side-nav__item">
+          <button
+            type="button"
+            id="app-settings"
+            class="bx--side-nav__link"
+            onclick={() => {
+              menuOpen = false;
+              agentDialog = false;
+              panelDialog = false;
+              trashOpen = false;
+              drawer = false;
+              settings = true;
+            }}
+            ><span class="bx--side-nav__icon bx--side-nav__icon--small"><Settings /></span><span
+              class="bx--side-nav__link-text">{$t('app.settings.title')}</span
+            ></button
+          >
         </li></SideNavItems
       ></SideNav
     >{/if}
@@ -2797,7 +2821,6 @@
     inert={width <= 760 && (auxiliaryOpen || menuOpen)}
     class:drawer-open={drawer}
     class:project-only={page !== 'workspace' && page !== 'run'}
-    class:nav-expanded={projectNavExpanded}
     class:settings-open={(panelDialog && settingsScope !== null) ||
       settings ||
       agentDialog ||
@@ -2806,23 +2829,6 @@
     style:--sidebar-width={displayedSidebarWidth + 'px'}
   >
     <nav class="project-rail" aria-label={$t('nav.projectPages')} inert={width <= 760 && !drawer}>
-      <Button
-        kind="ghost"
-        size="small"
-        icon={Menu}
-        hideTooltip
-        title={projectNavExpanded
-          ? $t('nav.collapse')
-          : $t('nav.expand')}
-        iconDescription={projectNavExpanded
-          ? $t('nav.collapse')
-          : $t('nav.expand')}
-        tooltipPosition="right"
-        on:click={() => {
-          projectNavExpanded = !projectNavExpanded;
-          localStorage.setItem('randl.project-nav', projectNavExpanded ? 'expanded' : 'collapsed');
-        }}
-      />
       {#each project ? pages : globalPages as item}<Button
           kind="ghost"
           size="small"
@@ -3040,9 +3046,6 @@
       inert={drawer && width <= 760}
     >
       {#if page !== 'workspace'}
-        {#if width <= 760 && (page === 'run' || page === 'runs')}<div class="page-row">
-            {@render pageLead()}{@render pageTools()}
-          </div>{/if}
         {@render viewStatus()}{/if}
 
       {#if routeError}<section class="empty missing-object">
@@ -3050,7 +3053,6 @@
             >{$t('nav.back.projects')}</Button
           >
         </section>{:else if page === 'workspace'}<Workspace
-          leading={width <= 760 ? workspaceRow : undefined}
           bind:search={workspaceSearch}
           below={viewStatus}
           colors={resolvedColors}
@@ -3467,10 +3469,10 @@
     </div>
   {/snippet}
   {#if settings}<SideDrawer title={$t('app.settings.title')} onClose={() => (settings = false)}>
-      <Tabs bind:selected={settingsTab}>
+      <Tabs autoWidth bind:selected={settingsTab}>
         <Tab label={$t('app.settings.tabs.general')} /><Tab label={$t('assistant.title')} /><Tab
           label={$t('app.settings.tabs.plugins')}
-        />
+        /><Tab label={$t('app.settings.tabs.storage')} />
         <svelte:fragment slot="content">
           <TabContent
             ><div class="form-stack">
@@ -3501,6 +3503,7 @@
           <TabContent
             >{#if settingsTab === 2}{@render pluginSettingsContent()}{/if}</TabContent
           >
+          <TabContent>{#if settingsTab === 3}<StorageSettings />{/if}</TabContent>
         </svelte:fragment>
       </Tabs>
       {#snippet footer()}{#if authRequired}<Button

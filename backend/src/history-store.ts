@@ -176,6 +176,15 @@ export class HistoryStore {
   mediaPut(run: number, metric: number, step: number, value: string) {
     this.sql('INSERT OR REPLACE INTO media VALUES(?,?,?,?)').run(run, metric, step, value);
   }
+  mediaRows(run: number): { metric: number; step: number; value: string }[] {
+    return this.sql('SELECT metric,step,value FROM media WHERE run=? ORDER BY metric,step').all(
+      run,
+    ) as { metric: number; step: number; value: string }[];
+  }
+  mediaDelete(run: number, metric: number, step: number) {
+    return this.sql('DELETE FROM media WHERE run=? AND metric=? AND step=?').run(run, metric, step)
+      .changes;
+  }
   private lineBlock(row: Row): Line[] {
     if (this.decoded?.id !== row.id)
       this.decoded = {

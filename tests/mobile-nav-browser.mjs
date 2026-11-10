@@ -142,10 +142,9 @@ try {
   await phone.keyboard.press('Escape');
   checks.push('Projects and Server are reachable from a project and marked when current');
 
-  // The runs drawer opens from a labeled button on the workspace.
+  // The runs drawer opens from the header's button on the workspace.
   await phone.goto(origin + '/phone/nav/workspace');
   const runs = phone.getByRole('button', { name: 'Show runs', exact: true });
-  await expect(runs).toHaveText('Runs');
   await expect(runs).toHaveAttribute('aria-expanded', 'false');
   await runs.click();
   await expect(phone.getByRole('button', { name: 'Hide runs', exact: true })).toHaveAttribute(

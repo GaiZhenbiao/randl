@@ -186,6 +186,92 @@ try {
   await expect(gallery.getByRole('combobox', { name: 'Run', exact: true })).toHaveValue(run.id);
   checks.push('steps, section step sync, keys, Latest and steps of one run');
 
+  // The slider fills the toolbar between the step buttons. Its track is the axis and its thumb
+  // rests only on values with media: the pointer takes the nearest, and the keys step.
+  const sliderView = await createView(
+    run.entity + '/' + run.project,
+    [
+      { id: 'gallery', plugin: 'image', metric: 'gallery', title: 'gallery', section: 'wide' },
+      {
+        id: 'elapsed',
+        plugin: 'image',
+        metric: 'gallery',
+        title: 'elapsed',
+        section: 'wide',
+        settings: { xAxis: '_relative_wall' },
+      },
+    ],
+    {
+      visible: [run.id],
+      sections: [{ id: 'wide', name: 'wide' }],
+      sectionLayouts: { wide: { width: 640, height: 420, rows: 1 } },
+    },
+  );
+  await open(sliderView);
+  const stepLabel = gallery.locator('.media-step-label'),
+    thumb = gallery.getByRole('slider', { name: 'Step', exact: true });
+  await expect(stepLabel).toHaveText('Step 8');
+  const track = await gallery.locator('.media-step .bx--slider').boundingBox(),
+    toolbar = await gallery.locator('.cell-toolbar').boundingBox(),
+    previous = await gallery.getByRole('button', { name: 'Previous step', exact: true }).boundingBox(),
+    next = await gallery.getByRole('button', { name: 'Next step', exact: true }).boundingBox();
+  assert.ok(track.width > toolbar.width * 0.5, 'the step slider takes the free width');
+  assert.ok(track.x - (previous.x + previous.width) < 20 && next.x - (track.x + track.width) < 20);
+  const at = (share) => [track.x + track.width * share, track.y + track.height / 2];
+  // Steps 0, 4 and 8: 40% of the way is nearest to step 4, where the thumb goes.
+  await page.mouse.click(...at(0.4));
+  await expect(stepLabel).toHaveText('Step 4');
+  await expect(thumb).toHaveAttribute('aria-valuetext', 'Step 4');
+  await expect(thumb).toHaveAttribute('style', /left: 50%/);
+  // Dragging shows each value the thumb snaps to and chooses the one it is released on.
+  await page.mouse.move(...at(0.5));
+  await page.mouse.down();
+  await page.mouse.move(...at(0.3), { steps: 3 });
+  await expect(stepLabel).toHaveText('Step 4');
+  await page.mouse.move(...at(0.1), { steps: 3 });
+  await expect(stepLabel).toHaveText('Step 0');
+  await expect(thumb).toHaveAttribute('style', /left: 0%/);
+  await expect(gallery.locator('.media-caption').first()).toHaveText('Gallery 4 · 0');
+  await page.mouse.up();
+  await expect(gallery.locator('.media-caption').first()).toHaveText('Gallery 0 · 0');
+  await thumb.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(stepLabel).toHaveText('Step 4');
+  await page.keyboard.press('End');
+  await expect(stepLabel).toHaveText('Step 8');
+  await expect(gallery.getByRole('button', { name: 'Latest', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Home');
+  await expect(stepLabel).toHaveText('Step 0');
+  // Browse by another axis: the same media by wall time elapsed, on a position of its own.
+  const elapsed = panel('elapsed'),
+    elapsedLabel = elapsed.locator('.media-step-label');
+  await expect(elapsedLabel).toHaveText(/^Wall elapsed \(seconds\) \d/);
+  await expect(elapsed.locator('.media-caption').first()).toHaveText('Gallery 8 · 0');
+  const latest = await elapsedLabel.textContent();
+  await elapsed.getByRole('button', { name: 'Previous value', exact: true }).click();
+  await expect(elapsedLabel).not.toHaveText(latest);
+  await expect(elapsed.locator('.media-caption').first()).toHaveText('Gallery 4 · 0');
+  await expect(stepLabel).toHaveText('Step 0');
+  await expect(elapsed.getByRole('slider', { name: 'Wall elapsed (seconds)' })).toBeVisible();
+  // The panel's settings choose the axis under Browse by.
+  await gallery.hover();
+  await gallery.getByRole('button', { name: 'Panel settings', exact: true }).click();
+  const axisEditor = page.getByRole('dialog').filter({ hasText: 'Browse by' });
+  await expect(axisEditor.getByRole('combobox', { name: 'Browse by' })).toHaveValue('Step');
+  // The settings' tabs stay in place while the settings under them scroll.
+  await page.setViewportSize({ width: 1440, height: 520 });
+  const tabs = axisEditor.locator('.editor-categories > .bx--tabs'),
+    fields = axisEditor.locator('.panel-editor-fields');
+  await fields.evaluate((element) => (element.scrollTop = 300));
+  assert.ok(await fields.evaluate((element) => element.scrollTop > 50), 'the settings scroll');
+  await expect
+    .poll(async () => Math.abs((await tabs.boundingBox()).y - (await fields.boundingBox()).y))
+    .toBeLessThanOrEqual(1);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.keyboard.press('Escape');
+  checks.push('step slider: full width, snaps to values with media, keys; Browse by another axis');
+  checks.push('panel settings tabs stay in place while their settings scroll');
+
   // A logged list of videos is one tile per file, with its caption, in the grid and Coverflow.
   const ranged = [];
   page.on('requestfinished', async (r) => {

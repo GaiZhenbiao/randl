@@ -96,8 +96,8 @@ test(
         assert.equal(body.stream, true);
         assert.deepEqual(
           new Set(body.tools.map((tool) => tool.function.name)),
-          new Set(toolCatalog.map((tool) => tool.name)),
-          'Pi must expose only the registered randl management tools',
+          new Set(toolCatalog.filter((tool) => tool.agent !== false).map((tool) => tool.name)),
+          'Pi must expose only the registered randl management tools it may call',
         );
         const prompt = contentText(
           body.messages.filter((message) => message.role === 'user').at(-1).content,

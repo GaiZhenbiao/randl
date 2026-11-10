@@ -35,11 +35,9 @@
     onLayout,
     onDefaults,
     onConnect,
-    leading,
     below,
     search = $bindable(''),
   }: {
-    leading?: Snippet;
     below?: Snippet;
     search?: string;
     view: View | null;
@@ -931,7 +929,6 @@
   }}
 />
 <div class="workspace-top" class:pinned={!shortWindow.current} bind:clientHeight={toolbarHeight}>
-  {#if leading}<div class="page-row">{@render leading()}</div>{/if}
   {@render below?.()}
 </div>
 {#if !sections.length}<section class="empty">

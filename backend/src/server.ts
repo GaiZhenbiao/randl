@@ -13,6 +13,7 @@ import { byteRange } from './byte-range.js';
 import { VideoPosters, posterTypes } from './video-poster.js';
 import { videoSize } from './video-size.js';
 import { mediaItems } from './media-items.js';
+import { MediaCap } from './media-cap.js';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import { promises as fs, createReadStream } from 'node:fs';
@@ -109,6 +110,7 @@ export async function createServer(
     plugins = new Plugins(db, directory),
     live = new LiveUpdates(db),
     artifactLocks = new KeyedLocks(),
+    mediaCap = new MediaCap(db, directory, (id) => live.changedRun(id)),
     tools = new Tools(db, plugins, (ids) => {
       for (const id of ids || []) live.changedRun(id);
       live.changedWorkspace();
@@ -125,7 +127,7 @@ export async function createServer(
         catch { failures++; app.log.error({folder},'Project artifact cleanup failed'); }
       });
       return failures;
-    }),
+    }, (dryRun) => mediaCap.applyAll(dryRun)),
     agent = new Agent(tools,directory,options.piAgentDir||process.env.RANDL_PI_AGENT_DIR),
     cache = new Cache(),
     selections = new ChartSelections(),
@@ -195,7 +197,7 @@ export async function createServer(
     finally { staleCheckPending = false; }
   }, 10000);
   staleTimer.unref();
-  app.addHook('preClose', async () => { clearInterval(staleTimer); live.close(); });
+  app.addHook('preClose', async () => { clearInterval(staleTimer); await mediaCap.close(); live.close(); });
   app.get('/api/runs/trash', async (req) => ({
     runs: await db.call('deletedRuns', String((req.query as any).project || '')),
   }));
@@ -404,7 +406,8 @@ export async function createServer(
             runs: { ...ids, maxItems: panelLimits.chartRuns },
             metric: str,
             across: { type: 'string', enum: ['runs', 'steps'] },
-            step: { type: ['number', 'null'] },
+            xAxis: str,
+            x: { type: ['number', 'null'] },
             run: str,
             files: { type: 'integer', minimum: 1, maximum: panelLimits.media.files.max },
             baseRevision: str,
@@ -1218,6 +1221,7 @@ export async function createServer(
         let metadata;try{metadata=JSON.parse(await fs.readFile(path,'utf8'));}catch{/* Keep malformed uploaded bytes available as a file. */}
         if(metadata)await db.call('runMetadata',id,metadata);
       }
+      mediaCap.uploaded(id, p['*'], size - previous);
       live.changedRun(id);
       return {};
     });
@@ -1290,5 +1294,5 @@ export async function createServer(
     await db.close();
   });
   await app.ready();
-  return { app, db, tools, plugins, agent, live };
+  return { app, db, tools, plugins, agent, live, mediaCap };
 }
