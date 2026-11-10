@@ -3,6 +3,7 @@
   import { Button, TextInput, TextArea, InlineNotification, CodeSnippet } from 'carbon-components-svelte';
   import ProjectDeleteModal from './ProjectDeleteModal.svelte';
   import ProjectDeleteSummary from './ProjectDeleteSummary.svelte';
+  import ProjectMediaLimit from './ProjectMediaLimit.svelte';
   import { t, number, type Message } from './i18n';
   import { tool, apiMessage } from './api';
   import { imeKeys } from './ime';
@@ -174,6 +175,10 @@
       <p class="help-note">{$t('projects.idHelp')}</p>
       <Button kind="tertiary" size="small" on:click={onConnect}>{$t('connect.title')}</Button>
     </div>
+  </section>
+  <section aria-labelledby="settings-media-limit">
+    <h2 id="settings-media-limit">{$t('projects.mediaLimit.title')}</h2>
+    <ProjectMediaLimit {project} {runs} />
   </section>
   <section aria-labelledby="settings-deleted-runs">
     <h2 id="settings-deleted-runs">{$t('projects.settings.deletedRuns')}</h2>

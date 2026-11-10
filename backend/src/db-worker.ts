@@ -22,6 +22,7 @@ const allowed = new Set([
   'chatDelete',
   'settingGet',
   'settingSet',
+  'settingDelete',
   'authConfigure',
   'sessionCreate',
   'sessionGet',

@@ -323,7 +323,7 @@ test('media limit thinning spaces entries on the axis they are placed on', () =>
   const plain = [0, 10, 20, 30, 40, 50].map((step) => entry(1, step));
   assert.deepEqual(steps(planMediaThinning(plain, 59, 40), plain, 1), [0, 20, 40, 50]);
 });
-test('the media limit places entries on the X axis of the workspace', async (t) => {
+test('the media limit places entries on the thinning axis of the project', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'randl-cap-axis-'));
   const { app, db, tools, mediaCap } = await createServer(dir);
   t.after(async () => {
@@ -348,10 +348,15 @@ test('the media limit places entries on the X axis of the workspace', async (t) 
   });
   const places = async () => (await db.call('runMediaFiles', run.id)).map((row) => row.x);
   assert.deepEqual(await places(), [0, 10, 20, 30, 40, 50]);
-  // The X axis of the project's most recently changed view places the entries.
+  // A view's X axis does not place them; the project's thinning axis does.
   const view = await tools.execute('view_create', { project: 'e/axis', name: 'Workspace' });
   view.body.plotSettings = { xAxis: 'update' };
   await tools.execute('view_save', { id: view.id, name: view.name, project: view.project, version: view.version, body: view.body });
+  assert.deepEqual(await places(), [0, 10, 20, 30, 40, 50]);
+  assert.equal(
+    (await tools.execute('project_media_limit_update', { id: 'e/axis', axis: 'update' })).axis,
+    'update',
+  );
   assert.deepEqual(await places(), updates);
   await tools.execute('settings_update', { mediaLimit: { enabled: false } });
   for (let i = 0; i < 6; i++)
@@ -422,4 +427,77 @@ test('media: the catalog of one run, with Latest still the newest of all runs', 
     assert.deepEqual(own.entries.map((item) => item.step), [20, 40]);
   }
   assert.deepEqual((await media({ xRun: 'e/c/missing' })).xValues, [0, 5, 10, 20, 40]);
+});
+test('a project uses the server media limit until it sets its own', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'randl-cap-project-'));
+  const { app, db, tools, mediaCap } = await createServer(dir);
+  t.after(async () => {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const megabyte = 1024 * 1024;
+  const log = async (project, count) => {
+    const run = await db.call('upsert', { entity: 'e', project, name: 'r' });
+    await db.call('ingest', run.id, {
+      files: {
+        'wandb-history.jsonl': {
+          offset: 0,
+          content: Array.from({ length: count }, (_, i) =>
+            JSON.stringify({ _step: i, clip: { _type: 'video-file', path: `media/videos/c_${i}.mp4` } }),
+          ),
+        },
+      },
+    });
+    for (let i = 0; i < count; i++)
+      await app.inject({
+        method: 'PUT',
+        url: `/upload/e/${project}/r/media/videos/c_${i}.mp4`,
+        payload: Buffer.alloc(megabyte, 1),
+      });
+    return run.id;
+  };
+  const kept = async (id) =>
+    (
+      await app.inject({ url: '/api/media', method: 'POST', payload: { runs: [id], metric: 'clip' } })
+    ).json().xValues.length;
+  await tools.execute('settings_update', { mediaLimit: { enabled: true, megabytes: 4 } });
+  // By default a project inherits the server's limit, and its own values start from it.
+  const inherits = await log('inherits', 8),
+    own = await log('own', 8),
+    off = await log('off', 8);
+  assert.deepEqual(await tools.execute('project_media_limit_get', { id: 'e/own' }), {
+    inherit: true,
+    enabled: true,
+    megabytes: 4,
+    axis: '_step',
+    effective: { enabled: true, megabytes: 4 },
+  });
+  assert.deepEqual(
+    (await tools.execute('project_media_limit_update', { id: 'e/own', inherit: false, megabytes: 6 }))
+      .effective,
+    { enabled: true, megabytes: 6 },
+  );
+  assert.deepEqual(
+    (await tools.execute('project_media_limit_update', { id: 'e/off', inherit: false, enabled: false }))
+      .effective,
+    { enabled: false, megabytes: 4 },
+  );
+  for (let i = 0; i < 3; i++) await mediaCap.pass();
+  await expectEventually(async () => assert.deepEqual(await Promise.all([inherits, own, off].map(kept)), [3, 5, 8]));
+  // Inheriting again applies the server's limit; the project's own values are kept for later.
+  const back = await tools.execute('project_media_limit_update', { id: 'e/off', inherit: true });
+  assert.deepEqual([back.inherit, back.enabled, back.effective], [true, false, { enabled: true, megabytes: 4 }]);
+  await expectEventually(async () => assert.equal(await kept(off), 3));
+  // Unknown projects and invalid sizes are refused.
+  await assert.rejects(tools.execute('project_media_limit_get', { id: 'e/missing' }));
+  assert.equal(
+    (
+      await app.inject({
+        url: '/api/tools/project_media_limit_update',
+        method: 'POST',
+        payload: { id: 'e/own', megabytes: 0 },
+      })
+    ).statusCode,
+    400,
+  );
 });

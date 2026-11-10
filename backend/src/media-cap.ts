@@ -6,8 +6,7 @@ import { runFolder } from './project-store.js';
 // The media limit per run (docs/storage.md#media-limit). When the files of a run's logged
 // media exceed the limit, entries are removed until they fit again. Removal thins the run
 // instead of dropping its oldest media: each key gives up the entry whose neighbors are
-// closest on the workspace's X axis, so what remains is spread over the whole run as the
-// workspace shows it.
+// closest on the project's thinning axis, so what remains is spread over the whole run.
 
 /** The server setting that holds the limit: whether it is on, and its size in mebibytes. */
 export const mediaCapSetting = 'media-limit';
@@ -24,10 +23,44 @@ export async function mediaLimit(db: DB): Promise<MediaLimit> {
     ? { enabled: value.enabled, megabytes: value.megabytes }
     : mediaCapDefault;
 }
-/** The limit in bytes, or 0 while it is off. */
-async function capBytes(db: DB) {
-  const limit = await mediaLimit(db);
-  return limit.enabled ? limit.megabytes * megabyte : 0;
+/** The server setting that holds one project's own limit and thinning axis. */
+export const projectLimitSetting = (project: string) => 'media-limit:' + project;
+/**
+ * A project's media limit: the server's while `inherit`, otherwise its own `enabled` and
+ * `megabytes`; and the axis its runs' media are spaced on when thinned.
+ */
+export type ProjectMediaLimit = MediaLimit & { inherit: boolean; axis: string };
+/** A project's settings as saved (its own limit starts from the server's), and the limit in effect. */
+export async function projectMediaLimit(db: DB, project: string) {
+  const server = await mediaLimit(db),
+    saved = await db.call('settingGet', projectLimitSetting(project)),
+    own = saved && typeof saved === 'object' ? saved : {},
+    limit: ProjectMediaLimit = {
+      inherit: own.inherit !== false,
+      enabled: typeof own.enabled === 'boolean' ? own.enabled : server.enabled,
+      megabytes: own.megabytes >= 1 ? own.megabytes : server.megabytes,
+      axis: typeof own.axis === 'string' && own.axis ? own.axis : '_step',
+    };
+  return {
+    ...limit,
+    effective: limit.inherit ? server : { enabled: limit.enabled, megabytes: limit.megabytes },
+  };
+}
+const projectOf = (run: string) => run.split('/').slice(0, 2).join('/');
+/** The limit in bytes that applies to each project's runs, or 0 while it is off; read once per project. */
+function projectCaps(db: DB) {
+  const caps = new Map<string, Promise<number>>();
+  return (run: string) => {
+    const project = projectOf(run);
+    if (!caps.has(project))
+      caps.set(
+        project,
+        projectMediaLimit(db, project).then(({ effective }) =>
+          effective.enabled ? effective.megabytes * megabyte : 0,
+        ),
+      );
+    return caps.get(project)!;
+  };
 }
 /** One logged media value: its key, step and files. */
 export type CapEntry = {
@@ -204,8 +237,8 @@ const runsPerPass = 4;
 const uploadDelay = 2000,
   sweepDelay = 100;
 /**
- * Applies the limit to every run. All runs with media are measured when the server starts
- * and when the limit changes; after that a run is measured when it first uploads a media
+ * Applies each project's limit to its runs. All runs with media are measured when the server
+ * starts and when a limit changes; after that a run is measured when it first uploads a media
  * file and again once its uploads since could have passed the limit. The files are read
  * from the run's folder, outside the database worker.
  */
@@ -253,10 +286,11 @@ export class MediaCap {
     }));
   }
   private async work() {
-    const cap = await capBytes(this.db);
+    const capOf = projectCaps(this.db);
     let measured = 0;
     for (const run of [...this.waiting]) {
-      const known = this.totals.get(run);
+      const known = this.totals.get(run),
+        cap = await capOf(run);
       if (!cap || (known !== undefined && known <= cap)) {
         this.waiting.delete(run);
         continue;
@@ -306,11 +340,12 @@ export class MediaCap {
    * would remove.
    */
   async applyAll(dryRun: boolean) {
-    const cap = await capBytes(this.db),
+    const capOf = projectCaps(this.db),
       runs: string[] = await this.db.call('runsWithMedia'),
       result = { dryRun, runs: runs.length, runsOver: 0, entries: 0, files: 0, bytes: 0 };
-    if (!cap) return result;
     for (const run of runs) {
+      const cap = await capOf(run);
+      if (!cap) continue;
       const removed = await this.apply(run, cap, dryRun);
       if (!removed.entries) continue;
       result.runsOver++;

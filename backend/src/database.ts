@@ -144,6 +144,10 @@ export class Store {
       .run(key, JSON.stringify(value));
     return { ok: true };
   }
+  settingDelete(key: string) {
+    this.db.prepare('DELETE FROM server_settings WHERE key=?').run(key);
+    return { ok: true };
+  }
   authConfigure(fingerprint: string) {
     const previous = this.db
       .prepare("SELECT value FROM server_settings WHERE key='api-key-fingerprint'")
@@ -904,28 +908,16 @@ export class Store {
       .all() as string[];
   }
   /**
-   * The X axis of a project's workspace: the X axis setting of its most recently changed
-   * view, or the step.
-   */
-  workspaceAxis(project: string): string {
-    const axis = this.db
-      .prepare(
-        "SELECT json_extract(body,'$.plotSettings.xAxis') FROM views WHERE project=? AND json_extract(body,'$.run') IS NULL ORDER BY updated DESC LIMIT 1",
-      )
-      .pluck()
-      .get(project);
-    return typeof axis === 'string' && axis ? axis : '_step';
-  }
-  /**
    * A run's media entries with every run file each names and their place (`x`) on the
-   * workspace's X axis, for the media limit. A run with an entry that has no value on that
-   * axis is placed by step throughout, so its places stay comparable.
+   * project's thinning axis, for the media limit. A run with an entry that has no value on
+   * that axis is placed by step throughout, so its places stay comparable.
    */
   runMediaFiles(id: string) {
     const run = this.history.runKey(id);
     if (run === undefined) return [];
     const rows = this.history.mediaRows(run),
-      axis = this.workspaceAxis(id.split('/').slice(0, 2).join('/')),
+      saved = this.settingGet('media-limit:' + id.split('/').slice(0, 2).join('/')),
+      axis: string = typeof saved?.axis === 'string' && saved.axis ? saved.axis : '_step',
       places = new Map<string, number>();
     let placed = axis !== '_step';
     if (placed)

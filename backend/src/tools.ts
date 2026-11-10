@@ -6,7 +6,13 @@ import {KeyedLocks} from './locks.js';
 import { invalidOption, optionKeyPattern, optionLimits, pluginIdPattern } from './plugin-options.js';
 import { randomUUID } from 'node:crypto';
 import type { DB } from './db.js';
-import { mediaCapMax, mediaCapSetting, mediaLimit } from './media-cap.js';
+import {
+  mediaCapMax,
+  mediaCapSetting,
+  mediaLimit,
+  projectLimitSetting,
+  projectMediaLimit,
+} from './media-cap.js';
 import type { Plugins } from './plugins.js';
 type Args = Record<string, any>;
 const string = { type: 'string', maxLength: 4096 },
@@ -187,7 +193,7 @@ export const toolCatalog = [
   {
     name: 'settings_get',
     description:
-      'Read the server settings. mediaLimit says whether runs are limited in logged media files (enabled) and to how many megabytes each.',
+      'Read the server settings. mediaLimit says whether runs are limited in logged media files (enabled) and to how many megabytes each; projects use it unless they set their own (project_media_limit_get).',
     parameters: schema(),
   },
   {
@@ -206,6 +212,28 @@ export const toolCatalog = [
         ),
       },
       ['mediaLimit'],
+    ),
+  },
+  {
+    name: 'project_media_limit_get',
+    description:
+      "Read a project's media limit settings: inherit (use the server's limit), its own enabled and megabytes, the thinning axis its runs' media are spaced on (_step, _runtime, _relative_wall, _timestamp or a metric), and the limit in effect.",
+    parameters: schema({ id: string }, ['id']),
+  },
+  {
+    name: 'project_media_limit_update',
+    description:
+      "Change the supplied fields of a project's media limit settings. Not available to the Assistant. inherit: true uses the server's limit; false uses the project's own enabled and megabytes. axis is the metric the media of the project's runs are spaced on when thinned. Runs over the limit in effect permanently lose media entries.",
+    agent: false,
+    parameters: schema(
+      {
+        id: string,
+        inherit: { type: 'boolean' },
+        enabled: { type: 'boolean' },
+        megabytes: { type: 'integer', minimum: 1, maximum: mediaCapMax },
+        axis: { type: 'string', minLength: 1, maxLength: 512 },
+      },
+      ['id'],
     ),
   },
   {
@@ -397,6 +425,18 @@ export class Tools {
         result = { mediaLimit: limit };
         break;
       }
+      case 'project_media_limit_get':
+        await this.db.call('projectGet', a.id);
+        return projectMediaLimit(this.db, a.id);
+      case 'project_media_limit_update': {
+        await this.db.call('projectGet', a.id);
+        const { effective: _, ...current } = await projectMediaLimit(this.db, a.id),
+          { id, ...changes } = a;
+        await this.db.call('settingSet', projectLimitSetting(id), { ...current, ...changes });
+        this.mediaLimitChanged();
+        result = await projectMediaLimit(this.db, id);
+        break;
+      }
       case 'media_limit_apply':
         if (a.dryRun !== false) return this.applyMediaLimit(true);
         result = await this.applyMediaLimit(false);
@@ -418,6 +458,7 @@ export class Tools {
       case 'project_update': result = await this.db.call('projectUpdate',a); break;
       case 'project_delete': {
         const removed = await this.db.call('projectDelete',a);
+        await this.db.call('settingDelete', projectLimitSetting(a.id));
         const cleanupFailed=await this.cleanupProject(removed);
         const {runIds,artifactIds,...summary}=removed;
         result={...summary,cleanupFailed};

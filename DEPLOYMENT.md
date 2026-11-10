@@ -87,7 +87,8 @@ checkout does not change the running app.
   like). A run over the limit, finished or not, loses media entries permanently, thinned
   evenly over its steps so that early media remain; the server applies this when it starts,
   when the limit changes and as runs upload. Turn the limit off or change its size in **App
-  settings → Storage**;
+  settings → Storage**, or for one project, with the axis its media are thinned along, in
+  the project's **Settings → Media limit**;
   `npm run randl -- tool media_limit_apply --json '{"dryRun":true}'` reports what the
   limit would remove.
 - A running run with no SDK contact for `--run-timeout` seconds (default 600, minimum 60)

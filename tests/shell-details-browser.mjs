@@ -360,6 +360,52 @@ try {
   );
   assert.deepEqual(storedLimit, { mediaLimit: { enabled: false, megabytes: 750 } });
   checks.push('App settings page in the navigation; media limit switch and size');
+
+  // Project settings: the project uses the server's limit until it sets its own, and names
+  // the axis its media are thinned along.
+  await page.goto(origin + '/' + project + '/settings');
+  const projectLimit = page.getByRole('region', { name: 'Media limit', exact: true }),
+    useServer = projectLimit.getByRole('radio', { name: "Use the server's limit (off)" }),
+    useOwn = projectLimit.getByRole('radio', { name: 'Set a limit for this project' }),
+    saveProjectLimit = projectLimit.getByRole('button', { name: 'Save', exact: true });
+  await expect(useServer).toBeChecked();
+  await expect(projectLimit.getByRole('switch')).toHaveCount(0);
+  await expect(projectLimit.getByRole('combobox', { name: 'Thinning axis' })).toHaveValue('Step');
+  await expect(saveProjectLimit).toBeDisabled();
+  await projectLimit.locator('label', { hasText: 'Set a limit for this project' }).click();
+  await expect(useOwn).toBeChecked();
+  // Its own values start from the server's.
+  await expect(projectLimit.getByRole('switch', { name: 'Limit media per run' })).not.toBeChecked();
+  await projectLimit.locator('label[for="project-media-limit-enabled"]').click();
+  const projectSize = projectLimit.getByRole('spinbutton', { name: 'Limit per run (MB)' });
+  await expect(projectSize).toHaveValue('750');
+  await projectSize.fill('900');
+  await projectLimit.getByRole('combobox', { name: 'Thinning axis' }).fill('Runtime');
+  await page.getByRole('option', { name: 'Runtime (seconds)', exact: true }).click();
+  await saveProjectLimit.click();
+  await expect(projectLimit.getByText('Saved. Runs over the limit are being thinned.')).toBeVisible();
+  const storedProjectLimit = await page.evaluate(
+    (id) =>
+      fetch('/api/tools/project_media_limit_get', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id }),
+      }).then((response) => response.json()),
+    project,
+  );
+  assert.deepEqual(storedProjectLimit, {
+    inherit: false,
+    enabled: true,
+    megabytes: 900,
+    axis: '_runtime',
+    effective: { enabled: true, megabytes: 900 },
+  });
+  await page.reload();
+  await expect(useOwn).toBeChecked();
+  await expect(projectLimit.getByRole('combobox', { name: 'Thinning axis' })).toHaveValue(
+    'Runtime (seconds)',
+  );
+  checks.push('project media limit: inherits the server limit, own switch and size, thinning axis');
   await page.close();
 
   // Mobile: the page's name stays visible in the header's one row and the runs drawer closes from the trailing edge.
