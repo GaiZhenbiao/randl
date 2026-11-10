@@ -1,6 +1,7 @@
 <script lang="ts">
   import { flushSync, onMount, tick } from 'svelte';
   import { ComboBox } from 'carbon-components-svelte';
+  import Choice from './Choice.svelte';
   import { t } from './i18n';
   import { filterChoice, resultCount } from './ui';
   import type { ComponentProps } from 'svelte';
@@ -251,7 +252,7 @@
   bind:this={host}
   use:retainInputFocus
 >
-  <ComboBox
+  <Choice
     selectionClearedText={$t('common.combobox.selectionCleared')}
     filterResultsText={(count) => resultCount(count, $t)}
     shouldFilterItem={filterChoice}

@@ -31,13 +31,13 @@
     Select,
     SelectItem,
     Search,
-    ComboBox,
     InlineNotification,
     NotificationActionButton,
     Theme,
     OverflowMenu,
     OverflowMenuItem,
   } from 'carbon-components-svelte';
+  import Choice from './Choice.svelte';
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Settings from 'carbon-icons-svelte/lib/Settings.svelte';
   import Chat from 'carbon-icons-svelte/lib/Chat.svelte';
@@ -1635,9 +1635,12 @@
   function showCatalog(catalog: Catalog) {
     if (catalog === shownCatalog) return;
     shownCatalog = catalog;
-    metrics = catalog.metrics;
-    metricKinds = catalog.kinds;
-    metricDefinitions = catalog.definitions;
+    // Live runs refetch the catalog on every write; unchanged lists keep their identity so
+    // open pickers keep their place.
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    if (!same(metrics, catalog.metrics)) metrics = catalog.metrics;
+    if (!same(metricKinds, catalog.kinds)) metricKinds = catalog.kinds;
+    if (!same(metricDefinitions, catalog.definitions)) metricDefinitions = catalog.definitions;
   }
   // Open immediately; the editor keeps its selected metrics independently of the catalog.
   function prepareCatalog(ids: string[]) {
@@ -3156,7 +3159,7 @@
       anchor={runControlAnchor}
       title={runControl === 'group' ? $t('runs.group.title') : $t('runs.sort.title')}
       onClose={() => (runControl = '')}
-      >{#if runControl === 'group'}<ComboBox
+      >{#if runControl === 'group'}<Choice
           selectionClearedText={$t('common.combobox.selectionCleared')}
           filterResultsText={(count) =>
             resultCount(count, $t)}
@@ -3191,7 +3194,7 @@
             groupBy = String(event.detail.selectedId || '');
             queryChanged();
           }}
-        />{:else}<ComboBox
+        />{:else}<Choice
           selectionClearedText={$t('common.combobox.selectionCleared')}
           filterResultsText={(count) =>
             resultCount(count, $t)}
@@ -3491,7 +3494,7 @@
     on:click:button--secondary={() => (projectDialog = false)}
     size="sm"
     ><div class="form-stack">
-      <ComboBox
+      <Choice
         selectionClearedText={$t('common.combobox.selectionCleared')}
         filterResultsText={(count) =>
           resultCount(count, $t)}

@@ -5,13 +5,13 @@
 
   import ContextPopover from './ContextPopover.svelte';
   import {
-    ComboBox,
     TextInput,
     Select,
     SelectItem,
     Button,
     InlineNotification,
   } from 'carbon-components-svelte';
+  import Choice from './Choice.svelte';
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Close from 'carbon-icons-svelte/lib/Close.svelte';
   const conditions: [string, MessageKey][] = [
@@ -122,7 +122,7 @@
       >
     {/if}
     {#each rules as rule, i}<div class="filter-rule">
-        <ComboBox
+        <Choice
           selectionClearedText={$t('common.combobox.selectionCleared')}
           filterResultsText={(count) =>
             resultCount(count, $t)}
@@ -183,7 +183,7 @@
                 ? String(new Date(String(event.detail)).getTime() / 1000)
                 : '')}
           />
-        {:else}<ComboBox
+        {:else}<Choice
             selectionClearedText={$t('common.combobox.selectionCleared')}
             filterResultsText={(count) =>
               resultCount(count, $t)}

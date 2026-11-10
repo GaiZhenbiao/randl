@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { Button } from 'carbon-components-svelte';
   import { Add, WarningAltFilled } from 'carbon-icons-svelte';
   import {
@@ -147,9 +147,21 @@
     }, 800);
     return () => clearTimeout(timer);
   });
-  $effect(() => {
-    matches;
-    active = 0;
+  // A new query highlights its best match; live catalog updates keep the highlighted name.
+  let shownQuery = '',
+    shownMatches: string[] = [];
+  $effect.pre(() => {
+    const names = matches,
+      query = context ? [context.kind, context.start, context.query].join('\u0000') : '';
+    untrack(() => {
+      if (query !== shownQuery) active = 0;
+      else {
+        const kept = names.indexOf(shownMatches[active]);
+        active = kept >= 0 ? kept : Math.max(0, Math.min(active, names.length - 1));
+      }
+      shownQuery = query;
+      shownMatches = names;
+    });
   });
   $effect(() => {
     const text = open

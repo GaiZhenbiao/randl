@@ -218,6 +218,71 @@ try {
   await y.fill('arrival/value');
   await expect(page.getByRole('option', { name: 'arrival/value', exact: true })).toBeVisible();
   await close();
+  // Live writes refetch the catalog; a filtered list keeps the reader's place and highlight.
+  const many = {};
+  for (let index = 0; index < 60; index++)
+    many['scroll/m' + String(index).padStart(2, '0')] = index;
+  let arrivalStep = 1;
+  async function write(values) {
+    await server.db.call('ingest', arriving.id, {
+      files: {
+        'wandb-history.jsonl': {
+          offset: arrivalStep,
+          content: [JSON.stringify({ _step: arrivalStep, ...values })],
+        },
+      },
+    });
+    arrivalStep++;
+    const response = page.waitForResponse('**/api/metrics');
+    server.live.changedRun(arriving.id);
+    await response;
+    // Carbon scrolls to a new highlight a few frames after the items change.
+    await page.waitForTimeout(300);
+  }
+  await server.db.call('ingest', arriving.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: arrivalStep,
+        content: [JSON.stringify({ _step: arrivalStep++, ...many })],
+      },
+    },
+  });
+  server.live.changedRun(arriving.id);
+  await open();
+  await y.fill('scroll/');
+  const menu = picker.locator('.bx--list-box__menu');
+  await expect(menu.getByRole('option', { name: 'scroll/m00', exact: true })).toBeVisible();
+  await menu.hover();
+  await page.mouse.wheel(0, 600);
+  await expect.poll(() => menu.evaluate((element) => element.scrollTop)).toBeGreaterThan(400);
+  // The pointer moves within the list, highlighting the option under it.
+  const bounds = await menu.boundingBox();
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2 + 8);
+  const place = await menu.evaluate((element) => element.scrollTop),
+    highlighted = () =>
+      menu.locator('.bx--list-box__menu-item--highlighted').textContent({ timeout: 1000 });
+  const before = await highlighted();
+  for (const values of [many, { ...many, 'scroll/m99': 1 }]) {
+    await write(values);
+    assert.equal(await highlighted(), before);
+    assert.equal(await menu.evaluate((element) => element.scrollTop), place);
+  }
+  await expect(y).toHaveAttribute('aria-expanded', 'true');
+  // Expression suggestions keep their highlighted metric the same way.
+  await y.press('Escape');
+  await editor.getByRole('button', { name: 'Add computed metric', exact: true }).click();
+  const formula = editor.getByRole('combobox', { name: 'Expression', exact: true });
+  await formula.fill('${scroll/');
+  const suggestions = editor.locator('.expression-options');
+  for (let index = 0; index < 20; index++) await formula.press('ArrowDown');
+  const suggested = () => suggestions.locator('[aria-selected="true"]').textContent();
+  const chosen = await suggested(),
+    position = await suggestions.evaluate((element) => element.scrollTop);
+  assert.ok(position > 0, 'the suggestion list scrolled to the highlighted metric');
+  await write({ ...many, 'scroll/m98': 1 });
+  assert.equal(await suggested(), chosen);
+  assert.equal(await suggestions.evaluate((element) => element.scrollTop), position);
+  await close();
   // Section and workspace settings use the same shown candidates as panel settings.
   for (const heading of ['Charts section settings', 'Workspace settings']) {
     const trigger = page.getByRole('button', { name: heading, exact: true });

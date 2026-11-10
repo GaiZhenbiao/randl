@@ -23,8 +23,8 @@
     DataTable,
     Checkbox,
     InlineNotification,
-    ComboBox,
   } from 'carbon-components-svelte';
+  import Choice from './Choice.svelte';
   import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
   import ChevronDown from 'carbon-icons-svelte/lib/ChevronDown.svelte';
   import ChevronUp from 'carbon-icons-svelte/lib/ChevronUp.svelte';
@@ -551,7 +551,7 @@
     title={$t('runs.tags.title')}
     onClose={() => (tagAnchor = null)}
   >
-    <ComboBox
+    <Choice
       selectionClearedText={$t('common.combobox.selectionCleared')}
       filterResultsText={(count) =>
         resultCount(count, $t)}
