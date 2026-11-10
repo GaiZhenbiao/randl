@@ -4,7 +4,7 @@
   import Settings from 'carbon-icons-svelte/lib/Settings.svelte';
   import { t } from './i18n';
   // Panel search, workspace settings and Add panel, shared by the header and run tabs.
-  // In the header the actions lead and the search folds to an icon while it is empty.
+  // In the header the search folds to an icon while it is empty.
   let {
     search = $bindable(''),
     header = false,
@@ -45,7 +45,7 @@
 {/snippet}
 
 <div class="panel-group" class:header>
-  {#if !header}{@render searchField()}{/if}
+  {@render searchField()}
   <div class="chart-actions">
     {#if settings}<Button
       kind="ghost"
@@ -69,5 +69,4 @@
       />{:else}<Button size="small" icon={Add} on:click={() => onAdd()}>{$t('workspace.addPanel')}</Button
       >{/if}
   </div>
-  {#if header}{@render searchField()}{/if}
 </div>

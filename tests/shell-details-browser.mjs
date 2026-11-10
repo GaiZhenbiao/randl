@@ -315,6 +315,46 @@ try {
   }));
   assert.equal(install.button, install.input, 'Install matches the source field height');
   checks.push('App settings labels, drawer field fill and Install height');
+
+  // App settings open from the navigation's end, beside Projects and Server; every tab shows.
+  assert.equal(
+    await page.locator('.bx--header #app-settings').count(),
+    0,
+    'App settings left the header',
+  );
+  const rail = page.getByRole('navigation', { name: 'Project pages', exact: true });
+  for (const name of ['Projects', 'Server', 'App settings'])
+    await expect(rail.locator('.rail-global').getByRole('button', { name, exact: true })).toBeVisible();
+  for (const name of ['General', 'Assistant', 'Panel plugins', 'Storage'])
+    await expect(dialog.getByRole('tab', { name, exact: true })).toBeInViewport({ ratio: 1 });
+  // Storage: the media limit is a switch with its size, never a special number.
+  await dialog.getByRole('tab', { name: 'Storage', exact: true }).click();
+  const limitSwitch = dialog.getByRole('switch', { name: 'Limit media per run' }),
+    limitSize = dialog.getByRole('spinbutton', { name: 'Limit per run (MB)' }),
+    saveLimit = dialog.getByRole('button', { name: 'Save', exact: true });
+  await expect(limitSwitch).toBeChecked();
+  await expect(limitSize).toHaveValue('500');
+  await expect(saveLimit).toBeDisabled();
+  await limitSize.fill('0');
+  await expect(dialog.getByText('Enter a whole number from 1 to 1,048,576.')).toBeVisible();
+  await expect(saveLimit).toBeDisabled();
+  await limitSize.fill('750');
+  await saveLimit.click();
+  await expect(dialog.getByText('Saved. Runs over the limit are being thinned.')).toBeVisible();
+  await dialog.locator('label[for="media-limit-enabled"]').click();
+  await expect(limitSwitch).not.toBeChecked();
+  await expect(limitSize).toHaveCount(0);
+  await saveLimit.click();
+  await expect(dialog.getByText('Saved. Runs keep all their media.')).toBeVisible();
+  const storedLimit = await page.evaluate(() =>
+    fetch('/api/tools/settings_get', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    }).then((response) => response.json()),
+  );
+  assert.deepEqual(storedLimit, { mediaLimit: { enabled: false, megabytes: 750 } });
+  checks.push('App settings in the navigation; media limit switch and size');
   await page.close();
 
   // Mobile: the page's name stays visible in the header's one row and the runs drawer closes from the trailing edge.

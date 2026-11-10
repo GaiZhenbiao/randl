@@ -1,21 +1,33 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { Button, InlineNotification, NumberInput } from 'carbon-components-svelte';
+  import { Button, InlineNotification, NumberInput, Toggle } from 'carbon-components-svelte';
   import { api, apiMessage } from './api';
   import { t, type Message } from './i18n';
 
-  // Server settings, shared by every browser: the most media a run keeps
-  // (docs/storage.md#media-limit).
+  // Server settings, shared by every browser: whether runs are limited in logged media and
+  // to how much (docs/storage.md#media-limit).
+  type Limit = { enabled: boolean; megabytes: number };
   const max = 1024 * 1024;
-  let saved = $state<number | undefined>(),
-    value = $state<number | null>(null),
+  let saved = $state<Limit | undefined>(),
+    enabled = $state(true),
+    megabytes = $state<number | null>(null),
     busy = $state(false),
     done = $state(false),
     error = $state<Message>('');
-  let valid = $derived(value !== null && Number.isInteger(value) && value >= 0 && value <= max);
+  let valid = $derived(
+    megabytes !== null && Number.isInteger(megabytes) && megabytes >= 1 && megabytes <= max,
+  );
+  let changed = $derived(
+    !!saved && (enabled !== saved.enabled || (enabled && megabytes !== saved.megabytes)),
+  );
+  function show(limit: Limit) {
+    saved = limit;
+    enabled = limit.enabled;
+    megabytes = limit.megabytes;
+  }
   onMount(async () => {
     try {
-      saved = value = (await api('/api/tools/settings_get', {})).mediaLimitMB;
+      show((await api('/api/tools/settings_get', {})).mediaLimit);
     } catch {
       error = 'app.settings.mediaLimit.loadFailed';
     }
@@ -25,7 +37,13 @@
     done = false;
     error = '';
     try {
-      saved = (await api('/api/tools/settings_update', { mediaLimitMB: value })).mediaLimitMB;
+      show(
+        (
+          await api('/api/tools/settings_update', {
+            mediaLimit: enabled ? { enabled, megabytes } : { enabled },
+          })
+        ).mediaLimit,
+      );
       done = true;
     } catch (failure) {
       error = apiMessage(failure);
@@ -36,33 +54,42 @@
 </script>
 
 <div class="form-stack storage-settings">
-  <NumberInput
-    id="media-limit"
-    labelText={$t('app.settings.mediaLimit.label')}
-    helperText={$t('app.settings.mediaLimit.help')}
-    min={0}
-    {max}
-    step={50}
-    allowEmpty
-    hideSteppers
-    disabled={saved === undefined}
-    invalid={saved !== undefined && !valid}
-    invalidText={$t('app.settings.mediaLimit.invalid', { max })}
-    bind:value
-    on:input={() => (done = false)}
+  <Toggle
+    id="media-limit-enabled"
+    labelText={$t('app.settings.mediaLimit.toggle')}
+    labelA={$t('common.state.off')}
+    labelB={$t('common.state.on')}
+    disabled={!saved}
+    bind:toggled={enabled}
+    on:toggle={() => (done = false)}
   />
+  <p class="bx--form__helper-text">{$t('app.settings.mediaLimit.help')}</p>
+  {#if enabled}<NumberInput
+      id="media-limit"
+      labelText={$t('app.settings.mediaLimit.label')}
+      min={1}
+      {max}
+      step={50}
+      allowEmpty
+      hideSteppers
+      disabled={!saved}
+      invalid={!!saved && !valid}
+      invalidText={$t('app.settings.mediaLimit.invalid', { max })}
+      bind:value={megabytes}
+      on:input={() => (done = false)}
+    />{/if}
   <div>
-    <Button
-      size="small"
-      disabled={busy || !valid || value === saved}
-      on:click={save}>{$t('app.settings.mediaLimit.save')}</Button
+    <Button size="small" disabled={busy || !changed || (enabled && !valid)} on:click={save}
+      >{$t('app.settings.mediaLimit.save')}</Button
     >
   </div>
   {#if done}<InlineNotification
       kind="success"
       lowContrast
       hideCloseButton
-      title={$t('app.settings.mediaLimit.saved')}
+      title={$t(
+        saved?.enabled ? 'app.settings.mediaLimit.saved' : 'app.settings.mediaLimit.savedOff',
+      )}
     />{/if}{#if error}<InlineNotification
       kind="error"
       lowContrast

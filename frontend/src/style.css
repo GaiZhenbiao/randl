@@ -129,7 +129,6 @@ button:focus-visible {
 }
 .save-status {
   flex-shrink: 0;
-  margin-inline-start: auto;
   padding-inline: 8px;
   font-size: 12px;
   color: var(--cds-text-02);
@@ -159,16 +158,18 @@ button:focus-visible {
   display: contents;
 }
 .page-bar .chart-actions > :first-child {
-  margin-inline-start: 8px;
+  margin-inline-start: 0;
 }
 .page-bar .bx--btn,
 .page-bar .bx--overflow-menu {
   flex-shrink: 0;
 }
-/* The header's search is an icon until it is opened or holds text. */
+/* The view's controls lead the bar and the panel tools end it, beside the header's own
+   actions. The header's search is an icon until it is opened or holds text. */
 .panel-group.header .panel-search {
   flex: none;
   min-width: 0;
+  margin-inline-start: auto;
 }
 .panel-group.header .panel-search:has(.bx--search--expanded) {
   flex: 0 1 280px;
@@ -188,7 +189,7 @@ button:focus-visible {
   flex-shrink: 0;
   align-items: center;
   gap: 4px;
-  margin-inline-start: 8px;
+  margin-inline-start: auto;
 }
 @media (max-width: 760px) {
   .page-bar {
@@ -1102,11 +1103,21 @@ aside {
   align-items: stretch;
   border-right: 1px solid var(--cds-ui-03);
   background: var(--cds-ui-01);
-  overflow: hidden;
+  overflow: hidden auto;
   padding: 8px 0;
   gap: 4px;
 }
-.project-rail > .bx--btn {
+/* The server-wide entries stand apart at the rail's end. */
+.rail-global {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--cds-ui-03);
+}
+.project-rail > .bx--btn,
+.rail-global > .bx--btn {
   width: 100%;
   max-width: none;
   min-width: 0;
@@ -1127,7 +1138,8 @@ aside {
   line-break: strict;
   text-wrap: balance;
 }
-.project-rail > .bx--btn svg {
+.project-rail > .bx--btn svg,
+.rail-global > .bx--btn svg {
   position: static;
   order: -1;
   flex-shrink: 0;
@@ -1135,7 +1147,8 @@ aside {
   width: 20px;
   height: 20px;
 }
-.project-rail > .bx--btn[aria-pressed='true'] {
+.project-rail > .bx--btn[aria-pressed='true'],
+.rail-global > .bx--btn[aria-pressed='true'] {
   background: var(--cds-selected-ui);
   color: var(--cds-text-01);
   box-shadow: inset 3px 0 var(--cds-interactive-04);
@@ -2318,7 +2331,8 @@ aside {
 .side-drawer-content > .bx--tabs {
   position: sticky;
   top: 0;
-  z-index: 3;
+  /* Above the settings' own layers, such as slider thumbs. */
+  z-index: 4;
   background: var(--cds-ui-01);
 }
 .side-drawer-content:has(> .bx--tabs, > .editor-categories) {
@@ -4420,7 +4434,8 @@ aside {
   max-width: none;
 }
 /* Settings drawers show every category tab at the drawer width. */
-.side-drawer .editor-categories .bx--tabs__nav-link {
+.side-drawer .editor-categories .bx--tabs__nav-link,
+.side-drawer-content > .bx--tabs .bx--tabs__nav-link {
   width: auto;
   padding-inline: 8px;
 }
@@ -4893,6 +4908,8 @@ aside {
   flex: 1;
   min-width: 48px;
   padding: 0 8px;
+  /* A finger moving along the slider drags its thumb; the page still scrolls vertically. */
+  touch-action: pan-y;
 }
 .media-step .bx--form-item,
 .media-step .bx--slider-container {

@@ -38,6 +38,7 @@
   import Choice from './Choice.svelte';
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Settings from 'carbon-icons-svelte/lib/Settings.svelte';
+  import SettingsAdjust from 'carbon-icons-svelte/lib/SettingsAdjust.svelte';
   import Chat from 'carbon-icons-svelte/lib/Chat.svelte';
   import Folders from 'carbon-icons-svelte/lib/Folders.svelte';
   import Undo from 'carbon-icons-svelte/lib/Undo.svelte';
@@ -110,6 +111,15 @@
   let runsPreference = $state(localStorage.getItem('randl.runs-sidebar') || 'auto'),
     menuOpen = $state(false);
   // The brand and missing-object pages link to the project list; modified clicks open it elsewhere.
+  // App settings open from the navigation, beside Projects and Server.
+  function openAppSettings() {
+    menuOpen = false;
+    agentDialog = false;
+    panelDialog = false;
+    trashOpen = false;
+    drawer = false;
+    settings = true;
+  }
   async function openProjectList(event: MouseEvent) {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
@@ -2529,7 +2539,7 @@
   </div>
 {/snippet}
 {#snippet pageTools()}
-  {#if page === 'workspace'}{@render viewControls()}{#if workspaceTools}<PanelTools
+  {#if page === 'workspace'}{@render viewControls()}{@render saveStatus()}{#if workspaceTools}<PanelTools
         header
         bind:search={workspaceSearch}
         compact={compactAdd}
@@ -2537,7 +2547,7 @@
         add={!menuAdd}
         onDefaults={() => openDefaults()}
         onAdd={() => openPanel()}
-      />{/if}{@render saveStatus()}{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
+      />{/if}{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
       class="run-actions"
     >
       {#if page === 'run' && currentRun?.state === 'running' && currentRun.snapshot_at == null}{@const stopLabel =
@@ -2717,23 +2727,7 @@
           >{$t('assistant.title')}{#if $pendingProjectConfirmation && !agentDialog}<span
               class="confirmation-badge">{$t('projects.confirmation.needed')}</span
             >{/if}</Button
-        >{/if}{#if width > 760}<Button
-        kind="ghost"
-        size="small"
-        icon={Settings}
-        id="app-settings"
-        tooltipAlignment="end"
-        hideTooltip
-        title={$t('app.settings.title')}
-        iconDescription={$t('app.settings.title')}
-        on:click={() => {
-          agentDialog = false;
-          panelDialog = false;
-          trashOpen = false;
-          drawer = false;
-          settings = true;
-        }}
-      />{/if}
+        >{/if}
     </div></Header
   >
   <!-- Phones navigate through Carbon's overlay side navigation, opened from the header's menu button. -->
@@ -2801,15 +2795,8 @@
             type="button"
             id="app-settings"
             class="bx--side-nav__link"
-            onclick={() => {
-              menuOpen = false;
-              agentDialog = false;
-              panelDialog = false;
-              trashOpen = false;
-              drawer = false;
-              settings = true;
-            }}
-            ><span class="bx--side-nav__icon bx--side-nav__icon--small"><Settings /></span><span
+            onclick={openAppSettings}
+            ><span class="bx--side-nav__icon bx--side-nav__icon--small"><SettingsAdjust /></span><span
               class="bx--side-nav__link-text">{$t('app.settings.title')}</span
             ></button
           >
@@ -2838,6 +2825,29 @@
           on:click={() => navigate(item.id)}
           >{item.name === 'nav.settings' ? $t('nav.settingsShort') : $t(item.name)}</Button
         >{/each}
+      <!-- What belongs to the whole server ends the rail: the other projects, the server's
+           status and the app's settings. Phones have these in the header's menu. -->
+      {#if width > 760}<div class="rail-global">
+          {#if project}{#each globalPages as item}<Button
+                kind="ghost"
+                size="small"
+                icon={item.id === 'overview' ? Folders : item.icon}
+                title={$t(item.name)}
+                on:click={async () => {
+                  await changeProject('');
+                  if (item.id !== 'overview') await navigate(item.id);
+                }}>{$t(item.name)}</Button
+              >{/each}{/if}<Button
+            kind="ghost"
+            size="small"
+            icon={SettingsAdjust}
+            id="app-settings"
+            title={$t('app.settings.title')}
+            aria-label={$t('app.settings.title')}
+            aria-pressed={settings}
+            on:click={openAppSettings}>{$t('app.settings.short')}</Button
+          >
+        </div>{/if}
     </nav>
     {#if page === 'workspace' || page === 'run'}<aside
         class="run-sidebar"

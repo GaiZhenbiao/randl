@@ -8,17 +8,25 @@ import { runFolder } from './project-store.js';
 // instead of dropping its oldest media: each key gives up the entry whose neighbors are
 // closest, so what remains is spread over the whole run.
 
-/** The server setting that holds the limit in mebibytes; 0 turns it off. */
-export const mediaCapSetting = 'media-cap-mb';
-export const mediaCapDefault = 500;
+/** The server setting that holds the limit: whether it is on, and its size in mebibytes. */
+export const mediaCapSetting = 'media-limit';
+export type MediaLimit = { enabled: boolean; megabytes: number };
+export const mediaCapDefault: MediaLimit = { enabled: true, megabytes: 500 };
 export const mediaCapMax = 1024 * 1024;
 /** Thinning stops at this share of the limit, so the next upload does not thin again. */
 const targetShare = 0.9;
 
-/** The limit in mebibytes, as set or by default. */
-export async function mediaLimit(db: DB): Promise<number> {
+/** The limit as set, or the default. */
+export async function mediaLimit(db: DB): Promise<MediaLimit> {
   const value = await db.call('settingGet', mediaCapSetting);
-  return typeof value === 'number' && value >= 0 ? value : mediaCapDefault;
+  return value && typeof value.enabled === 'boolean' && value.megabytes >= 1
+    ? { enabled: value.enabled, megabytes: value.megabytes }
+    : mediaCapDefault;
+}
+/** The limit in bytes, or 0 while it is off. */
+async function capBytes(db: DB) {
+  const limit = await mediaLimit(db);
+  return limit.enabled ? limit.megabytes * megabyte : 0;
 }
 /** One logged media value: its key, step and files. */
 export type CapEntry = {
@@ -186,10 +194,14 @@ const megabyte = 1024 * 1024;
 const rememberedRuns = 256;
 /** Runs measured per pass; the rest wait for the next one. */
 const runsPerPass = 4;
+/** Passes follow an upload after `uploadDelay` ms, and one another after `sweepDelay`. */
+const uploadDelay = 2000,
+  sweepDelay = 100;
 /**
- * Applies the limit to runs as they upload media. A run is measured when it first uploads a
- * media file and again once its uploads since could have passed the limit; the files are
- * read from the run's folder, outside the database worker.
+ * Applies the limit to every run. All runs with media are measured when the server starts
+ * and when the limit changes; after that a run is measured when it first uploads a media
+ * file and again once its uploads since could have passed the limit. The files are read
+ * from the run's folder, outside the database worker.
  */
 export class MediaCap {
   private totals = new Map<string, number>();
@@ -201,35 +213,41 @@ export class MediaCap {
     private db: DB,
     private directory: string,
     private changed: (run: string) => void,
-    private delay = 2000,
   ) {}
+  private schedule(delay: number) {
+    if (this.closed || this.timer) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.pass();
+    }, delay);
+    this.timer.unref();
+  }
+  /** Queues every run with media to be measured, finished runs included. */
+  async sweep() {
+    if (this.closed) return;
+    for (const run of (await this.db.call('runsWithMedia')) as string[]) {
+      this.totals.delete(run);
+      this.waiting.add(run);
+    }
+    if (this.waiting.size) this.schedule(sweepDelay);
+  }
   /** Notes an uploaded run file; media files may start a pass. */
   uploaded(run: string, path: string, delta: number) {
     if (this.closed || !path.startsWith('media/')) return;
     const known = this.totals.get(run);
     if (known !== undefined) this.totals.set(run, known + delta);
     this.waiting.add(run);
-    this.timer ??= setTimeout(() => {
-      this.timer = undefined;
-      void this.pass();
-    }, this.delay);
-    this.timer.unref();
+    this.schedule(uploadDelay);
   }
   /** Measures the waiting runs and thins those over the limit. */
   pass(): Promise<void> {
     return (this.running ??= this.work().finally(() => {
       this.running = undefined;
-      if (this.waiting.size && !this.closed && !this.timer) {
-        this.timer = setTimeout(() => {
-          this.timer = undefined;
-          void this.pass();
-        }, this.delay);
-        this.timer.unref();
-      }
+      if (this.waiting.size) this.schedule(sweepDelay);
     }));
   }
   private async work() {
-    const cap = (await mediaLimit(this.db)) * megabyte;
+    const cap = await capBytes(this.db);
     let measured = 0;
     for (const run of [...this.waiting]) {
       const known = this.totals.get(run);
@@ -281,9 +299,9 @@ export class MediaCap {
    * would remove.
    */
   async applyAll(dryRun: boolean) {
-    const cap = (await mediaLimit(this.db)) * megabyte,
+    const cap = await capBytes(this.db),
       runs: string[] = await this.db.call('runsWithMedia'),
-      result = { mediaLimitMB: cap / megabyte, dryRun, runs: runs.length, runsOver: 0, entries: 0, files: 0, bytes: 0 };
+      result = { dryRun, runs: runs.length, runsOver: 0, entries: 0, files: 0, bytes: 0 };
     if (!cap) return result;
     for (const run of runs) {
       const removed = await this.apply(run, cap, dryRun);

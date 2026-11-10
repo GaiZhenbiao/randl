@@ -1141,7 +1141,7 @@
               )}
               disabled={positionIndex <= 0}
               on:click={() => choosePosition(positionIndex - 1)}
-            />{#if plotWidth >= 360}<div
+            />{#if plotWidth >= 280}<div
                 class="media-step-slider"
                 onkeydowncapture={sliderKey}
                 onpointerdowncapture={sliderPress}

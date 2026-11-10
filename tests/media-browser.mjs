@@ -268,7 +268,14 @@ try {
     .poll(async () => Math.abs((await tabs.boundingBox()).y - (await fields.boundingBox()).y))
     .toBeLessThanOrEqual(1);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.keyboard.press('Escape');
+  // Choosing an axis there saves it as the panel's X axis.
+  await axisEditor.getByRole('combobox', { name: 'Browse by' }).click();
+  await page.getByRole('option', { name: 'Wall elapsed (seconds)', exact: true }).click();
+  await axisEditor.getByRole('button', { name: 'Save panel', exact: true }).click();
+  await expect(stepLabel).toHaveText(/^Wall elapsed \(seconds\) \d/);
+  await expect
+    .poll(async () => (await call('/api/views/' + sliderView.id)).body.panels[0].settings?.xAxis)
+    .toBe('_relative_wall');
   checks.push('step slider: full width, snaps to values with media, keys; Browse by another axis');
   checks.push('panel settings tabs stay in place while their settings scroll');
 

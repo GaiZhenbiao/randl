@@ -43,9 +43,21 @@
     window.addEventListener('keydown', escape, true);
     return () => {
       window.removeEventListener('keydown', escape, true);
+      // Focus returns to what opened the drawer; when that is gone or hidden again (an item
+      // of the phone's navigation menu), to App settings or the menu's button.
       void tick().then(() => {
-        if (previous?.isConnected) previous.focus();
-        else document.getElementById('app-settings')?.focus();
+        const shown = (element: HTMLElement | null) =>
+          element?.isConnected &&
+          element.checkVisibility({ visibilityProperty: true }) &&
+          element.getBoundingClientRect().right > 0 &&
+          !element.closest('[inert]')
+            ? element
+            : null;
+        (
+          shown(previous) ||
+          shown(document.getElementById('app-settings')) ||
+          document.querySelector<HTMLElement>('.bx--header__menu-trigger')
+        )?.focus();
       });
     };
   });

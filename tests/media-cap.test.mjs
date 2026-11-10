@@ -8,6 +8,16 @@ import { planMediaThinning } from '../backend/dist/media-cap.js';
 import { mediaPaths } from '../backend/dist/media-items.js';
 import { runFolder } from '../backend/dist/project-store.js';
 
+async function expectEventually(check, timeout = 5000) {
+  for (const until = Date.now() + timeout; ; ) {
+    try {
+      return await check();
+    } catch (error) {
+      if (Date.now() > until) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+}
 const entry = (metric, step, bytes = 10, complete = true) => ({
   metric,
   step,
@@ -96,8 +106,12 @@ test('the media limit thins a run when uploads pass it, and applies to all runs 
     await app.close();
     await rm(dir, { recursive: true, force: true });
   });
-  assert.deepEqual(await tools.execute('settings_get', {}), { mediaLimitMB: 500 });
-  assert.deepEqual(await tools.execute('settings_update', { mediaLimitMB: 1 }), { mediaLimitMB: 1 });
+  const limit = (enabled, megabytes) =>
+    tools.execute('settings_update', { mediaLimit: { enabled, megabytes } });
+  assert.deepEqual(await tools.execute('settings_get', {}), {
+    mediaLimit: { enabled: true, megabytes: 500 },
+  });
+  assert.deepEqual(await limit(true, 1), { mediaLimit: { enabled: true, megabytes: 1 } });
   const megabyte = 1024 * 1024,
     clip = Buffer.alloc(megabyte / 4, 7);
   const log = async (name, count, upload = true) => {
@@ -156,12 +170,13 @@ test('the media limit thins a run when uploads pass it, and applies to all runs 
   const small = await log('b', 3);
   await mediaCap.pass();
   assert.deepEqual(await shown(small), [0, 10, 20]);
-  await tools.execute('settings_update', { mediaLimitMB: 0 });
+  // Turning the limit off keeps its size.
+  assert.deepEqual(await limit(false), { mediaLimit: { enabled: false, megabytes: 1 } });
   const unlimited = await log('c', 8);
   await mediaCap.pass();
   assert.equal((await shown(unlimited)).length, 8);
-  // Applying to all runs reports first, then removes; entries still uploading stay.
-  await tools.execute('settings_update', { mediaLimitMB: 1 });
+  // A dry run reports what the limit would remove from every run.
+  await db.call('settingSet', 'media-limit', { enabled: true, megabytes: 1 });
   const pending = await log('d', 8, false);
   const preview = await tools.execute('media_limit_apply', { dryRun: true });
   assert.deepEqual(
@@ -169,13 +184,19 @@ test('the media limit thins a run when uploads pass it, and applies to all runs 
     [true, 4, 1, 5, 1.25 * megabyte],
   );
   assert.equal((await shown(unlimited)).length, 8);
-  const applied = await tools.execute('media_limit_apply', {});
-  assert.deepEqual([applied.runsOver, applied.entries, applied.files], [1, 5, 5]);
-  assert.deepEqual(await shown(unlimited), [0, 40, 70]);
+  // Turning the limit on thins the runs already over it, with no further upload; entries
+  // still uploading stay.
+  await limit(true, 1);
+  await expectEventually(async () => assert.deepEqual(await shown(unlimited), [0, 40, 70]));
   assert.equal((await shown(pending)).length, 8);
-  assert.equal((await tools.execute('media_limit_apply', {})).entries, 0);
+  assert.equal((await tools.execute('media_limit_apply', { dryRun: false })).entries, 0);
+  // Removing needs an explicit choice.
   assert.equal(
-    (await app.inject({ url: '/api/tools/settings_update', method: 'POST', payload: { mediaLimitMB: -1 } }))
+    (await app.inject({ url: '/api/tools/media_limit_apply', method: 'POST', payload: {} })).statusCode,
+    400,
+  );
+  assert.equal(
+    (await app.inject({ url: '/api/tools/settings_update', method: 'POST', payload: { mediaLimit: { enabled: true, megabytes: 0 } } }))
       .statusCode,
     400,
   );
@@ -251,4 +272,43 @@ test('media by another X axis: values of the axis metric, carried forward', asyn
   assert.deepEqual((await media({ xAxis: '_timestamp' })).xValues.slice(0, 2), [1000000, 1020000]);
   assert.deepEqual((await media({ xAxis: 'missing' })).xValues, []);
   assert.deepEqual((await media({})).xValues, [0, 2, 3, 4, 5]);
+});
+test('a server thins runs already over the media limit when it starts', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'randl-cap-start-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  let server = await createServer(dir);
+  await server.tools.execute('settings_update', { mediaLimit: { enabled: false } });
+  const run = await server.db.call('upsert', { entity: 'e', project: 'cap', name: 'old' });
+  await server.db.call('ingest', run.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: 0,
+        content: Array.from({ length: 8 }, (_, i) =>
+          JSON.stringify({ _step: i, clip: { _type: 'video-file', path: `media/videos/c_${i}.mp4` } }),
+        ),
+      },
+    },
+  });
+  for (let i = 0; i < 8; i++)
+    await server.app.inject({
+      method: 'PUT',
+      url: `/upload/e/cap/old/media/videos/c_${i}.mp4`,
+      payload: Buffer.alloc(1024 * 1024, 1),
+    });
+  await server.db.call('settingSet', 'media-limit', { enabled: true, megabytes: 4 });
+  await server.app.close();
+  server = await createServer(dir);
+  t.after(() => server.app.close());
+  await expectEventually(async () =>
+    assert.deepEqual(
+      (
+        await server.app.inject({
+          url: '/api/media',
+          method: 'POST',
+          payload: { runs: [run.id], metric: 'clip' },
+        })
+      ).json().xValues,
+      [0, 4, 7],
+    ),
+  );
 });

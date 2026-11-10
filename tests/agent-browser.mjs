@@ -96,7 +96,7 @@ try {
       assert.equal(body.model, 'browser-tool-loop');
       assert.deepEqual(
         new Set(body.tools.map((tool) => tool.function.name)),
-        new Set(toolCatalog.map((tool) => tool.name)),
+        new Set(toolCatalog.filter((tool) => tool.agent !== false).map((tool) => tool.name)),
       );
       const prompt = textOf(
         body.messages.filter((message) => message.role === 'user').at(-1).content,
@@ -958,6 +958,9 @@ try {
       await page.setViewportSize({ width, height });
       await page.reload();
       for (const keyboard of [false, true]) {
+        // Phones keep App settings in the header's navigation menu.
+        if (width <= 760)
+          await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
         const trigger = page.getByRole('button', { name: 'App settings', exact: true });
         if (keyboard) {
           await trigger.focus();
@@ -988,7 +991,12 @@ try {
         await settings.locator('h2').focus();
         await page.keyboard.press('Escape');
         await expect(settings).toHaveCount(0);
-        await expect(trigger).toBeFocused();
+        // Focus returns to App settings, or on phones to the button of the menu that holds it.
+        await expect(
+          width <= 760
+            ? page.getByRole('button', { name: 'Open navigation', exact: true })
+            : trigger,
+        ).toBeFocused();
       }
     }
   }

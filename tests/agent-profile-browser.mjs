@@ -5,6 +5,12 @@ import { join } from 'node:path';
 import { expect } from '@playwright/test';
 import { createServer } from '../backend/dist/server.js';
 import { launchBrowser, listen } from './helpers.mjs';
+// App settings open from the navigation: its rail on wider screens, its menu on phones.
+async function openSettings(page) {
+  if (page.viewportSize().width <= 760)
+    await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+  await page.getByRole('button', { name: 'App settings', exact: true }).click();
+}
 const directory = await mkdtemp(join(tmpdir(), 'randl-agent-profile-browser-'));
 const savedKey = process.env.DEEPSEEK_API_KEY;
 const failures = [];
@@ -31,7 +37,7 @@ try {
   const page = await context.newPage();
   page.on('pageerror', (error) => failures.push(error.message));
   await page.goto(base);
-  await page.getByRole('button', { name: 'App settings', exact: true }).click();
+  await openSettings(page);
   await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'App settings', exact: true });
   async function selectProvider(id) {
@@ -351,8 +357,14 @@ try {
       );
       const tab = await ctx.newPage();
       tab.on('pageerror', (error) => failures.push(error.message));
+      // Phones keep App settings in the header's navigation menu.
+      const openAppSettings = async () => {
+        if (width <= 760)
+          await tab.getByRole('button', { name: copy['app.nav.open'], exact: true }).click();
+        await tab.getByRole('button', { name: copy['app.settings.title'], exact: true }).click();
+      };
       await tab.goto(base);
-      await tab.getByRole('button', { name: copy['app.settings.title'], exact: true }).click();
+      await openAppSettings();
       await tab.getByRole('tab', { name: copy['assistant.title'], exact: true }).click();
       const settings = tab.getByRole('dialog', { name: copy['app.settings.title'], exact: true });
       await settings
@@ -431,7 +443,7 @@ try {
             await route.fulfill({ json: { saved: false } });
           });
           await tab.reload();
-          await tab.getByRole('button', { name: copy['app.settings.title'], exact: true }).click();
+          await openAppSettings();
           await tab.getByRole('tab', { name: copy['assistant.title'], exact: true }).click();
           await settings
             .getByRole('combobox', { name: copy['assistant.settings.provider.label'], exact: true })
@@ -477,7 +489,7 @@ try {
             oauthConfigured = true;
             apiKeyConfigured = false;
             await tab.reload();
-            await tab.getByRole('button', { name: copy['app.settings.title'], exact: true }).click();
+            await openAppSettings();
             await tab.getByRole('tab', { name: copy['assistant.title'], exact: true }).click();
             await settings
               .getByRole('combobox', { name: copy['assistant.settings.provider.label'], exact: true })
@@ -563,14 +575,14 @@ try {
     'Last-credential fixture must have no available models',
   );
   await page.reload();
-  await page.getByRole('button', { name: 'App settings', exact: true }).click();
+  await openSettings(page);
   await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
   const unavailablePicker = dialog.getByRole('combobox', { name: 'Model', exact: true });
   await expect(unavailablePicker).toHaveValue('Anthropic / ' + item.name + ' (unavailable)');
   for (const theme of ['g10', 'g100']) {
     await page.evaluate((theme) => localStorage.setItem('randl.theme', theme), theme);
     await page.reload();
-    await page.getByRole('button', { name: 'App settings', exact: true }).click();
+    await openSettings(page);
     await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
     await expect(unavailablePicker).toHaveValue('Anthropic / ' + item.name + ' (unavailable)');
     await unavailablePicker.click();
@@ -620,7 +632,7 @@ try {
     await unavailablePicker.press('Escape');
     await expect(unavailablePicker).toHaveValue(savedLabel);
     await page.reload();
-    await page.getByRole('button', { name: 'App settings', exact: true }).click();
+    await openSettings(page);
     await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
     await unavailablePicker.focus();
     await unavailablePicker.press('ArrowDown');
@@ -650,7 +662,7 @@ try {
       (model) => model.provider === 'deepseek',
     );
     await page.reload();
-    await page.getByRole('button', { name: 'App settings', exact: true }).click();
+    await openSettings(page);
     await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
     await unavailablePicker.fill(other.name);
     await page.getByRole('option', { name: 'DeepSeek / ' + other.name, exact: true }).click();
@@ -671,7 +683,7 @@ try {
     });
     await server.agent.credential('deepseek');
     await page.reload();
-    await page.getByRole('button', { name: 'App settings', exact: true }).click();
+    await openSettings(page);
     await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
     await unavailablePicker.fill('Automatic');
     await page.getByRole('option', { name: 'Automatic', exact: true }).click();

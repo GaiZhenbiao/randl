@@ -187,25 +187,33 @@ export const toolCatalog = [
   {
     name: 'settings_get',
     description:
-      'Read the server settings. mediaLimitMB is the most megabytes of logged media files a run keeps; 0 means no limit.',
+      'Read the server settings. mediaLimit says whether runs are limited in logged media files (enabled) and to how many megabytes each.',
     parameters: schema(),
   },
   {
     name: 'settings_update',
     description:
-      'Change server settings. Not available to the Assistant. mediaLimitMB (megabytes, 0 for no limit) applies to each run the next time it uploads media: a run over the limit permanently loses media entries, thinned evenly over its steps, keeping the first and the newest of every key.',
+      'Change server settings. Not available to the Assistant. mediaLimit turns the per-run media limit on or off (enabled) and sets its size (megabytes, kept when omitted). While it is on, every run over the limit, finished runs included, permanently loses media entries, thinned evenly over its steps, keeping the first and the newest of every key.',
     agent: false,
     parameters: schema(
-      { mediaLimitMB: { type: 'integer', minimum: 0, maximum: mediaCapMax } },
-      ['mediaLimitMB'],
+      {
+        mediaLimit: schema(
+          {
+            enabled: { type: 'boolean' },
+            megabytes: { type: 'integer', minimum: 1, maximum: mediaCapMax },
+          },
+          ['enabled'],
+        ),
+      },
+      ['mediaLimit'],
     ),
   },
   {
     name: 'media_limit_apply',
     description:
-      'Apply the media limit to every run now instead of waiting for its next upload. Permanently deletes media of runs over the limit. With dryRun, only reports the runs, entries, files and bytes that would be removed.',
+      'Apply the media limit to every run and wait for the result; the server also does this on its own at startup and when the limit changes. dryRun: true only reports the runs, entries, files and bytes that would be removed; dryRun: false permanently deletes media of runs over the limit.',
     agent: false,
-    parameters: schema({ dryRun: { type: 'boolean' } }),
+    parameters: schema({ dryRun: { type: 'boolean' } }, ['dryRun']),
   },
   {name:'run_get',description:'Read a run, its environment, configuration, summary, runtime, and logged alerts.',parameters:schema({id:string},['id'])},
   {
@@ -314,6 +322,7 @@ export class Tools {
     readonly changed: (ids?: string[]) => void = () => {},
     readonly cleanupProject: (result:Args)=>Promise<number> = async()=>0,
     readonly applyMediaLimit: (dryRun: boolean) => Promise<Args> = async () => ({}),
+    readonly mediaLimitChanged: () => void = () => {},
   ) {}
   async execute(name: string, a: Args) {
     const tool = toolCatalog.find((t) => t.name === name);
@@ -377,13 +386,19 @@ export class Tools {
           plugins: await this.plugins.list(),
         };
       case 'settings_get':
-        return { mediaLimitMB: await mediaLimit(this.db) };
-      case 'settings_update':
-        await this.db.call('settingSet', mediaCapSetting, a.mediaLimitMB);
-        result = { mediaLimitMB: a.mediaLimitMB };
+        return { mediaLimit: await mediaLimit(this.db) };
+      case 'settings_update': {
+        const limit = {
+          enabled: a.mediaLimit.enabled,
+          megabytes: a.mediaLimit.megabytes ?? (await mediaLimit(this.db)).megabytes,
+        };
+        await this.db.call('settingSet', mediaCapSetting, limit);
+        this.mediaLimitChanged();
+        result = { mediaLimit: limit };
         break;
+      }
       case 'media_limit_apply':
-        if (a.dryRun) return this.applyMediaLimit(true);
+        if (a.dryRun !== false) return this.applyMediaLimit(true);
         result = await this.applyMediaLimit(false);
         break;
       case 'runs_list':

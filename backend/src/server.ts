@@ -127,7 +127,7 @@ export async function createServer(
         catch { failures++; app.log.error({folder},'Project artifact cleanup failed'); }
       });
       return failures;
-    }, (dryRun) => mediaCap.applyAll(dryRun)),
+    }, (dryRun) => mediaCap.applyAll(dryRun), () => void mediaCap.sweep().catch(() => {})),
     agent = new Agent(tools,directory,options.piAgentDir||process.env.RANDL_PI_AGENT_DIR),
     cache = new Cache(),
     selections = new ChartSelections(),
@@ -1294,5 +1294,7 @@ export async function createServer(
     await db.close();
   });
   await app.ready();
+  // Runs already over the media limit, finished ones included, are thinned from the start.
+  void mediaCap.sweep().catch(() => {});
   return { app, db, tools, plugins, agent, live, mediaCap };
 }
