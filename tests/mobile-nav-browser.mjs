@@ -118,16 +118,16 @@ try {
   await expect(navigation).toHaveCount(0);
   checks.push('a page link navigates and closes; the overlay closes the navigation');
 
-  // A run page marks its workspace; the breadcrumb parent remains the way back.
+  // A run page marks its workspace; the header's Back button remains the way back.
   await phone.goto(origin + '/phone/nav/runs/run-1');
   await expect(phone.getByRole('combobox', { name: 'Run details', exact: true })).toBeVisible();
   await open.click();
   assert.deepEqual(await current(), ['Workspace']);
   await phone.keyboard.press('Escape');
   await expect(
-    phone.locator('.project-bar').getByRole('link', { name: 'Workspace', exact: true }),
+    phone.locator('.page-bar').getByRole('button', { name: 'Back to workspace', exact: true }),
   ).toBeVisible();
-  checks.push('a run page marks Workspace and keeps the breadcrumb parent link');
+  checks.push('a run page marks Workspace and keeps Back in the header');
 
   // Global pages: Projects and Server, from inside a project.
   await open.click();

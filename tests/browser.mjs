@@ -136,10 +136,6 @@ async function withView(fixture, run, { touch = true } = {}) {
     await page.goto(
       `${baseURL}/${fixture.project.split('/').map(encodeURIComponent).join('/')}/workspace?view=${encodeURIComponent(view.id)}`,
     );
-    await workspace(page);
-    await expect(page.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(
-      fixture.project,
-    );
     const selector = await workspace(page);
     await selector.selectOption(view.id);
     await expect(selector).toHaveValue(view.id);
@@ -206,7 +202,7 @@ async function hideListed(page) {
 async function assertNestedBounds(page) {
   const overflow = await page
     .locator(
-      'main,.project-bar,.workspace-heading,.workspace-toolbar,.panel-editor-layout,.panel-editor-fields,.panel-editor-preview,.side-drawer-content,.context-popover,.color-popover,.filter-rule',
+      'main,.page-bar,.page-row,.panel-editor-layout,.panel-editor-fields,.panel-editor-preview,.side-drawer-content,.context-popover,.color-popover,.filter-rule',
     )
     .evaluateAll((elements) =>
       elements
@@ -406,9 +402,6 @@ try {
     'Browser tests require a demo project with at least 64 seeded runs. Build, run node scripts/seed-demo.mjs --data-dir /tmp/randl-browser-demo --runs 100, then serve that data directory on RANDL_URL.',
   );
   const fixture = { project: candidate[0], runs: candidate[1] };
-  fixture.projectName = (await call('/api/projects')).projects.find(
-    (project) => project.id === fixture.project,
-  ).name;
   const { metrics } = await call('/api/metrics', {
     runs: fixture.runs.slice(0, 3).map((r) => r.id),
   });
@@ -548,15 +541,6 @@ try {
       await expect(page.getByRole('heading', { name: 'No panels in this view' })).toBeVisible();
       await page.reload();
       const selector = await workspace(page);
-      // Project navigation may start on the all-projects page; select our own view explicitly.
-      if (
-        (await page.getByRole('combobox', { name: 'Project', exact: true }).inputValue()) !==
-        fixture.project
-      ) {
-        await page
-          .getByRole('combobox', { name: 'Project', exact: true })
-          .selectOption(fixture.project);
-      }
       await selector.selectOption(viewId);
       await expect(page.getByRole('heading', { name: 'No panels in this view' })).toBeVisible();
       assert.deepEqual((await persisted(viewId)).body.panels, []);
@@ -594,9 +578,6 @@ try {
       ).toBeVisible();
       await page.reload();
       await workspace(page);
-      await page
-        .getByRole('combobox', { name: 'Project', exact: true })
-        .selectOption(fixture.project);
       await selector.selectOption(viewId);
       await expect(
         page.getByRole('article', { name: 'Saved chart title', exact: true }).locator('canvas'),
@@ -784,19 +765,16 @@ try {
   );
 
   await check(
-    'SDK project links and project switching leave the old run',
+    'SDK project links open the project and the brand leaves the old run',
     fixture,
     async ({ page }) => {
       await page.goto(`${baseURL}/${fixture.project.split('/').map(encodeURIComponent).join('/')}`);
-      await expect(page.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue(
-        fixture.project,
-      );
+      await expect(page.locator('.page-bar .view-controls')).toBeVisible();
       await expect(page.locator('#run-list [role="listitem"]').first()).toBeVisible();
       await page.locator('#run-list .run-name').first().click();
       await page.waitForURL((url) => url.pathname.includes('/runs/'));
-      await page.getByRole('combobox', { name: 'Project', exact: true }).selectOption('');
+      await page.locator('.bx--header__name').click();
       await expect(page.getByRole('tab', { name: 'Metrics', exact: true })).toHaveCount(0);
-      await expect(page.getByRole('combobox', { name: 'Project', exact: true })).toHaveValue('');
       await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
       await expect.poll(() => new URL(page.url()).pathname.includes('/runs/')).toBe(false);
     },
@@ -825,7 +803,7 @@ try {
         await route.continue();
       });
       await toggle(page, 'visible', 0).click();
-      await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+      await expect(page.locator('.save-status')).toHaveText('Not saved');
       await expect(page.locator('.side-footer')).toContainText('2 visible');
       // Allow SSE invalidation/reconnection and the fallback update interval to run.
       await page.waitForTimeout(11_000);
@@ -841,7 +819,7 @@ try {
       ownedViews.add(recoveredId);
       await selectionSaved(recoveredId, [ids[1], ids[2]], []);
       await selectionSaved(viewId, [ids[4]], []);
-      await expect(page.locator('.save-status .current')).toHaveText('Saved');
+      await expect(page.locator('.save-status')).toHaveText('Saved');
     },
   );
 
@@ -2058,7 +2036,7 @@ try {
     },
   );
   await check(
-    'layered navigation, breadcrumbs and contextual settings preserve the workspace',
+    'layered navigation, the brand and contextual settings preserve the workspace',
     fixture,
     async ({ page, viewId }) => {
       await addLinePanel(page, fixture.metric, 'Context comparison');
@@ -2088,13 +2066,12 @@ try {
         .toBe(Math.round(initialRailWidth));
       await assertNestedBounds(page);
       await page.setViewportSize({ width: 1440, height: 900 });
-      const breadcrumbs = page.getByRole('navigation', { name: 'Breadcrumb', exact: true });
-      await breadcrumbs.getByRole('link', { name: fixture.projectName, exact: true }).click();
+      await rail.getByRole('button', { name: 'Overview', exact: true }).click();
       await page.waitForURL((url) => url.pathname.endsWith('/overview'));
       await expect(page.getByRole('combobox', { name: 'Saved view', exact: true })).toHaveCount(0);
       await page.goBack();
       await expect(page.locator('.view-controls')).toHaveAttribute('data-view-id', viewId);
-      await breadcrumbs.getByRole('link', { name: 'Projects', exact: true }).click();
+      await page.locator('.bx--header__name').click();
       await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
       await page.goBack();
       await expect(page.locator('.view-controls')).toHaveAttribute('data-view-id', viewId);

@@ -1083,7 +1083,6 @@
   "workspace.empty.noMatches": "Aucun panneau correspondant",
   "workspace.empty.none": "Aucun panneau dans cette vue",
   "workspace.errors.reorderConflict": "L’espace de travail a changé pendant la réorganisation. Réessayez.",
-  "workspace.heading": "Espace de travail",
   "workspace.instructions.panels": "Faites glisser pour réorganiser les panneaux. Utilisez les touches fléchées pour déplacer un panneau dans sa section.",
   "workspace.instructions.resize": "Utilisez les touches fléchées Gauche et Droite pour modifier le nombre de colonnes, et Haut et Bas pour modifier la hauteur.",
   "workspace.instructions.rows": "Utilisez les touches fléchées Haut et Bas pour modifier le nombre de lignes visibles.",

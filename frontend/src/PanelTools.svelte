@@ -3,30 +3,44 @@
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Settings from 'carbon-icons-svelte/lib/Settings.svelte';
   import { t } from './i18n';
-  // Panel search, workspace settings and Add panel, shared by the workspace toolbar and run tabs.
+  // Panel search, workspace settings and Add panel, shared by the header and run tabs.
+  // In the header the actions lead and the search folds to an icon while it is empty.
   let {
     search = $bindable(''),
-    canvasWidth,
+    header = false,
+    compact,
     onDefaults,
     onAdd,
   }: {
     search?: string;
-    canvasWidth: number;
+    header?: boolean;
+    /** Add panel shows only its icon. */
+    compact: boolean;
     onDefaults: () => void;
     onAdd: () => void;
   } = $props();
+  let expanded = $state(false);
+  $effect(() => {
+    if (header && search) expanded = true;
+  });
 </script>
 
-<div class="panel-group">
+{#snippet searchField()}
   <div class="panel-search">
     <Search
       closeButtonLabelText={$t('common.search.clear')}
       size="sm"
       labelText={$t('workspace.search')}
       placeholder={$t('workspace.search')}
+      expandable={header}
+      bind:expanded
       bind:value={search}
     />
   </div>
+{/snippet}
+
+<div class="panel-group" class:header>
+  {#if !header}{@render searchField()}{/if}
   <div class="chart-actions">
     <Button
       kind="ghost"
@@ -39,7 +53,7 @@
       portalTooltip
       tooltipAlignment="end"
       on:click={() => onDefaults()}
-    />{#if canvasWidth < 480}<Button
+    />{#if compact}<Button
         size="small"
         icon={Add}
         aria-pressed={undefined}
@@ -50,4 +64,5 @@
       />{:else}<Button size="small" icon={Add} on:click={() => onAdd()}>{$t('workspace.addPanel')}</Button
       >{/if}
   </div>
+  {#if header}{@render searchField()}{/if}
 </div>

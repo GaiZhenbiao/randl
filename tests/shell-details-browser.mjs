@@ -52,23 +52,16 @@ try {
   browser = await launchBrowser();
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 
-  // Breadcrumb text keeps one vertical position on every page.
-  const crumbTop = () =>
-    page
-      .locator('.project-bar .bx--breadcrumb-item')
-      .first()
-      .evaluate((e) => Math.round(e.getBoundingClientRect().top));
+  // The page title keeps one vertical position on every page.
+  const titleTop = () =>
+    page.locator('.page-bar h1').evaluate((e) => Math.round(e.getBoundingClientRect().top));
   await page.goto(origin + '/');
-  await expect(page.locator('.project-bar .bx--breadcrumb-item')).toHaveCount(1);
-  const projectsTop = await crumbTop();
+  await expect(page.locator('.page-bar h1')).toHaveText('Projects');
+  const projectsTop = await titleTop();
   await page.goto(origin + '/' + project + '/overview');
   await expect(page.locator('.overview-runs tbody tr').first()).toBeVisible();
-  assert.equal(
-    await crumbTop(),
-    projectsTop,
-    'breadcrumb text top matches on Projects and project pages',
-  );
-  // The breadcrumb and project controls share the brand's header row on every page.
+  assert.equal(await titleTop(), projectsTop, 'title top matches on Projects and project pages');
+  // The brand, the page's title and controls, and the app actions share one header row.
   for (const width of [1440, 1056, 800, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     for (const path of [
@@ -77,11 +70,10 @@ try {
       '/' + runId.replace(project, project + '/runs'),
     ]) {
       await page.goto(origin + path);
-      await expect(page.locator('.bx--header .project-bar .bx--breadcrumb')).toBeVisible();
+      await expect(page.locator('.bx--header .page-bar h1')).toBeVisible();
       const row = await page.evaluate(() => {
         const header = document.querySelector('.bx--header').getBoundingClientRect(),
-          crumbs = [...document.querySelectorAll('.project-bar .bx--breadcrumb-item')],
-          current = crumbs.at(-1).getBoundingClientRect(),
+          title = document.querySelector('.page-bar h1').getBoundingClientRect(),
           brand = document.querySelector('.bx--header__name').getBoundingClientRect();
         return {
           header: header.height,
@@ -91,23 +83,26 @@ try {
           ]
             .map((element) => element.getBoundingClientRect())
             .filter((r) => r.width && (r.left < -0.5 || r.right > innerWidth + 0.5)).length,
-          currentWidth: Math.round(current.width),
+          titleWidth: Math.round(title.width),
           brand: brand.width > 0,
-          shown: crumbs.filter((item) => item.getBoundingClientRect().width).length,
         };
       });
       assert.equal(row.header, 48, `${width} ${path}: one header row`);
       assert.equal(row.mainTop, 48, `${width} ${path}: content starts below the header`);
       assert.equal(row.outside, 0, `${width} ${path}: header controls fit`);
-      assert.ok(row.currentWidth >= 40, `${width} ${path}: the current page stays readable`);
+      assert.ok(row.titleWidth >= 40, `${width} ${path}: the page title stays readable`);
       assert.equal(row.brand, width > 760, `${width} ${path}: brand on wide screens`);
-      if (width <= 760) assert.ok(row.shown <= 2, `${width} ${path}: phones show two crumbs`);
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  // The brand is the way back to the project list.
+  await page.goto(origin + '/' + project + '/overview');
+  await page.locator('.bx--header__name').click();
+  await expect(page).toHaveURL(origin + '/?page=overview');
+  await expect(page.locator('.page-bar h1')).toHaveText('Projects');
   await page.goto(origin + '/' + project + '/overview');
   await expect(page.locator('.overview-runs tbody tr').first()).toBeVisible();
-  checks.push('one header row holds the brand, breadcrumb and project controls at every width');
+  checks.push('one header row holds the brand, page title and actions at every width');
 
   // Page surfaces reach the viewport edge when nothing scrolls.
   assert.equal(
@@ -128,7 +123,7 @@ try {
   assert.deepEqual(overviewName.ellipsis, 'ellipsis');
   assert.ok(overviewName.clipped && overviewName.height < 24, 'overview names stay on one line');
   await expect(page.getByRole('button', { name: 'Deleted runs' })).toHaveCount(0);
-  checks.push('breadcrumb alignment, page gutter and overview names/timestamps');
+  checks.push('title alignment, page gutter and overview names/timestamps');
 
   await page.goto(origin + '/' + project + '/settings');
   await expect(page.getByRole('button', { name: 'Deleted runs' })).toBeVisible();
@@ -189,15 +184,10 @@ try {
     'runs table ellipsis; Filter, Group and Sort in the runs heading; Runs page from the rail',
   );
 
-  // A run opened from the Runs page names that origin in Back and the breadcrumb.
+  // A run opened from the Runs page titles the header and names that origin in Back.
   await page.getByRole('link', { name: longName(110), exact: true }).click();
   await expect(page).toHaveURL(/\/runs\/run-110/);
-  await expect(page.locator('.project-bar .bx--breadcrumb-item')).toHaveText([
-    'Projects',
-    'details',
-    'Runs',
-    longName(110),
-  ]);
+  await expect(page.locator('.page-bar h1')).toHaveText(longName(110));
   await page.getByRole('button', { name: 'Back to runs' }).click();
   await expect(page).toHaveURL(/\/details\/runs(\?|$)/);
   await expect(
@@ -222,18 +212,15 @@ try {
   await expect(
     page.locator('.run-tab-actions').getByRole('searchbox', { name: 'Search logs' }),
   ).toBeVisible();
-  await expect(page.locator('.workspace-toolbar, .page-toolbar, .metadata-toolbar')).toHaveCount(0);
+  await expect(page.locator('.page-row, .page-toolbar, .metadata-toolbar')).toHaveCount(0);
   await page.getByRole('tab', { name: 'Logs' }).focus();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('searchbox', { name: 'Search logs' })).toBeFocused();
 
-  // Not-found pages name their state in the heading and breadcrumb.
+  // Not-found pages name their state in the header's title.
   await page.goto(origin + '/' + project + '/runs/missing');
-  await expect(page.locator('main h1')).toHaveText('Run not found');
-  await expect(page.locator('.project-bar .bx--breadcrumb-item').last()).toHaveText(
-    'Run not found',
-  );
-  checks.push('run origin in Back/breadcrumb, tab-row actions and not-found headings');
+  await expect(page.locator('.page-bar h1')).toHaveText('Run not found');
+  checks.push('run origin in Back, tab-row actions and not-found headings');
 
   // Back from a run returns focus to that run in the list, through history and directly.
   await page.goto(origin + '/' + project + '/workspace?view=' + (grouped.view?.id || grouped.id));
@@ -242,9 +229,9 @@ try {
   await runName.focus();
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/runs\/run-118/);
-  // The state and export action share the heading; no separate status row remains.
-  await expect(page.locator('.workspace-title .run-state-tag')).toHaveText('Finished');
-  await expect(page.locator('.workspace-heading .run-export')).toHaveText('Export full history');
+  // The state and export action share the header; no separate status row remains.
+  await expect(page.locator('.page-bar .run-state-tag')).toHaveText('Finished');
+  await expect(page.locator('.page-bar .run-export')).toHaveText('Export full history');
   const groupLabel = await page
     .locator('aside .run-group .group-label')
     .first()
@@ -330,7 +317,7 @@ try {
   checks.push('App settings labels, drawer field fill and Install height');
   await page.close();
 
-  // Mobile: the current breadcrumb stays visible and the runs drawer closes from the trailing edge.
+  // Mobile: the page title stays visible and the runs drawer closes from the trailing edge.
   const mobile = await browser.newPage({
     viewport: { width: 390, height: 844 },
     hasTouch: true,
@@ -338,17 +325,14 @@ try {
   });
   for (const path of ['/overview', '/workspace', '/runs/run-118']) {
     await mobile.goto(origin + '/' + project + path);
-    await expect(mobile.locator('.project-bar .bx--breadcrumb-item').last()).toBeVisible();
-    const current = await mobile
-      .locator('.project-bar .bx--breadcrumb-item')
-      .last()
-      .evaluate((e) => {
-        const r = e.getBoundingClientRect();
-        return { width: r.width, right: r.right };
-      });
+    await expect(mobile.locator('.page-bar h1')).toBeVisible();
+    const current = await mobile.locator('.page-bar h1').evaluate((e) => {
+      const r = e.getBoundingClientRect();
+      return { width: r.width, right: r.right };
+    });
     assert.ok(
       current.width > 40 && current.right <= 390,
-      path + ' current breadcrumb visible: ' + JSON.stringify(current),
+      path + ' page title visible: ' + JSON.stringify(current),
     );
   }
   await mobile.goto(origin + '/' + project + '/overview');
@@ -377,7 +361,7 @@ try {
     heading.title <= 16 && heading.close.includes('Close runs') && heading.inset <= 16,
     JSON.stringify(heading),
   );
-  checks.push('mobile breadcrumb, overview rows and drawer header layout');
+  checks.push('mobile page title, overview rows and drawer header layout');
   await mobile.close();
 
   // CJK headings keep weight with regular-only system fonts.

@@ -95,7 +95,7 @@ try {
         return [value.body.visible.length, value.body.solo.length];
       })
       .toEqual([visible, solo]);
-    await expect(page.locator('.save-status .current')).toHaveText('Saved');
+    await expect(page.locator('.save-status')).toHaveText('Saved');
   }
   const filtered = await create('Filtered4992', {
     filters: [{ field: 'config.seed', operator: 'gte', value: '16' }],
@@ -131,7 +131,7 @@ try {
     await route.continue();
   });
   await page.getByRole('button', { name: 'Show listed runs', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Saving…');
+  await expect(page.locator('.save-status')).toHaveText('Saving…');
   await expect(page.locator('.operation-toast')).toHaveCount(0);
   release();
   await saved(filtered, 4992, 0);
@@ -264,7 +264,7 @@ try {
     });
   });
   await page.getByRole('button', { name: 'Hide listed runs', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   await expect(page.locator('.operation-toast')).toHaveCount(0);
   await expect(
     page.locator('#save-failure').getByRole('button', { name: 'Retry', exact: true }),
@@ -288,13 +288,13 @@ try {
   ).toBeVisible();
   failure = 'network';
   await page.getByRole('button', { name: 'Show listed runs', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   failure = '';
   await page.getByRole('button', { name: 'Undo view change', exact: true }).click();
   await saved(all, 0, 0);
   failure = 'refused';
   await page.getByRole('button', { name: 'Show listed runs', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   await expect(
     page.locator('#save-failure').getByRole('button', { name: 'Retry', exact: true }),
   ).toHaveCount(0);
@@ -312,7 +312,7 @@ try {
     await route.abort('connectionreset');
   });
   await page.getByRole('button', { name: 'Show listed runs', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   const applied = await server.db.call('view', all.id);
   assert.equal(applied.body.visible.length, 10000, 'the lost save was applied');
   await page.locator('#save-failure').getByRole('button', { name: 'Retry', exact: true }).click();
@@ -343,7 +343,7 @@ try {
     await route.continue();
   });
   await page.getByRole('button', { name: 'Show listed runs', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   await expect(page.getByRole('button', { name: 'Save as new view', exact: true })).toBeVisible();
   await expect(page.locator('#save-failure')).toContainText('changed in another session');
   await expect(page.locator('.operation-toast')).toHaveCount(0);
@@ -526,7 +526,7 @@ try {
       failureNotice.getByRole('button', { name: 'Reload saved view', exact: true }),
     ).toHaveCount(0);
     await failureNotice.getByRole('button', { name: 'Save as new view', exact: true }).click();
-    await expect(page.locator('.save-status .current')).toHaveText('Saved');
+    await expect(page.locator('.save-status')).toHaveText('Saved');
   }
   checks.push('A deleted view offers Save as new view without a reload that cannot work');
 
@@ -553,7 +553,7 @@ try {
   await page.goto(`${origin}/test/discard/workspace`);
   await expect(page.locator('.run-row').first()).toBeVisible();
   await page.locator('[data-entry-key="' + discardRun.id + '"] [data-toggle="solo"]').click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   await page
     .locator('#save-failure')
     .getByRole('button', { name: 'Discard changes', exact: true })
@@ -565,7 +565,7 @@ try {
     'Discard removes the view the lost create stored',
   );
   await page.locator('[data-entry-key="' + discardRun.id + '"] [data-toggle="visible"]').click();
-  await expect(page.locator('.save-status .current')).toHaveText('Saved');
+  await expect(page.locator('.save-status')).toHaveText('Saved');
   const kept = (await server.db.call('views')).filter((item) => item.project === 'test/discard');
   assert.equal(kept.length, 1);
   assert.deepEqual((await server.db.call('view', kept[0].id)).body.solo, []);
@@ -598,7 +598,7 @@ try {
     await page.goto(`${origin}/test/${project}/workspace`);
     await expect(page.locator('.run-row').first()).toBeVisible();
     await page.locator('[data-entry-key="' + target.id + '"] [data-toggle="solo"]').click();
-    await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+    await expect(page.locator('.save-status')).toHaveText('Not saved');
     const discard = page
       .locator('#save-failure')
       .getByRole('button', { name: 'Discard changes', exact: true });
@@ -644,7 +644,7 @@ try {
         'the retried Discard deletes the stored view',
       );
       await page.locator('[data-entry-key="' + target.id + '"] [data-toggle="visible"]').click();
-      await expect(page.locator('.save-status .current')).toHaveText('Saved');
+      await expect(page.locator('.save-status')).toHaveText('Saved');
       assert.equal(
         (await server.db.call('views')).filter((item) => item.project === 'test/' + project).length,
         1,
@@ -680,7 +680,7 @@ try {
   await page.goto(`${origin}/test/draft/workspace`);
   await expect(page.locator('.run-row').first()).toBeVisible();
   await page.locator('[data-entry-key="' + draftRun.id + '"] [data-toggle="solo"]').click();
-  await expect(page.locator('.save-status .current')).toHaveText('Not saved');
+  await expect(page.locator('.save-status')).toHaveText('Not saved');
   await expect(
     page.locator('#save-failure').getByRole('button', { name: 'Reload saved view', exact: true }),
   ).toHaveCount(0);
@@ -688,14 +688,14 @@ try {
     page.locator('#save-failure').getByRole('button', { name: 'Discard changes', exact: true }),
   ).toBeVisible();
   await page.locator('#save-failure').getByRole('button', { name: 'Retry', exact: true }).click();
-  await expect(page.locator('.save-status .current')).toHaveText('Saved');
+  await expect(page.locator('.save-status')).toHaveText('Saved');
   const draftViews = (await server.db.call('views')).filter(
     (item) => item.project === 'test/draft',
   );
   assert.equal(draftViews.length, 1, 'one view exists after Retry');
   assert.deepEqual((await server.db.call('view', draftViews[0].id)).body.solo, [draftRun.id]);
   await page.locator('[data-entry-key="' + draftRun.id + '"] [data-toggle="solo"]').click();
-  await expect(page.locator('.save-status .current')).toHaveText('Saved');
+  await expect(page.locator('.save-status')).toHaveText('Saved');
   assert.deepEqual((await server.db.call('view', draftViews[0].id)).body.solo, []);
   await page.unroute('**/api/tools/view_create');
   checks.push(

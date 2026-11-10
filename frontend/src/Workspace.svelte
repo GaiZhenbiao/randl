@@ -11,14 +11,12 @@
   import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
   import ChevronLeft from 'carbon-icons-svelte/lib/ChevronLeft.svelte';
   import PanelCard from './Panel.svelte';
-  import PanelTools from './PanelTools.svelte';
   import { columnLimit, columnsFor, cardWidth } from './section-layout';
   import { Swipe } from './swipe';
   import type { Run, View, Panel, Plugin, PlotSettings, SectionLayout, Section } from './types';
   import { resolvePlotSettings } from './plot-settings';
   let {
     view,
-    canvasWidth,
     colors = {},
     focusPanel = '',
     noMatchingRuns = false,
@@ -40,14 +38,11 @@
     leading,
     below,
     search = $bindable(''),
-    tools = true,
   }: {
     leading?: Snippet;
     below?: Snippet;
     search?: string;
-    tools?: boolean;
     view: View | null;
-    canvasWidth: number;
     colors?: Record<string, string>;
     focusPanel?: string;
     noMatchingRuns?: boolean;
@@ -770,9 +765,9 @@
         (keyboard ? 'panel-drag-handle' : 'chart-title'),
     );
   }
-  // The toolbar stays at the top of the scroller; scrolling and visibility checks
-  // treat the area beneath it as the visible panel area.
-  // In short windows the toolbar scrolls away so panels keep usable height.
+  // Notices, and the page controls on phones, stay at the top of the scroller; scrolling
+  // and visibility checks treat the area beneath them as the visible panel area.
+  // In short windows they scroll away so panels keep usable height.
   const shortWindow = new MediaQuery('max-height: 480px');
   let toolbarHeight = $state(0);
   let topHeight = $derived(shortWindow.current ? 0 : toolbarHeight);
@@ -936,17 +931,7 @@
   }}
 />
 <div class="workspace-top" class:pinned={!shortWindow.current} bind:clientHeight={toolbarHeight}>
-  {#if leading || (tools && (view?.body.panels.length || sections.length))}<div
-      class="workspace-toolbar"
-    >
-      {@render leading?.()}
-      {#if tools && (view?.body.panels.length || sections.length)}<PanelTools
-          bind:search
-          {canvasWidth}
-          onDefaults={() => onDefaults()}
-          onAdd={() => onAdd()}
-        />{/if}
-    </div>{/if}
+  {#if leading}<div class="page-row">{@render leading()}</div>{/if}
   {@render below?.()}
 </div>
 {#if !sections.length}<section class="empty">

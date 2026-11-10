@@ -129,17 +129,18 @@ try {
   // Every panel stays mounted on one section page; 12 hidden renderers are kept.
   await expect(page.locator('.chart')).toHaveCount(metrics.length + 1);
   // Panels intersecting the scroll area must show their chart, not a loading state.
-  // `margin` matches the panels' 100 px viewport margin, within which they load.
-  const showing = (margin = 0) =>
-    page.evaluate((margin) => {
-      const area = document.querySelector('main').getBoundingClientRect();
+  // `ahead` adds the panels' draw-ahead margin of half the scroll area's height.
+  const showing = (ahead = false) =>
+    page.evaluate((ahead) => {
+      const area = document.querySelector('main').getBoundingClientRect(),
+        margin = ahead ? area.height / 2 : 0;
       return [...document.querySelectorAll('.chart')]
         .filter((chart) => {
           const box = chart.getBoundingClientRect();
           return box.bottom > area.top - margin && box.top < area.bottom + margin;
         })
         .map((chart) => chart.dataset.panelId);
-    }, margin);
+    }, ahead);
   const drawn = (id) =>
     page.evaluate((id) => {
       const chart = document.querySelector(`[data-panel-id="${id}"]`);
@@ -229,7 +230,7 @@ try {
   );
 
   // A live update refreshes visible panels with a delta against the stored response.
-  const visible = (await showing(100)).filter((id) => id !== 'image'),
+  const visible = (await showing(true)).filter((id) => id !== 'image'),
     beforeUpdate = hits.length,
     bodiesBefore = chartBodies.length;
   await call(`/files/${scope}/r00/file_stream`, {

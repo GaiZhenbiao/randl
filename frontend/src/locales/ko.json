@@ -1083,7 +1083,6 @@
   "workspace.empty.noMatches": "일치하는 패널이 없습니다",
   "workspace.empty.none": "이 뷰에 패널이 없습니다",
   "workspace.errors.reorderConflict": "순서를 변경하는 동안 워크스페이스가 변경되었습니다. 다시 시도하세요.",
-  "workspace.heading": "워크스페이스",
   "workspace.instructions.panels": "드래그하여 패널 순서를 변경합니다. 화살표 키로도 섹션 안에서 패널을 이동할 수 있습니다.",
   "workspace.instructions.resize": "왼쪽/오른쪽 화살표 키로 열 수를, 위/아래 화살표 키로 높이를 조정합니다.",
   "workspace.instructions.rows": "위/아래 화살표 키로 표시할 행 수를 조정합니다.",

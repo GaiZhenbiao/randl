@@ -561,6 +561,8 @@ try {
   });
   assert.ok(filteredUpdate.ok);
   await page.reload();
+  // The header's search opens from its icon.
+  await page.getByRole('button', { name: 'Search panels', exact: true }).click();
   const search = page.getByRole('searchbox', { name: 'Search panels', exact: true });
   await search.fill('alpha');
   await expect.poll(sectionOrder).toEqual(['s0', 's2']);

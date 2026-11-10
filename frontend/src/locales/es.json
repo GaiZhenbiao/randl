@@ -1083,7 +1083,6 @@
   "workspace.empty.noMatches": "No hay paneles coincidentes",
   "workspace.empty.none": "No hay paneles en esta vista",
   "workspace.errors.reorderConflict": "El espacio de trabajo cambió durante la reordenación. Inténtelo de nuevo.",
-  "workspace.heading": "Espacio de trabajo",
   "workspace.instructions.panels": "Arrastre para reordenar los paneles. Use las teclas de flecha para mover un panel dentro de su sección.",
   "workspace.instructions.resize": "Use las teclas de flecha izquierda y derecha para cambiar las columnas, y arriba y abajo para cambiar la altura.",
   "workspace.instructions.rows": "Use las teclas de flecha arriba y abajo para cambiar las filas visibles.",

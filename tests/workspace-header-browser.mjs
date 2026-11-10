@@ -48,53 +48,98 @@ try {
   await page.goto(`${origin}/test/header/workspace?view=${first.id}`);
   await expect(page.locator('.view-name')).toContainText('Training comparison');
   await expect(page.getByRole('combobox', { name: 'Saved view', exact: true })).toHaveCount(0);
-  await expect(page.locator('.workspace-heading')).toHaveCount(0);
-  // Every toolbar control stays inside the content box, and the search placeholder fits.
+  // The workspace controls share the header with the brand; no page row sits under it.
+  await expect(page.locator('.bx--header .page-bar .view-controls')).toHaveCount(1);
+  await expect(page.locator('.page-row')).toHaveCount(0);
+  // Every header control stays inside the page bar and the window, and an open, empty
+  // search shows its whole placeholder. The search is scanned folded, open and empty, and
+  // holding text after focus leaves it.
   const scanToolbar = async (page, widths, label) => {
-    for (const width of widths) {
-      await page.setViewportSize({ width, height: 900 });
-      const result = await page.locator('.workspace-toolbar').evaluate((toolbar) => {
-        const style = getComputedStyle(toolbar),
-          box = toolbar.getBoundingClientRect(),
-          left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
-          right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
-        const outside = [...toolbar.querySelectorAll('button, select, input')]
-          .filter(
-            (element) =>
-              element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden',
-          )
-          .filter((element) => {
-            const r = element.getBoundingClientRect();
-            return r.left < left - 0.5 || r.right > right + 0.5;
-          })
-          .map((element) => element.getAttribute('aria-label') || element.textContent.trim());
-        const input = toolbar.querySelector('.panel-search input');
-        let placeholder = true;
-        if (input) {
-          const s = getComputedStyle(input),
-            context = document.createElement('canvas').getContext('2d');
-          context.font = s.font;
-          context.letterSpacing = s.letterSpacing;
-          placeholder =
-            context.measureText(input.placeholder).width <=
-            input.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) + 0.5;
-        }
-        return { outside, placeholder, canvas: document.querySelector('main').clientWidth };
-      });
-      assert.deepEqual(result.outside, [], `${label} ${width}: controls inside the toolbar`);
-      assert.ok(
-        result.placeholder,
-        `${label} ${width} (canvas ${result.canvas}): placeholder fits`,
+    for (const state of ['folded', 'open', 'filled']) {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const field = page.locator('.page-bar .panel-search input');
+      // Leaving the empty search folds it again.
+      await page.locator('main').click({ position: { x: 400, y: 600 } });
+      await expect(page.locator('.page-bar .bx--search--expanded')).toHaveCount(0);
+      if (state !== 'folded') {
+        await page.locator('.page-bar .panel-search .bx--search-magnifier').click();
+        await expect(field).toBeFocused();
+      }
+      if (state === 'filled') {
+        await field.fill('loss');
+        await page.locator('main').click({ position: { x: 400, y: 600 } });
+      }
+      await expect(page.locator('.page-bar .bx--search--expanded')).toHaveCount(
+        state === 'folded' ? 0 : 1,
       );
+      for (const width of widths) {
+        await page.setViewportSize({ width, height: 900 });
+        // Controls compact by the measured bar width, a frame after the resize.
+        await page.evaluate(
+          () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+        );
+        const result = await page.locator('.page-bar').evaluate((toolbar) => {
+          const style = getComputedStyle(toolbar),
+            box = toolbar.getBoundingClientRect(),
+            left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
+            right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+          const outside = [...toolbar.querySelectorAll('button, select, input')]
+            .filter(
+              (element) =>
+                element.getClientRects().length &&
+                getComputedStyle(element).visibility !== 'hidden',
+            )
+            .filter((element) => {
+              const r = element.getBoundingClientRect();
+              return r.left < left - 0.5 || r.right > right + 0.5;
+            })
+            .map((element) => element.getAttribute('aria-label') || element.textContent.trim());
+          const header = [...document.querySelectorAll('.bx--header button, .bx--header a')]
+            .filter((element) => element.getClientRects().length)
+            .filter((element) => element.getBoundingClientRect().right > innerWidth + 0.5)
+            .map((element) => element.getAttribute('aria-label') || element.textContent.trim());
+          outside.push(...header);
+          const input = toolbar.querySelector('.bx--search--expanded input');
+          let placeholder = true;
+          if (input && !input.value) {
+            const s = getComputedStyle(input),
+              context = document.createElement('canvas').getContext('2d');
+            context.font = s.font;
+            context.letterSpacing = s.letterSpacing;
+            placeholder =
+              context.measureText(input.placeholder).width <=
+              input.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight) + 0.5;
+          }
+          return {
+            outside,
+            placeholder,
+            canvas: document.querySelector('main').clientWidth,
+            input: input && !input.value ? input.clientWidth : null,
+          };
+        });
+        assert.deepEqual(
+          result.outside,
+          [],
+          `${label} ${width} ${state}: controls inside the header`,
+        );
+        assert.ok(
+          result.placeholder,
+          `${label} ${width} ${state} (canvas ${result.canvas}, input ${result.input}): placeholder fits`,
+        );
+      }
     }
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.page-bar .panel-search input').fill('');
+    await page.locator('main').click({ position: { x: 400, y: 600 } });
+    await expect(page.locator('.page-bar .bx--search--expanded')).toHaveCount(0);
   };
   const widthRange = (from, to, step) =>
     Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step);
-  for (const lang of ['en', 'ja']) {
+  for (const lang of ['en', 'fr', 'ja']) {
     await page.evaluate((lang) => localStorage.setItem('randl.language', lang), lang);
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', lang);
-    await scanToolbar(page, widthRange(1140, 1240, 2), `${lang} one view`);
+    await scanToolbar(page, widthRange(761, 1440, 7), `${lang} one view`);
   }
   await page.evaluate(() => localStorage.setItem('randl.language', 'en'));
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -216,16 +261,21 @@ try {
   await expect(notice).toHaveCount(0);
   await expect(selector).toBeFocused();
   await expect(selector.locator('option:checked')).toHaveText('Training comparison copy');
-  for (const lang of ['en', 'ja']) {
+  for (const lang of ['en', 'fr', 'ja']) {
     await page.evaluate((lang) => localStorage.setItem('randl.language', lang), lang);
     await page.reload();
     await expect(page.locator('html')).toHaveAttribute('lang', lang);
-    await scanToolbar(page, widthRange(1240, 1340, 2), `${lang} several views`);
+    await scanToolbar(page, widthRange(761, 1440, 7), `${lang} several views`);
   }
   await page.evaluate(() => localStorage.setItem('randl.language', 'en'));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  // With room to spare, the view picker keeps its preferred width.
+  assert.equal(
+    Math.round((await page.locator('.page-bar .view-controls .bx--form-item').boundingBox()).width),
+    216,
+  );
   // A view deleted in another session stays displayed and offers only Save as new view.
   const copyId = await selector.inputValue();
   const listed = page.waitForResponse(
@@ -332,22 +382,29 @@ try {
     });
     page.on('pageerror', (error) => errors.push(error.message));
     await page.goto(`${origin}/test/header/workspace?view=${first.id}`);
-    await expect(page.locator('.workspace-toolbar')).toHaveCount(1);
+    // Wider windows hold the controls in the header; phones give them a row under it.
+    const bar = width > 760 ? '.bx--header .page-bar' : 'main .page-row';
+    await expect(page.locator(bar)).toHaveCount(1);
     await expect(page.locator('.chart')).toHaveCount(1);
-    const geometry = await page.locator('.workspace-toolbar').evaluate((toolbar) => {
+    const geometry = await page.locator(bar).evaluate((toolbar) => {
       const b = toolbar.getBoundingClientRect(),
-        view = toolbar.querySelector('.view-group').getBoundingClientRect(),
-        panels = toolbar.querySelector('.panel-group').getBoundingClientRect();
-      const childrenFit = [
-        ...toolbar.querySelectorAll('.panel-group > *, .chart-actions > button'),
-      ].every((element) => {
-        const r = element.getBoundingClientRect();
-        return r.left >= panels.left - 1 && r.right <= panels.right + 1;
-      });
+        view = toolbar.querySelector('.view-controls > *').getBoundingClientRect(),
+        // The header's controls are its bar's own items; the phone row groups them.
+        panels = (
+          toolbar.matches('.page-bar') ? toolbar : toolbar.querySelector('.panel-group')
+        ).getBoundingClientRect(),
+        add = toolbar.querySelector('.chart-actions > button').getBoundingClientRect();
+      const childrenFit = [...toolbar.querySelectorAll('.panel-group > *, .chart-actions > button')]
+        .filter((element) => element.getBoundingClientRect().width)
+        .every((element) => {
+          const r = element.getBoundingClientRect();
+          return r.left >= panels.left - 1 && r.right <= panels.right + 1;
+        });
       return {
         height: b.height,
         viewY: view.top,
-        panelY: panels.top,
+        viewHeight: view.height,
+        panelMid: add.top + add.height / 2,
         childrenFit,
         overflow: document.documentElement.scrollWidth - innerWidth,
       };
@@ -357,9 +414,9 @@ try {
       geometry.childrenFit,
       `${width}: panel controls stay inside their group's aligned gutters`,
     );
-    if (width >= 1280) {
-      assert.equal(geometry.viewY, geometry.panelY);
-      assert.ok(geometry.height <= 49);
+    if (width > 760) {
+      assert.ok(Math.abs(geometry.viewY + geometry.viewHeight / 2 - geometry.panelMid) <= 1);
+      assert.ok(geometry.height <= 48);
     }
     const newView = page.getByRole('button', { name: 'New view', exact: true });
     const newViewVisible = await newView.isVisible();

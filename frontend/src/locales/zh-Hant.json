@@ -1083,7 +1083,6 @@
   "workspace.empty.noMatches": "沒有相符的面板",
   "workspace.empty.none": "此檢視中沒有面板",
   "workspace.errors.reorderConflict": "調整順序期間工作區已有變更，請再試一次。",
-  "workspace.heading": "工作區",
   "workspace.instructions.panels": "拖曳可調整面板順序，也可按方向鍵在區段內移動面板。",
   "workspace.instructions.resize": "按左右方向鍵調整欄數，按上下方向鍵調整高度。",
   "workspace.instructions.rows": "按上下方向鍵調整可見列數。",

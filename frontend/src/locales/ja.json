@@ -1083,7 +1083,6 @@
   "workspace.empty.noMatches": "一致するパネルはありません",
   "workspace.empty.none": "このビューにパネルはありません",
   "workspace.errors.reorderConflict": "並べ替え中にワークスペースが変更されました。もう一度お試しください。",
-  "workspace.heading": "ワークスペース",
   "workspace.instructions.panels": "ドラッグでパネルを並べ替えます。矢印キーでもセクション内でパネルを移動できます。",
   "workspace.instructions.resize": "左右の矢印キーで列数、上下の矢印キーで高さを変更します。",
   "workspace.instructions.rows": "上下の矢印キーで表示する行数を変更します。",

@@ -1083,7 +1083,6 @@
   "workspace.empty.noMatches": "No matching panels",
   "workspace.empty.none": "No panels in this view",
   "workspace.errors.reorderConflict": "Workspace changed while reordering. Try again.",
-  "workspace.heading": "Workspace",
   "workspace.instructions.panels": "Drag to reorder panels. Use arrow keys to move a panel within its section.",
   "workspace.instructions.resize": "Use Left and Right arrow keys to change columns; Up and Down to change height.",
   "workspace.instructions.rows": "Use Up and Down arrow keys to change visible rows.",

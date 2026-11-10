@@ -310,7 +310,7 @@ try {
       await rail.getByRole('button', { name: 'Server', exact: true }).click();
       await page.waitForURL((url) => url.search === '?page=server');
       await expect(page.getByRole('heading', { level: 1, name: 'Server' })).toBeVisible();
-      await expect(page.locator('.bx--breadcrumb-item')).toHaveText(['Server']);
+      await expect(page.locator('.page-bar h1')).toHaveText('Server');
       const region = page.getByRole('region', { name: 'Server' });
       await expect(region).toContainText('Requests per minute');
       await expect(region.locator('canvas')).toHaveCount(6, { timeout: 15_000 });

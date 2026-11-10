@@ -12,7 +12,7 @@
   } from './ui';
   import { t, number, message, type Message, type MessageKey } from './i18n';
 
-  import { onMount, tick, untrack } from 'svelte';
+  import { flushSync, onMount, tick, untrack } from 'svelte';
   import {
     Header,
     SideNav,
@@ -22,8 +22,6 @@
     Tabs,
     Tab,
     TabContent,
-    Breadcrumb,
-    BreadcrumbItem,
     Button,
     Modal,
     TextInput,
@@ -112,16 +110,83 @@
   let projectNavExpanded = $state(localStorage.getItem('randl.project-nav') === 'expanded'),
     runsPreference = $state(localStorage.getItem('randl.runs-sidebar') || 'auto'),
     menuOpen = $state(false);
-  async function breadcrumbNavigate(event: MouseEvent, target: string, kind = 'overview') {
+  // The brand and missing-object pages link to the project list; modified clicks open it elsewhere.
+  async function openProjectList(event: MouseEvent) {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     if (!(await canNavigate())) return;
-    if (activeRun && target === project && kind === runOrigin) {
-      await backToOrigin();
-      return;
+    await loadProject('');
+    await navigate('overview');
+  }
+  const textMeasure = document.createElement('canvas').getContext('2d')!;
+  // Whether the page bar's controls fit: nothing overflows, names keep a readable width, and
+  // an open, empty search shows its whole placeholder.
+  function pageBarFits(bar: HTMLElement) {
+    const style = getComputedStyle(bar),
+      box = bar.getBoundingClientRect(),
+      left = box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft),
+      right = box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight);
+    for (const control of bar.querySelectorAll<HTMLElement>(
+      'button, input, select, .view-name, .save-status',
+    )) {
+      const rect = control.getBoundingClientRect();
+      if (rect.width && (rect.left < left - 0.5 || rect.right > right + 0.5)) return false;
     }
-    await loadProject(target);
-    await navigate(kind);
+    for (const name of bar.querySelectorAll<HTMLElement>(
+      '.view-name, h1:not(.bx--visually-hidden)',
+    ))
+      if (name.clientWidth < Math.min(120, name.scrollWidth)) return false;
+    const search = bar.querySelector<HTMLInputElement>('.bx--search--expanded input');
+    if (search && !search.value) {
+      const style = getComputedStyle(search);
+      textMeasure.font = style.font;
+      textMeasure.letterSpacing = style.letterSpacing;
+      const room =
+        search.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      if (textMeasure.measureText(search.placeholder).width > room + 0.5) return false;
+    }
+    return true;
+  }
+  // Compacts the header's controls by measuring them rather than by fixed widths, since
+  // translations and names differ: the bar shows everything, then moves New view, Undo and
+  // Redo into the view menu, then shows Add panel as an icon, then hides the visible save
+  // status (the live region still announces it), until it fits. The steps run
+  // before the browser paints, after any width or content change. An open view menu keeps
+  // its items until it closes.
+  function fitPageBar(bar: HTMLElement) {
+    let fitting = false;
+    const fit = () => {
+      if (fitting || viewMenuOpen || width <= 760) return;
+      fitting = true;
+      try {
+        barStage = 0;
+        flushSync();
+        while (barStage < 3 && !pageBarFits(bar)) {
+          barStage++;
+          flushSync();
+        }
+      } finally {
+        changes.takeRecords();
+        fitting = false;
+      }
+    };
+    const resize = new ResizeObserver(fit),
+      changes = new MutationObserver(fit);
+    resize.observe(bar);
+    changes.observe(bar, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['class'],
+    });
+    void document.fonts.ready.then(fit);
+    return {
+      destroy() {
+        resize.disconnect();
+        changes.disconnect();
+      },
+    };
   }
   let sidebarWidth = $state(Number(localStorage.getItem('randl.sidebar-width')) || 304),
     sidebarDrag = false;
@@ -418,6 +483,14 @@
     saving = $state<Message>(''),
     drawer = $state(false),
     width = $state(1200);
+  let workspaceSearch = $state('');
+  // Page controls sit in the header beside the brand, where they compact in stages until
+  // they fit (see fitPageBar). On phones they take a row under the header and compact by
+  // its width.
+  let barStage = $state(0);
+  let inlineViewActions = $derived(width > 760 ? barStage < 1 : canvasWidth >= 620);
+  let iconRunActions = $derived(width > 760 ? barStage >= 1 : canvasWidth < 620);
+  let compactAdd = $derived(width > 760 ? barStage >= 2 : canvasWidth < 480);
   let sidebarView = $derived(activeRun && parentView?.project === project ? parentView : view);
   let sidebarFilterCount = $derived(sidebarView?.body.filters?.length || 0);
   $effect(() => {
@@ -2276,11 +2349,237 @@
 {#snippet runPanelTools()}
   {#if displayView?.body.panels.length || displayView?.body.sections?.length}<PanelTools
       bind:search={runPanelSearch}
-      {canvasWidth}
+      compact={canvasWidth < 480}
       onDefaults={() => openDefaults()}
       onAdd={() => openPanel()}
     />{/if}
 {/snippet}
+
+{#snippet runsToggle()}
+  <!-- On phones the runs drawer opens from a labeled button; wider screens keep the icon. -->
+  {#if width <= 760}<Button
+      id="open-runs"
+      kind="ghost"
+      size="small"
+      icon={drawer ? SidePanelClose : SidePanelOpen}
+      class="runs-drawer-toggle"
+      aria-label={drawer ? $t('runs.list.hide') : $t('runs.list.show')}
+      aria-expanded={drawer}
+      on:click={toggleRuns}>{$t('runs.list.toggle')}</Button
+    >{:else}<Button
+      kind="ghost"
+      size="small"
+      icon={showRunSidebar ? SidePanelClose : SidePanelOpen}
+      aria-pressed={undefined}
+      hideTooltip
+      title={showRunSidebar ? $t('runs.list.hide') : $t('runs.list.show')}
+      iconDescription={showRunSidebar ? $t('runs.list.hide') : $t('runs.list.show')}
+      tooltipAlignment="start"
+      on:click={toggleRuns}
+    />{/if}
+{/snippet}
+{#snippet viewControls()}
+  <div class="view-controls" data-view-id={view?.id}>
+    {#if viewChoices.length + (viewMissing ? 1 : 0) > 1}<Select
+        hideLabel
+        labelText={$t('views.picker.label')}
+        size="sm"
+        bind:selected={viewChoiceId}
+        on:change={async (event) => {
+          const next = (event.target as HTMLSelectElement).value;
+          try {
+            await chooseView(next);
+          } finally {
+            viewChoiceId = view?.id || '';
+          }
+        }}
+        >{#if view && viewMissing}<SelectItem
+            value={view.id}
+            text={view.name}
+          />{/if}{#each viewChoices as v (v.id)}<SelectItem
+            value={v.id}
+            text={v.name}
+          />{/each}</Select
+      >{:else}<span class="view-name" title={view?.name}
+        ><span class="bx--visually-hidden"
+          >{$t(view?.version ? 'views.picker.saved' : 'views.picker.unsaved', {
+            name: view?.name || '',
+          })}</span
+        ><span aria-hidden="true">{view?.name}</span></span
+      >{/if}{#if inlineViewActions}<Button
+        kind="ghost"
+        size="small"
+        id="new-view"
+        on:click={() => openViewDialog('create')}>{$t('views.actions.new')}</Button
+      >{/if}<OverflowMenu
+      size="sm"
+      flipped
+      id="view-actions"
+      bind:open={viewMenuOpen}
+      menuOptionsClass="view-actions-menu"
+      title={$t('views.actions.menu')}
+      aria-label={$t('views.actions.menu')}
+      iconDescription={$t('views.actions.menu')}
+      >{#if !inlineViewActions}<OverflowMenuItem
+          text={$t('views.actions.new')}
+          on:click={() => openViewDialog('create')}
+        /><OverflowMenuItem
+          text={$t('views.actions.undo')}
+          disabled={!undoStack.length || conflicted}
+          on:click={() => restoreHistory('undo')}
+        /><OverflowMenuItem
+          text={$t('views.actions.redo')}
+          disabled={!redoStack.length || conflicted}
+          on:click={() => restoreHistory('redo')}
+        />{/if}{#if !(viewMissing && view?.version)}<OverflowMenuItem
+          text={$t('views.actions.rename')}
+          on:click={() => openViewDialog('rename')}
+        />{/if}<OverflowMenuItem
+        text={$t('views.actions.duplicate')}
+        on:click={() => openViewDialog('duplicate')}
+      /><OverflowMenuItem
+        text={$t('views.actions.delete')}
+        disabled={!view?.version}
+        danger
+        on:click={() => {
+          deleteConfirmed = false;
+          deleteViewDialog = true;
+        }}
+      /></OverflowMenu
+    >
+    {#if inlineViewActions}
+      <Button
+        id="undo-view"
+        kind="ghost"
+        size="small"
+        icon={Undo}
+        aria-pressed={undefined}
+        hideTooltip
+        title={$t('views.actions.undo')}
+        iconDescription={$t('views.actions.undo')}
+        disabled={!undoStack.length || conflicted}
+        on:click={() => restoreHistory('undo')}
+      /><Button
+        kind="ghost"
+        size="small"
+        icon={Redo}
+        aria-pressed={undefined}
+        hideTooltip
+        title={$t('views.actions.redo')}
+        iconDescription={$t('views.actions.redo')}
+        disabled={!redoStack.length || conflicted}
+        on:click={() => restoreHistory('redo')}
+      />
+    {/if}
+  </div>
+{/snippet}
+<!-- The view's save state ends the page controls, where its changes move nothing else.
+     While the save-failure notice shows, it says the same. -->
+{#snippet saveStatus()}
+  {@const failed = dirty && saving === 'views.saveStatus.notSaved'}
+  <span
+    class="save-status"
+    class:has-notice={failed}
+    hidden={width > 760 && barStage >= 3}
+    aria-hidden="true">{$t(saving)}</span
+  ><span
+    class="bx--visually-hidden"
+    aria-live="polite">{failed ? '' : $t(saving)}</span
+  >
+{/snippet}
+<!-- The page's title and controls: one row in the header, or the title there and the
+     controls in a row under it on phones. -->
+{#snippet pageLead()}{#if page === 'workspace' || page === 'run'}{@render runsToggle()}{/if}{/snippet}
+{#snippet pageTitle()}
+  <div class="page-title">
+    {#if activeRun}<Button
+        kind="ghost"
+        size="small"
+        icon={ArrowLeft}
+        hideTooltip
+        title={$t(runOrigins[runOrigin])}
+        iconDescription={$t(runOrigins[runOrigin])}
+        tooltipAlignment="start"
+        on:click={backToOrigin}
+      />{/if}
+    <!-- On wider screens the workspace's view picker names the page. -->
+    <h1 class:bx--visually-hidden={page === 'workspace' && width > 760}>
+      {currentRun?.display_name ||
+        (page === 'workspace'
+          ? $t('nav.workspace')
+          : page === 'overview'
+            ? project
+              ? projects.find((p) => p.id === project)?.name || project.split('/')[1]
+              : $t('nav.projects')
+            : page === 'server'
+              ? $t('server.title')
+              : page === 'not-found'
+                ? $t(routeError || 'app.errors.pageNotFound')
+                : $t(pages.find((p) => p.id === page)?.name))}
+    </h1>
+    <!-- Phones keep the header for the name; the state joins the controls under it. -->
+    {#if page === 'run' && currentRun && width > 760}<RunStateTag run={currentRun} />{/if}
+  </div>
+{/snippet}
+{#snippet pageTools()}
+  {#if page === 'workspace'}{@render viewControls()}{#if displayView?.body.panels.length || displayView?.body.sections?.length}<PanelTools
+        header={width > 760}
+        bind:search={workspaceSearch}
+        compact={compactAdd}
+        onDefaults={() => openDefaults()}
+        onAdd={() => openPanel()}
+      />{/if}{@render saveStatus()}{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
+      class="run-actions"
+    >
+      {#if width <= 760}<RunStateTag run={currentRun} />{/if}
+      {#if page === 'run' && currentRun?.state === 'running' && currentRun.snapshot_at == null}{@const stopLabel =
+          $t(
+            currentRun.stop_requested ? 'runs.stop.requested' : 'runs.actions.stop',
+          )}{#if !iconRunActions}<Button
+            class="run-stop"
+            kind="danger-ghost"
+            size="small"
+            icon={StopFilled}
+            disabled={!!currentRun.stop_requested}
+            on:click={() => currentRun && requestStop([currentRun])}>{stopLabel}</Button
+          >{:else}<Button
+            class="run-stop"
+            kind="danger-ghost"
+            size="small"
+            icon={StopFilled}
+            disabled={!!currentRun.stop_requested}
+            hideTooltip
+            title={stopLabel}
+            iconDescription={stopLabel}
+            tooltipAlignment="end"
+            on:click={() => currentRun && requestStop([currentRun])}
+          />{/if}{/if}
+      {#if page === 'run' && currentRun}{@const exportURL =
+          '/api/run-export?run=' +
+          encodeURIComponent(currentRun.id) +
+          '&format=csv'}{@const exportLabel = $t(
+          currentRun.snapshot_at == null ? 'runs.actions.exportHistory' : 'runs.snapshot.export',
+        )}{#if !iconRunActions}<Button
+            class="run-export"
+            kind="ghost"
+            size="small"
+            icon={Download}
+            href={exportURL}>{exportLabel}</Button
+          >{:else}<Button
+            class="run-export"
+            kind="ghost"
+            size="small"
+            icon={Download}
+            hideTooltip
+            title={exportLabel}
+            iconDescription={exportLabel}
+            tooltipAlignment="end"
+            href={exportURL}
+          />{/if}{/if}
+    </div>{/if}
+{/snippet}
+
+{#snippet workspaceRow()}{@render pageLead()}{@render pageTools()}{/snippet}
 
 {#snippet saveFailureNotice()}
   {#if dirty && (saving === 'views.saveStatus.notSaved' || retrying)}<InlineNotification
@@ -2373,86 +2672,28 @@
     bind:isSideNavOpen={menuOpen}
     ariaLabelMenu={$t(menuOpen ? 'app.nav.close' : 'app.nav.open')}
     uiShellAriaLabel="randl"
-    ><div class="project-bar">
-      <Breadcrumb noTrailingSlash
-        >{#if !project && page === 'server'}<BreadcrumbItem isCurrentPage
-            >{$t('server.title')}</BreadcrumbItem
-          >{:else}<BreadcrumbItem
-            href="/?page=overview"
-            on:click={(event) => breadcrumbNavigate(event, '')}>{$t('nav.projects')}</BreadcrumbItem
-          >{/if}{#if project}<BreadcrumbItem
-            href={pageURL(project, 'overview')}
-            title={projects.find((item) => item.id === project)?.name || project}
-            on:click={(event) => breadcrumbNavigate(event, project)}
-            >{projects.find((item) => item.id === project)?.name || project}</BreadcrumbItem
-          >{/if}{#if activeRun}{#if runOrigin !== 'overview'}<BreadcrumbItem
-              href={runOrigin === 'workspace'
-                ? pageURL(
-                    project,
-                    'workspace',
-                    localStorage.getItem('randl.project-view:' + project) || undefined,
-                  )
-                : pageURL(project, runOrigin)}
-              on:click={(event) => breadcrumbNavigate(event, project, runOrigin)}
-              >{$t(pages.find((item) => item.id === runOrigin)?.name || 'nav.workspace')}</BreadcrumbItem
-            >{/if}<BreadcrumbItem isCurrentPage title={activeRun.display_name}
-            >{activeRun.display_name}</BreadcrumbItem
-          >{:else if project}<BreadcrumbItem isCurrentPage
-            >{$t(
-              page === 'not-found'
-                ? routeError || 'app.errors.pageNotFound'
-                : pages.find((item) => item.id === page)?.name || 'nav.workspace',
-            )}</BreadcrumbItem
-          >{/if}</Breadcrumb
-      >
-      <div class="project-switcher">
-        {#if project && !routeError}{#if width < 1280}<Button
-              kind="ghost"
-              size="small"
-              icon={Code}
-              class="connect-sdk-button"
-              hideTooltip
-              title={$t('connect.title')}
-              iconDescription={$t('connect.title')}
-              on:click={() => (help = true)}
-            />{:else}<Button
-              kind="ghost"
-              size="small"
-              icon={Code}
-              class="connect-sdk-button"
-              on:click={() => (help = true)}>{$t('connect.title')}</Button
-            >{/if}{/if}<Select
-          size="sm"
-          labelText={$t('projects.picker.label')}
-          hideLabel
-          selected={project}
-          on:change={(event) => {
-            const element = event.target as HTMLSelectElement,
-              next = element.value;
-            element.value = project;
-            void changeProject(next);
-          }}
-          ><SelectItem
-            value=""
-            text={$t('projects.picker.all')}
-          />{#each projects.filter((p) => !p.archived || p.id === project) as p (p.id)}<SelectItem
-              value={p.id}
-              text={p.name}
-            />{/each}</Select
-        >{#if project}<Button
+    on:click={openProjectList}
+    ><div class="page-bar" data-stage={barStage} use:fitPageBar>
+      {#if width > 760}{@render pageLead()}{/if}{@render pageTitle()}{#if width > 760}{@render pageTools()}{/if}
+    </div>
+    <div class="header-actions">
+      {#if project && !routeError && width > 760}{#if width < 1280}<Button
             kind="ghost"
             size="small"
-            icon={Add}
+            icon={Code}
+            class="connect-sdk-button"
             hideTooltip
-            title={$t('projects.create.action')}
-            iconDescription={$t('projects.create.action')}
-            tooltipAlignment="end"
-            on:click={openCreateProject}
-          />{/if}
-      </div>
-    </div><div class="header-actions">
-      <!-- Narrow header rows also hold the breadcrumb, so their actions are icons. -->
-{#if width < 1056}<Button
+            title={$t('connect.title')}
+            iconDescription={$t('connect.title')}
+            on:click={() => (help = true)}
+          />{:else}<Button
+            kind="ghost"
+            size="small"
+            icon={Code}
+            class="connect-sdk-button"
+            on:click={() => (help = true)}>{$t('connect.title')}</Button
+          >{/if}{/if}<!-- Narrower headers keep their actions as icons. -->
+      {#if width < 1056}<Button
           kind="ghost"
           size="small"
           icon={Chat}
@@ -2806,141 +3047,6 @@
             }}
           ></div>{/if}
       </aside>{/if}
-    {#snippet runsToggle()}
-      <!-- On phones the runs drawer opens from a labeled button; wider screens keep the icon. -->
-      {#if width <= 760}<Button
-          id="open-runs"
-          kind="ghost"
-          size="small"
-          icon={drawer ? SidePanelClose : SidePanelOpen}
-          class="runs-drawer-toggle"
-          aria-label={drawer ? $t('runs.list.hide') : $t('runs.list.show')}
-          aria-expanded={drawer}
-          on:click={toggleRuns}>{$t('runs.list.toggle')}</Button
-        >{:else}<Button
-          kind="ghost"
-          size="small"
-          icon={showRunSidebar ? SidePanelClose : SidePanelOpen}
-          aria-pressed={undefined}
-          hideTooltip
-          title={showRunSidebar ? $t('runs.list.hide') : $t('runs.list.show')}
-          iconDescription={showRunSidebar ? $t('runs.list.hide') : $t('runs.list.show')}
-          tooltipAlignment="start"
-          on:click={toggleRuns}
-        />{/if}
-    {/snippet}
-    {#snippet viewControls()}
-      <div class="view-controls" data-view-id={view?.id}>
-        {#if viewChoices.length + (viewMissing ? 1 : 0) > 1}<Select
-            hideLabel
-            labelText={$t('views.picker.label')}
-            size="sm"
-            bind:selected={viewChoiceId}
-            on:change={async (event) => {
-              const next = (event.target as HTMLSelectElement).value;
-              try {
-                await chooseView(next);
-              } finally {
-                viewChoiceId = view?.id || '';
-              }
-            }}
-            >{#if view && viewMissing}<SelectItem
-                value={view.id}
-                text={view.name}
-              />{/if}{#each viewChoices as v (v.id)}<SelectItem
-                value={v.id}
-                text={v.name}
-              />{/each}</Select
-          >{:else}<span class="view-name" title={view?.name}
-            ><span class="bx--visually-hidden"
-              >{$t(view?.version ? 'views.picker.saved' : 'views.picker.unsaved', {
-                name: view?.name || '',
-              })}</span
-            ><span aria-hidden="true">{view?.name}</span></span
-          >{/if}{#if canvasWidth >= 620}<Button
-            kind="ghost"
-            size="small"
-            id="new-view"
-            on:click={() => openViewDialog('create')}>{$t('views.actions.new')}</Button
-          >{/if}<OverflowMenu
-          size="sm"
-          flipped
-          id="view-actions"
-          bind:open={viewMenuOpen}
-          menuOptionsClass="view-actions-menu"
-          title={$t('views.actions.menu')}
-          aria-label={$t('views.actions.menu')}
-          iconDescription={$t('views.actions.menu')}
-          >{#if canvasWidth < 620}<OverflowMenuItem
-              text={$t('views.actions.new')}
-              on:click={() => openViewDialog('create')}
-            /><OverflowMenuItem
-              text={$t('views.actions.undo')}
-              disabled={!undoStack.length || conflicted}
-              on:click={() => restoreHistory('undo')}
-            /><OverflowMenuItem
-              text={$t('views.actions.redo')}
-              disabled={!redoStack.length || conflicted}
-              on:click={() => restoreHistory('redo')}
-            />{/if}{#if !(viewMissing && view?.version)}<OverflowMenuItem
-              text={$t('views.actions.rename')}
-              on:click={() => openViewDialog('rename')}
-            />{/if}<OverflowMenuItem
-            text={$t('views.actions.duplicate')}
-            on:click={() => openViewDialog('duplicate')}
-          /><OverflowMenuItem
-            text={$t('views.actions.delete')}
-            disabled={!view?.version}
-            danger
-            on:click={() => {
-              deleteConfirmed = false;
-              deleteViewDialog = true;
-            }}
-          /></OverflowMenu
-        >
-        {#if canvasWidth >= 620}
-          <Button
-            id="undo-view"
-            kind="ghost"
-            size="small"
-            icon={Undo}
-            aria-pressed={undefined}
-            hideTooltip
-            title={$t('views.actions.undo')}
-            iconDescription={$t('views.actions.undo')}
-            disabled={!undoStack.length || conflicted}
-            on:click={() => restoreHistory('undo')}
-          /><Button
-            kind="ghost"
-            size="small"
-            icon={Redo}
-            aria-pressed={undefined}
-            hideTooltip
-            title={$t('views.actions.redo')}
-            iconDescription={$t('views.actions.redo')}
-            disabled={!redoStack.length || conflicted}
-            on:click={() => restoreHistory('redo')}
-          />
-        {/if}
-        <span class="save-status" class:has-notice={dirty && saving === 'views.saveStatus.notSaved'}
-          >{#each ['common.status.saving', 'views.saveStatus.saved', 'views.saveStatus.notSaved'] as const as status}<span
-              aria-hidden="true"
-              class:current={status === saving}>{$t(status)}</span
-            >{/each}</span
-        ><span class="bx--visually-hidden" aria-live="polite"
-          >{dirty && saving === 'views.saveStatus.notSaved' ? '' : $t(saving)}</span
-        >
-      </div>
-    {/snippet}
-    {#snippet workspaceLeading()}
-      <div class="view-group">
-        <div class="workspace-title workspace-current">
-          {@render runsToggle()}
-          <h1>{$t('workspace.heading')}</h1>
-        </div>
-        {@render viewControls()}
-      </div>
-    {/snippet}
     {#snippet viewStatus()}
       {#if !(width <= 760 && drawer)}{@render actionNotice()}{@render saveFailureNotice()}{/if}
     {/snippet}
@@ -2952,89 +3058,18 @@
       inert={drawer && width <= 760}
     >
       {#if page !== 'workspace'}
-        <div class="workspace-heading">
-          <div class="workspace-title" class:workspace-current={page === 'workspace'}>
-            {#if page === 'workspace' || page === 'run'}{@render runsToggle()}{/if}
-            {#if activeRun}<Button
-                kind="ghost"
-                size="small"
-                icon={ArrowLeft}
-                hideTooltip
-                title={$t(runOrigins[runOrigin])}
-                iconDescription={$t(runOrigins[runOrigin])}
-                tooltipAlignment="start"
-                on:click={backToOrigin}
-              />{/if}
-            <h1>
-              {currentRun?.display_name ||
-                (page === 'workspace'
-                  ? $t('nav.workspace')
-                  : page === 'overview'
-                    ? project
-                      ? projects.find((p) => p.id === project)?.name || project.split('/')[1]
-                      : $t('nav.projects')
-                    : page === 'server'
-                      ? $t('server.title')
-                      : page === 'not-found'
-                        ? $t(routeError || 'app.errors.pageNotFound')
-                      : $t(pages.find((p) => p.id === page)?.name))}
-            </h1>
-            {#if page === 'run' && currentRun}<RunStateTag run={currentRun} />{/if}
-          </div>
-          {#if page === 'run' && currentRun?.state === 'running' && currentRun.snapshot_at == null}{@const stopLabel = $t(
-              currentRun.stop_requested ? 'runs.stop.requested' : 'runs.actions.stop',
-            )}{#if canvasWidth >= 620}<Button
-                class="run-stop"
-                kind="danger-ghost"
-                size="small"
-                icon={StopFilled}
-                disabled={!!currentRun.stop_requested}
-                on:click={() => currentRun && requestStop([currentRun])}>{stopLabel}</Button
-              >{:else}<Button
-                class="run-stop"
-                kind="danger-ghost"
-                size="small"
-                icon={StopFilled}
-                disabled={!!currentRun.stop_requested}
-                hideTooltip
-                title={stopLabel}
-                iconDescription={stopLabel}
-                tooltipAlignment="end"
-                on:click={() => currentRun && requestStop([currentRun])}
-              />{/if}{/if}
-          {#if page === 'run' && currentRun}{@const exportURL =
-              '/api/run-export?run=' + encodeURIComponent(currentRun.id) + '&format=csv'}{@const exportLabel = $t(
-              currentRun.snapshot_at == null ? 'runs.actions.exportHistory' : 'runs.snapshot.export',
-            )}{#if canvasWidth >= 620}<Button
-                class="run-export"
-                kind="ghost"
-                size="small"
-                icon={Download}
-                href={exportURL}>{exportLabel}</Button
-              >{:else}<Button
-                class="run-export"
-                kind="ghost"
-                size="small"
-                icon={Download}
-                hideTooltip
-                title={exportLabel}
-                iconDescription={exportLabel}
-                tooltipAlignment="end"
-                href={exportURL}
-              />{/if}{/if}
-          {#if page === 'runs'}{@render viewControls()}{/if}
-        </div>
+        {#if width <= 760 && (page === 'run' || page === 'runs')}<div class="page-row">
+            {@render pageLead()}{@render pageTools()}
+          </div>{/if}
         {@render viewStatus()}{/if}
 
       {#if routeError}<section class="empty missing-object">
-          <Button
-            kind="tertiary"
-            href="/?page=overview"
-            on:click={(event) => breadcrumbNavigate(event, '')}>{$t('nav.back.projects')}</Button
+          <Button kind="tertiary" href="/?page=overview" on:click={openProjectList}
+            >{$t('nav.back.projects')}</Button
           >
         </section>{:else if page === 'workspace'}<Workspace
-          {canvasWidth}
-          leading={workspaceLeading}
+          leading={width <= 760 ? workspaceRow : undefined}
+          bind:search={workspaceSearch}
           below={viewStatus}
           colors={resolvedColors}
           hasRuns={projectRuns.length > 0}
@@ -3072,8 +3107,6 @@
           onArtifact={openArtifact}
           metricsActions={runPanelTools}
           ><Workspace
-            {canvasWidth}
-            tools={false}
             bind:search={runPanelSearch}
             colors={resolvedColors}
             hasRuns={projectRuns.length > 0}

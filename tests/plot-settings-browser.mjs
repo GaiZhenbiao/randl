@@ -445,21 +445,23 @@ try {
     .poll(async () => (await stored()).sections.map((s) => s.name))
     .toEqual(['train', 'Evaluation', 'stats']);
 
-  // The toolbar stays pinned while panels scroll beneath it, except in short windows.
-  const top = page.locator('.workspace-top');
-  const pinnedBox = await top.boundingBox();
+  // The page controls stay in the header while panels scroll beneath it; the notices pinned
+  // under it scroll away in short windows.
+  const bar = page.locator('.bx--header .page-bar');
+  const barBox = await bar.boundingBox();
   await page.locator('main').evaluate((main) => (main.scrollTop = 600));
   await expect
     .poll(() => page.locator('main').evaluate((main) => main.scrollTop))
     .toBeGreaterThan(0);
-  assert.deepEqual(await top.boundingBox(), pinnedBox);
+  assert.deepEqual(await bar.boundingBox(), barBox);
   assert.ok(
-    await top.evaluate((node) => {
+    await bar.evaluate((node) => {
       const box = node.getBoundingClientRect();
       return node.contains(document.elementFromPoint(box.left + 40, box.bottom - 4));
     }),
-    'panels scroll beneath the toolbar',
+    'panels scroll beneath the header',
   );
+  const top = page.locator('.workspace-top');
   await page.setViewportSize({ width: 1440, height: 400 });
   await expect(top).not.toHaveClass(/pinned/);
   await page.setViewportSize({ width: 1440, height: 900 });

@@ -52,6 +52,199 @@ button:focus-visible {
   font-size: 18px;
   letter-spacing: -0.4px;
 }
+/* The page bar fills the header beside the brand with the page's title and controls. On
+   phones it keeps the title, and the controls take a row of their own under the header. */
+.page-bar {
+  flex: 1 1 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding-inline: 8px;
+  border-left: 1px solid var(--cds-ui-03);
+}
+.page-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+/* The title's parts are items of the bar, so a visually hidden title takes no gap. */
+.page-title {
+  display: contents;
+}
+.page-title h1 {
+  min-width: 0;
+  margin-inline: 4px 8px;
+  overflow: hidden;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.page-title > .bx--btn,
+.page-title .run-state-tag {
+  flex-shrink: 0;
+  margin: 0;
+}
+/* Control groups never shrink below their contents; only names and fields shrink, and the
+   bar compacts before they get too small. In the header the view controls are the bar's own
+   items, so the view's name gives way before an open search does. */
+.view-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.page-bar .view-controls {
+  display: contents;
+}
+/* A select is as wide as its longest option; containment lets it shrink to its minimum,
+   and the width keeps its preferred size. */
+.view-controls .bx--form-item {
+  flex: 0 4 216px;
+  width: 216px;
+  min-width: 120px;
+  contain: inline-size;
+}
+.view-controls .bx--select,
+.view-controls .bx--select-input__wrapper,
+.view-controls .bx--select-input {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  text-overflow: ellipsis;
+}
+.view-controls > .bx--btn,
+.view-controls > .bx--overflow-menu {
+  flex-shrink: 0;
+}
+.view-controls > .bx--btn:not(.bx--btn--icon-only) {
+  padding-inline: 12px;
+}
+.view-name {
+  flex: 0 4 auto;
+  min-width: 0;
+  max-width: 216px;
+  padding-inline: 4px;
+  overflow: hidden;
+  font-size: 14px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.save-status {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  padding-inline: 8px;
+  font-size: 12px;
+  color: var(--cds-text-02);
+  white-space: nowrap;
+}
+.save-status:empty {
+  padding: 0;
+}
+/* The save-failure notice says the same. */
+.save-status.has-notice {
+  display: none;
+}
+.panel-group .chart-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+}
+.panel-group .chart-actions .bx--btn {
+  white-space: nowrap;
+}
+/* In the header the panel tools are the bar's own items too, so one set of shrink factors
+   orders every control: the view's name shrinks first, then an open search; buttons keep
+   their size. */
+.page-bar :is(.panel-group, .chart-actions) {
+  display: contents;
+}
+.page-bar .chart-actions > :first-child {
+  margin-inline-start: 8px;
+}
+.page-bar .bx--btn,
+.page-bar .bx--overflow-menu {
+  flex-shrink: 0;
+}
+/* The header's search is an icon until it is opened or holds text. */
+.panel-group.header .panel-search {
+  flex: none;
+  min-width: 0;
+}
+.panel-group.header .panel-search:has(.bx--search--expanded) {
+  flex: 0 1 280px;
+  min-width: 140px;
+}
+.panel-group.header .bx--search--expanded {
+  width: 100%;
+}
+/* The search takes its size at once, so fitting measures its settled geometry. */
+.panel-group.header .bx--search--expandable,
+.panel-group.header .bx--search-input,
+.panel-group.header .bx--search-input::placeholder {
+  transition: none;
+}
+.run-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 8px;
+}
+@media (max-width: 760px) {
+  .page-bar {
+    padding-inline: 4px;
+    border-left: 0;
+  }
+  .page-title h1 {
+    font-size: 14px;
+  }
+  .page-row .view-controls {
+    flex: 1 1 auto;
+  }
+  .page-row .view-controls .bx--form-item {
+    flex: 1 1 auto;
+  }
+  /* Phones give the search and panel actions a full row of their own. */
+  .page-row .panel-group {
+    display: flex;
+    flex: 1 1 100%;
+    align-items: center;
+    gap: 4px;
+  }
+  .page-row .panel-search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .page-row .run-actions {
+    margin-inline-start: auto;
+  }
+  .save-status {
+    display: none;
+  }
+}
+@media (max-width: 760px), (hover: none) {
+  :is(.page-bar, .page-row) :is(.bx--btn--icon-only, .bx--overflow-menu) {
+    width: 40px;
+    min-width: 40px;
+    height: 40px;
+    min-height: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+  :is(.page-bar, .page-row) .bx--btn {
+    min-height: 40px;
+  }
+}
 .shell {
   display: grid;
   grid-template-columns: 288px minmax(0, 1fr);
@@ -163,7 +356,6 @@ aside {
   font-size: 11px;
   font-weight: 600;
 }
-
 .side-footer {
   display: flex;
   justify-content: space-between;
@@ -178,46 +370,11 @@ main {
   padding: 24px 24px 16px;
   scrollbar-width: thin;
 }
-.workspace-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 24px;
-}
-.breadcrumb {
-  font-size: 12px;
-  color: var(--cds-text-02);
-  margin-bottom: 4px;
-}
 h1 {
   font-size: 24px;
   line-height: 32px;
   font-weight: 400;
   letter-spacing: 0;
-}
-.view-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.chart-actions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.live {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--cds-text-02);
-}
-.live input {
-  accent-color: var(--cds-interactive-01);
-  width: 16px;
-  height: 16px;
 }
 .metric-section {
   margin-top: 16px;
@@ -450,16 +607,6 @@ pre {
   main {
     padding: 16px;
   }
-  .workspace-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    margin-bottom: 16px;
-    gap: 12px;
-  }
-
-  .view-controls .bx--select {
-    flex: 1;
-  }
 }
 @media (max-width: 760px) {
   .shell {
@@ -488,10 +635,6 @@ pre {
   h1 {
     font-size: 20px;
   }
-  .view-controls .bx--btn:not(.bx--btn--icon-only) {
-    padding-inline: 12px;
-  }
-
   .run-name small {
     font-size: 11px;
   }
@@ -514,12 +657,6 @@ pre {
   .header-actions .bx--btn {
     font-size: 12px;
     padding-inline: 8px;
-  }
-  .chart-actions .bx--btn {
-    font-size: 12px;
-  }
-  .live {
-    gap: 4px;
   }
 }
 @font-face {
@@ -547,9 +684,6 @@ pre {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-.chart-actions .bx--select {
-  width: 168px;
 }
 .chart-tools .bx--overflow-menu {
   height: 32px;
@@ -658,17 +792,8 @@ pre {
   color: var(--cds-support-01);
   font-size: 14px;
 }
-.workspace-heading h1 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 60vw;
-}
 .bx--tab-content {
   padding: 16px 0;
-}
-.chart-actions {
-  flex-wrap: wrap;
 }
 @media (max-width: 760px) {
   .page-toolbar {
@@ -682,19 +807,9 @@ pre {
   .artifact-heading {
     flex-wrap: wrap;
   }
-  .workspace-heading h1 {
-    max-width: 88vw;
-  }
   .bx--data-table-container {
     max-width: 100%;
     overflow-x: auto;
-  }
-  .chart-actions .bx--select {
-    width: 150px;
-  }
-  .chart-actions .live {
-    margin-right: auto;
-    font-size: 11px;
   }
 }
 .form-grid {
@@ -795,7 +910,6 @@ pre {
 .chart.fullscreen .plot {
   height: calc(100% - 40px);
 }
-
 @media (max-width: 760px) {
   .toggle {
     height: 44px;
@@ -828,26 +942,6 @@ pre {
 #save-failure .bx--inline-notification__action-button.bx--btn--ghost {
   margin: 0;
 }
-@media (max-width: 760px) {
-  .chart-actions .bx--select {
-    display: none;
-  }
-  .chart-actions {
-    justify-content: space-between;
-    width: 100%;
-    gap: 8px;
-    flex-wrap: nowrap;
-  }
-  .chart-actions .live {
-    flex-shrink: 0;
-  }
-  .chart-actions > .bx--btn:not(.bx--btn--icon-only) {
-    padding-right: 32px;
-    padding-left: 12px;
-    font-size: 12px;
-  }
-}
-
 /* Workspace sizing follows available content width, including sidebar resizing. */
 .shell {
   grid-template-columns: var(--sidebar-width, 304px) minmax(0, 1fr);
@@ -888,11 +982,6 @@ aside {
   opacity: 1;
   pointer-events: auto;
 }
-.save-status {
-  font-size: 12px;
-  color: var(--cds-text-02);
-  white-space: nowrap;
-}
 @media (hover: none) {
   .chart-tools > .bx--btn,
   .chart-tools > .bx--overflow-menu {
@@ -900,7 +989,6 @@ aside {
     pointer-events: auto;
   }
 }
-
 .run-name small {
   display: block;
   white-space: nowrap;
@@ -925,7 +1013,6 @@ aside {
   margin: 0;
   padding: 12px;
   width: 280px;
-
   overflow: auto;
   background: var(--cds-ui-01);
   color: var(--cds-text-01);
@@ -1074,45 +1161,6 @@ aside {
 .nav-expanded .project-rail > .bx--btn:first-child {
   justify-content: flex-end;
 }
-/* The breadcrumb and project controls share the global header row with the brand. */
-.project-bar {
-  flex: 1 1 0;
-  align-self: stretch;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-width: 0;
-  padding: 0 8px 0 16px;
-  border-left: 1px solid var(--cds-ui-03);
-}
-.project-bar .bx--breadcrumb {
-  display: flex;
-  flex-wrap: nowrap;
-  min-width: 0;
-  overflow: hidden;
-}
-.project-bar .bx--breadcrumb-item {
-  min-width: 0;
-  white-space: nowrap;
-}
-.project-switcher {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.project-switcher .connect-sdk-button {
-  flex: none;
-}
-.project-switcher .bx--form-item {
-  min-width: 0;
-}
-.project-switcher select {
-  min-width: 0;
-  max-width: 240px;
-  text-overflow: ellipsis;
-}
 .layered-shell .run-sidebar {
   grid-column: 2;
   grid-row: 1;
@@ -1132,51 +1180,6 @@ aside {
   min-width: 0;
   overflow-x: clip;
   overflow-y: auto;
-}
-.workspace-heading {
-  height: 56px;
-  min-height: 56px;
-  margin: 0;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--cds-ui-03);
-  gap: 12px;
-  flex-direction: row;
-  align-items: center;
-  background: var(--cds-ui-01);
-}
-.workspace-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.workspace-title h1 {
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  overflow: hidden;
-}
-.workspace-title > .bx--btn {
-  flex-shrink: 0;
-}
-.view-controls {
-  min-width: 0;
-  max-width: 65%;
-  width: auto;
-}
-.view-controls .bx--select-input {
-  min-width: 100px;
-  max-width: 240px;
-  text-overflow: ellipsis;
-}
-
-.chart-actions {
-  gap: 4px;
-  width: auto;
-  justify-content: flex-end;
-  flex-shrink: 0;
 }
 .metric-section {
   --section-padding: 16px;
@@ -1215,19 +1218,6 @@ aside {
 }
 .layered-shell > main > .bx--data-table-container {
   padding: 16px;
-}
-@media (max-width: 1055px) {
-  .workspace-heading {
-    gap: 4px;
-    padding-inline: 12px;
-  }
-
-  .chart-actions {
-    gap: 0;
-  }
-  .project-bar {
-    padding-inline: 12px 4px;
-  }
 }
 @media (max-width: 760px) {
   .layered-shell,
@@ -1280,19 +1270,6 @@ aside {
   .layered-shell.runs-collapsed.drawer-open .run-sidebar {
     visibility: visible;
   }
-  .project-switcher {
-    display: none;
-  }
-  .workspace-heading {
-    height: auto;
-    min-height: 48px;
-    flex-wrap: wrap;
-    padding-block: 8px;
-    gap: 4px;
-  }
-  .workspace-title h1 {
-    font-size: 14px;
-  }
   .metric-section {
     --section-padding: 12px;
   }
@@ -1315,7 +1292,6 @@ aside {
   padding: 0 8px 0 4px;
   border-bottom: 0;
 }
-
 .run-row .toggle {
   height: 32px;
   width: 28px;
@@ -1763,7 +1739,6 @@ aside {
   position: fixed;
   inset: auto;
   margin: 0;
-
   overflow: auto;
   padding: 16px;
   background: var(--cds-ui-01);
@@ -1918,7 +1893,6 @@ aside {
   display: flex;
   flex-direction: column;
 }
-.runs-page > .workspace-heading,
 .runs-page > .runs-toolbar-region,
 .runs-page > .table-result-count {
   flex-shrink: 0;
@@ -2145,105 +2119,12 @@ aside {
 .table-group svg {
   flex-shrink: 0;
 }
-.project-bar > nav {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-.project-bar .bx--breadcrumb-item {
-  flex-shrink: 1;
-  min-width: 0;
-  overflow: hidden;
-}
-.project-bar .bx--breadcrumb-item:first-child,
-.project-bar .bx--breadcrumb-item:last-child {
-  flex-shrink: 0;
-}
-.project-bar .bx--breadcrumb-item .bx--link {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
-}
-.project-bar .bx--breadcrumb {
-  max-width: 100%;
-  overflow: hidden;
-}
-.workspace-current h1 {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-}
-.workspace-current {
-  flex: 0 0 auto;
-}
-.view-controls {
-  flex: 1;
-  max-width: none;
-  justify-content: flex-start;
-  flex-wrap: nowrap;
-  gap: 4px;
-}
-.view-controls .bx--form-item {
-  flex: 1;
-  min-width: 100px;
-  max-width: 216px;
-}
-.view-controls .bx--select,
-.view-controls select {
-  width: 100%;
-  max-width: none;
-}
-.view-controls > .bx--btn,
-.view-controls > .bx--overflow-menu {
-  flex-shrink: 0;
-}
-.save-status {
-  margin-left: auto;
-}
-.workspace-heading {
-  flex-wrap: nowrap;
-}
-.workspace-title {
-  max-width: 100%;
-}
 .hue-strip {
   height: 24px;
   border-block: 5px solid transparent;
   background-clip: content-box;
 }
 @media (max-width: 760px) {
-  .project-bar {
-    overflow: hidden;
-    padding-inline: 12px 4px;
-  }
-  /* The project name shortens first; fixed labels and the current page stay whole. */
-  .project-bar .bx--breadcrumb .bx--breadcrumb-item .bx--link {
-    min-width: 0;
-  }
-  .project-bar .bx--breadcrumb .bx--breadcrumb-item:last-child {
-    flex-shrink: 0;
-    max-width: 45%;
-  }
-  .view-controls {
-    flex: 1;
-    max-width: none;
-    justify-content: flex-start;
-  }
-  .view-controls .bx--form-item {
-    min-width: 100px;
-    max-width: none;
-  }
-  .view-controls select {
-    max-width: none;
-  }
-  .workspace-heading {
-    flex-wrap: nowrap;
-  }
   .section-actions > .bx--btn {
     display: inline-flex;
   }
@@ -2346,7 +2227,6 @@ aside {
 .project-rail > .bx--btn .bx--assistive-text {
   font-size: 12px;
 }
-
 .runs-batch-actions {
   display: flex;
   align-items: center;
@@ -2364,7 +2244,6 @@ aside {
   font-weight: 600;
   margin-top: 8px;
 }
-
 .artifact-version-bar {
   display: flex;
   align-items: end;
@@ -2396,7 +2275,6 @@ aside {
     opacity: 1;
   }
 }
-
 @media (max-width: 600px) {
   .context-popover .filter-rule {
     grid-template-columns: minmax(0, 1fr) 40px;
@@ -2421,7 +2299,6 @@ aside {
     width: 100%;
   }
 }
-
 /* Contextual editing and dense workspace controls. */
 .context-popover {
   overflow: visible;
@@ -2460,16 +2337,6 @@ aside {
 .panel-actions-menu .bx--overflow-menu-options__btn {
   max-width: 100%;
 }
-.bx--breadcrumb-item:last-child {
-  min-width: 0;
-  max-width: 100%;
-}
-.bx--breadcrumb-item:last-child .bx--breadcrumb {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 @media (max-width: 600px) {
   .context-popover .filter-rule {
     grid-template-columns: minmax(0, 1fr) 32px;
@@ -2484,7 +2351,6 @@ aside {
     grid-column: 1;
   }
 }
-
 .editor-categories.compact-categories > .bx--tabs {
   display: none;
 }
@@ -2570,7 +2436,6 @@ aside {
     padding-bottom: 12px;
   }
 }
-
 .project-page-content {
   padding: 16px;
   min-width: 0;
@@ -2776,25 +2641,6 @@ aside {
   flex-wrap: wrap;
   align-items: center;
 }
-.project-bar .bx--breadcrumb-item:last-child {
-  flex-shrink: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  display: block;
-}
-@media (max-width: 480px) {
-  .project-bar .bx--breadcrumb-item:first-child:nth-last-child(4) {
-    display: none;
-  }
-}
-/* The last item has no separator; its empty marker must not add a second line. */
-.project-bar .bx--breadcrumb-item:last-child::after {
-  display: none;
-}
-.project-bar .bx--breadcrumb-item:not(:last-child) {
-  flex-shrink: 0;
-}
 .alias-editor {
   display: flex;
   align-items: end;
@@ -2830,7 +2676,6 @@ aside {
   clip-path: none;
   padding: 8px 12px;
 }
-
 @media (max-width: 760px) {
   .layered-shell .run-sidebar {
     left: 0;
@@ -2885,14 +2730,6 @@ aside {
   line-height: 20px;
   color: var(--cds-text-02);
 }
-.workspace-title .run-state-tag {
-  flex-shrink: 0;
-  margin: 0;
-}
-.workspace-heading > .run-export {
-  flex-shrink: 0;
-  margin-left: auto;
-}
 .run-alert-history ul {
   list-style: none;
   padding: 0;
@@ -2914,7 +2751,6 @@ aside {
 .run-alert-history strong {
   font-size: 14px;
 }
-
 .chart-legend {
   position: absolute;
   left: 8px;
@@ -3275,12 +3111,10 @@ aside {
 .plot-inspector[data-value-only='true'] .plot-inspector-value > span {
   grid-column: 2;
 }
-
 .run-row .toggle {
   display: grid;
   place-items: center;
 }
-
 .run-table-heading .name-heading {
   padding-left: 4px;
 }
@@ -3844,12 +3678,10 @@ aside {
     opacity: 1;
   }
 }
-
 .chat-markdown img {
   max-width: 100%;
   height: auto;
 }
-
 .editor-choice {
   min-width: 0;
 }
@@ -4084,18 +3916,15 @@ aside {
     min-height: 40px;
   }
 }
-
 .workspace-reordering main {
   overflow-anchor: none;
 }
-
 @media (max-width: 399px) {
   .runs-table-toolbar > .bx--btn,
   .runs-column-actions > .bx--btn {
     padding-inline: 4px;
   }
 }
-
 /* Visibility and solo toggles are icon-only in every state. The icon shape shows the state
    (filled eye, outlined eye for some, crossed-out eye; filled circle, bare triangle for some,
    outlined circle for solo) and color reinforces it. While runs are soloed, visible eyes use
@@ -4137,7 +3966,6 @@ aside {
   flex: 1 1 12rem;
   min-width: 0;
 }
-
 /* Header, group and run rows share one column grid: visibility, solo, then the color swatch or
    the group's collapse button, then the name. */
 .run-group {
@@ -4220,70 +4048,6 @@ aside {
   gap: 4px;
   flex-shrink: 0;
 }
-.view-controls .bx--select-input__wrapper,
-.view-controls .bx--select-input {
-  width: 100%;
-  min-width: 0;
-  max-width: none;
-}
-.view-name {
-  min-width: 0;
-  max-width: 216px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-}
-.workspace-toolbar {
-  container-type: inline-size;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  min-height: 48px;
-  padding: 8px 16px;
-  margin: 0;
-  border-bottom: 1px solid var(--cds-ui-03);
-  background: var(--cds-ui-01);
-}
-.workspace-toolbar .view-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 100%;
-}
-.workspace-toolbar .view-controls {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 1 auto;
-  flex-wrap: nowrap;
-  min-width: 0;
-  max-width: none;
-}
-.workspace-toolbar .view-controls .bx--form-item {
-  flex: 0 1 216px;
-  width: 216px;
-  min-width: 160px;
-  max-width: 216px;
-}
-.workspace-toolbar .view-controls .bx--select {
-  width: 100%;
-  min-width: 0;
-  max-width: none;
-}
-.view-controls > .bx--btn:not(.bx--btn--icon-only) {
-  padding-inline: 12px;
-}
-.workspace-toolbar .view-controls > .bx--btn--icon-only {
-  padding-inline: 7px;
-}
-.workspace-toolbar .save-status {
-  margin-left: 4px;
-}
-.workspace-toolbar .panel-group,
 .run-tab-actions .panel-group {
   display: flex;
   align-items: center;
@@ -4292,22 +4056,14 @@ aside {
   justify-content: safe flex-end;
   margin-left: auto;
 }
-.workspace-toolbar .panel-search,
 .run-tab-actions .panel-search {
   flex: 1 1 0;
   min-width: 140px;
   max-width: none;
   width: auto;
 }
-@media (max-width: 760px) {
-  .workspace-toolbar .view-group {
-    flex-basis: 100%;
-  }
-}
 @media (max-width: 760px), (hover: none) {
-  .workspace-toolbar .bx--btn--icon-only,
-  .run-tab-actions .bx--btn--icon-only,
-  .workspace-toolbar .bx--overflow-menu {
+  .run-tab-actions .bx--btn--icon-only {
     width: 40px;
     min-width: 40px;
     height: 40px;
@@ -4316,65 +4072,11 @@ aside {
     justify-content: center;
   }
 }
-
-.save-status {
-  display: grid;
-}
-.save-status > [aria-hidden] {
-  grid-area: 1 / 1;
-  visibility: hidden;
-}
-.save-status > .current {
-  visibility: visible;
-}
-.save-status.has-notice > [aria-hidden] {
-  visibility: hidden;
-}
-.workspace-toolbar .chart-actions,
-.run-tab-actions .chart-actions {
-  gap: 4px;
-}
-.runs-page .view-name {
-  color: var(--cds-text-02);
-  border-inline-start: 1px solid var(--cds-ui-03);
-  padding-inline-start: 12px;
-}
 @container (min-width: 1200px) {
-  .workspace-toolbar .panel-search,
   .run-tab-actions .panel-search {
     max-width: 480px;
   }
 }
-@media (max-width: 760px), (hover: none) {
-  .view-controls > .bx--btn--icon-only,
-  .view-controls > .bx--overflow-menu {
-    width: 40px;
-    min-width: 40px;
-    height: 40px;
-    min-height: 40px;
-    padding: 0;
-    justify-content: center;
-  }
-  .workspace-toolbar .bx--btn,
-  .view-controls .bx--btn {
-    min-height: 40px;
-  }
-}
-@media (max-width: 760px) {
-  .save-status {
-    display: none;
-  }
-}
-.workspace-toolbar .chart-actions,
-.run-tab-actions .chart-actions {
-  flex: none;
-  flex-wrap: nowrap;
-}
-.workspace-toolbar .chart-actions .bx--btn,
-.run-tab-actions .chart-actions .bx--btn {
-  white-space: nowrap;
-}
-.workspace-toolbar .panel-search .bx--search-input:placeholder-shown,
 .run-tab-actions .panel-search .bx--search-input:placeholder-shown {
   padding-right: 8px;
 }
@@ -4489,7 +4191,6 @@ aside {
     min-height: 44px;
   }
 }
-
 .chip-choice-field .bx--text-input {
   border-bottom: 0;
 }
@@ -4559,7 +4260,6 @@ aside {
 .editor-choice .bx--list-box__menu {
   transition: none;
 }
-
 .column-picker-order .bx--btn--icon-only[aria-disabled='true'] .bx--btn__icon,
 .column-picker-order
   .bx--btn--icon-only[aria-disabled='true']
@@ -4580,7 +4280,6 @@ aside {
     max-height: 48px;
   }
 }
-
 /* Model fields always have a value (Automatic is an option), so Clear has no effect. */
 .chat-composer-controls > .bx--btn--icon-only {
   flex: none;
@@ -4706,7 +4405,7 @@ aside {
     height: 100%;
   }
 }
-/* The workspace toolbar and its notices stay at the top while panels scroll beneath. */
+/* Notices, and the page controls on phones, stay at the top while panels scroll beneath. */
 .workspace-top.pinned {
   position: sticky;
   top: 0;
@@ -4757,7 +4456,6 @@ aside {
   font-size: 14px;
   color: var(--cds-text-secondary);
 }
-
 /* Project overview: headings, metric tiles, small charts and legends. */
 .overview-heading {
   display: flex;
@@ -4898,18 +4596,6 @@ aside {
     margin-left: auto;
   }
 }
-/* Header breadcrumb: the project name shortens first; Projects and the current page stay readable. */
-.project-bar .bx--breadcrumb .bx--breadcrumb-item:not(:last-child) {
-  flex: 0 0 auto;
-}
-.project-bar .bx--breadcrumb .bx--breadcrumb-item:nth-child(2):not(:last-child) {
-  flex: 0 1 auto;
-  min-width: 2.5rem;
-}
-.project-bar .bx--breadcrumb .bx--breadcrumb-item:last-child {
-  flex: 0 1 auto;
-  min-width: 4rem;
-}
 .header-actions .confirmation-dot {
   position: relative;
   left: -14px;
@@ -4922,14 +4608,8 @@ aside {
   pointer-events: none;
 }
 @media (max-width: 760px) {
-  /* Phones keep the header to one row: the breadcrumb shows its last two items. */
+  /* Phones keep the header to one row: the menu, the page title and icon actions. */
   .bx--header__name {
-    display: none;
-  }
-  .project-bar {
-    border-left: 0;
-  }
-  .project-bar .bx--breadcrumb .bx--breadcrumb-item:not(:nth-last-child(-n + 2)) {
     display: none;
   }
   .header-actions .bx--btn--icon-only {
@@ -4939,14 +4619,6 @@ aside {
   }
   .header-actions .bx--btn--icon-only svg {
     display: block;
-  }
-}
-@media (max-width: 1055px) {
-  .project-switcher select {
-    max-width: 140px;
-  }
-  .project-bar .bx--breadcrumb .bx--breadcrumb-item:first-child:nth-last-child(4) {
-    display: none;
   }
 }
 .header-actions .assistant-button svg {
@@ -4994,7 +4666,6 @@ aside {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .metric-picker-label {
   width: 100%;
   display: flex;
@@ -5002,7 +4673,6 @@ aside {
   justify-content: space-between;
   gap: 0.25rem 1rem;
 }
-
 /* Layout choices in panel settings show an icon beside each label. */
 .layout-choice {
   display: grid;
