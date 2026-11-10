@@ -77,6 +77,14 @@ export function create({ element }: { element: HTMLElement }): Renderer {
     /** What Coverflow shows, kept while the panel stays. */
     flow = newFlow();
   const kind = () => ctx!.panel.plugin;
+  // Coverflow with run tabs shows one run alone. The host is told which, so its slider spans
+  // that run's media (docs/plugins.md#media-data).
+  let announced: string | undefined;
+  function announceRun(run: string | undefined) {
+    if (run === announced) return;
+    announced = run;
+    element.dispatchEvent(new CustomEvent('randl:media-run', { detail: { run }, bubbles: true }));
+  }
   /** Says that a run has no media at or before the position shown on the X axis. */
   const noEntry = () => {
     const axis = ctx!.data.xAxis || '_step',
@@ -533,6 +541,7 @@ export function create({ element }: { element: HTMLElement }): Renderer {
             pausePlayers(owner);
             view.key = runKey(groups[index][0]);
             show(made, view, true);
+            if (view === flow) announceRun(view.key);
           },
         },
       },
@@ -686,8 +695,10 @@ export function create({ element }: { element: HTMLElement }): Renderer {
         }
         // The view's run, file and position are kept while data change.
         for (const [made, view] of views) show(made, view, rebuild);
+        announceRun(flow.tabs ? flow.key : undefined);
         return;
       }
+      announceRun(undefined);
       if (carousel) dropCarousel(carousel);
       carousel = undefined;
       // Quick Look follows new data too.

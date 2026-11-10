@@ -65,7 +65,7 @@ try {
   await page.goto(base + '/' + project + '/workspace');
   await page.getByRole('button', { name: 'App settings', exact: true }).click();
   await page.getByRole('tab', { name: en['assistant.title'], exact: true }).click();
-  const settings = page.getByRole('dialog', { name: en['app.settings.title'], exact: true });
+  const settings = page.getByRole('region', { name: en['app.settings.title'], exact: true });
   await settings.getByRole('combobox', { name: 'Provider', exact: true }).fill(providerId);
   const providerInfo = (await call('/api/agent/providers')).providers.find(
     (p) => p.id === providerId,

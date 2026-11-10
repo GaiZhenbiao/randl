@@ -750,6 +750,77 @@ try {
   await expect(label).toHaveText('Step 20');
   checks.push('Latest follows newly logged steps; a missing file says so');
 
+  // Coverflow's run tabs show one run alone: the slider then spans that run's oldest to
+  // latest media, not every run's, and Latest still shows each run's newest.
+  const ranged2 = { project: entity + '/range-' + Date.now() };
+  projects.push(ranged2.project);
+  for (const [name, steps] of [
+    ['early', [0, 10, 20]],
+    ['late', [5, 40]],
+  ]) {
+    await call('/graphql', {
+      query: 'mutation UpsertBucket { upsertBucket }',
+      variables: { entity, project: ranged2.project.split('/')[1], name },
+    });
+    await call(`/files/${ranged2.project}/${name}/file_stream`, {
+      files: {
+        'wandb-history.jsonl': {
+          offset: 0,
+          content: steps.map((step) =>
+            JSON.stringify({
+              _step: step,
+              pairs: {
+                _type: 'images/separated',
+                count: 2,
+                filenames: [0, 1].map((i) => `media/images/${name}_${step}_${i}.png`),
+                width: 4,
+                height: 3,
+              },
+            }),
+          ),
+        },
+      },
+      complete: true,
+      exitcode: 0,
+    });
+  }
+  const rangeView = await createView(
+    ranged2.project,
+    [{ id: 'pairs', plugin: 'image', metric: 'pairs', title: 'pairs', section: 'r', settings: { layout: 'coverflow' } }],
+    {
+      visible: ['early', 'late'].map((name) => ranged2.project + '/' + name),
+      sections: [{ id: 'r', name: 'r' }],
+      sectionLayouts: { r: { width: 640, height: 420, rows: 1 } },
+    },
+  );
+  await open(rangeView);
+  const pairs = panel('pairs'),
+    pairsThumb = pairs.getByRole('slider', { name: 'Step', exact: true }),
+    pairsRange = async () => [
+      await pairsThumb.getAttribute('aria-valuemin'),
+      await pairsThumb.getAttribute('aria-valuemax'),
+      await pairs.locator('.media-step-label').textContent(),
+    ];
+  const shownTab = async () =>
+    (await pairs.locator('.carousel-chip[aria-selected="true"]').innerText()).trim();
+  const own = { early: ['0', '20', 'Step 20'], late: ['5', '40', 'Step 40'] };
+  const firstTab = await shownTab();
+  await expect.poll(pairsRange).toEqual(own[firstTab]);
+  const otherTab = firstTab === 'early' ? 'late' : 'early';
+  await pairs.locator('.carousel-chip', { hasText: otherTab }).click();
+  await expect.poll(pairsRange).toEqual(own[otherTab]);
+  // The grid shows every run, so the slider spans them all.
+  const gridRange = await call('/api/views/' + rangeView.id);
+  gridRange.body.panels[0].settings = { layout: 'grid' };
+  await call(
+    '/api/views/' + rangeView.id,
+    { name: gridRange.name, project: gridRange.project, version: gridRange.version, body: gridRange.body },
+    'PUT',
+  );
+  await open(rangeView);
+  await expect.poll(pairsRange).toEqual(['0', '40', 'Step 40']);
+  checks.push("Coverflow run tabs: the slider spans the shown run's media; the grid spans all runs");
+
   // Automatic panels: logged lists of videos and audio get video and audio panels, and an
   // audio list is a tile per clip with its caption.
   const lists = { project: entity + '/lists-' + Date.now(), run: '' };

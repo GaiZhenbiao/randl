@@ -957,51 +957,46 @@ try {
       await page.evaluate((theme) => localStorage.setItem('randl.theme', theme), theme);
       await page.setViewportSize({ width, height });
       await page.reload();
+      // Navigating waits for the reloaded workspace; its load would otherwise finish on top.
+      await expect(page.locator('.view-controls')).toHaveAttribute('data-view-id', /./);
+      await page.waitForLoadState('networkidle');
       for (const keyboard of [false, true]) {
-        // Phones keep App settings in the header's navigation menu.
+        // App settings are a page, opened from the navigation: its rail, or on phones the
+        // header's menu.
         if (width <= 760)
           await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
-        const trigger = page.getByRole('button', { name: 'App settings', exact: true });
+        const trigger = page.getByRole(width <= 760 ? 'link' : 'button', {
+          name: 'App settings',
+          exact: true,
+        });
         if (keyboard) {
           await trigger.focus();
           await page.keyboard.press('Enter');
         } else await trigger.click();
-        const settings = page.getByRole('dialog', { name: 'App settings', exact: true });
+        const settings = page.getByRole('region', { name: 'App settings', exact: true });
         await expect(settings).toBeVisible();
-        await expect
-          .poll(() => settings.evaluate((node) => node.contains(document.activeElement)))
-          .toBe(true);
+        await expect(page).toHaveURL(/[?&]page=app-settings/);
+        // The accent colors are one native radio group: Tab leaves it.
         for (const index of [0, 3]) {
           const accent = settings.locator('input[name="accent"]').nth(index);
           await accent.check();
           await accent.focus();
           await page.keyboard.press('Tab');
-          if (width <= 760) {
-            await expect(
-              settings.getByRole('button', { name: 'Close', exact: true }),
-            ).toBeFocused();
-            await page.keyboard.press('Shift+Tab');
-            await expect(accent).toBeFocused();
-          } else
-            assert.equal(
-              await settings.evaluate((node) => node.contains(document.activeElement)),
-              false,
-            );
+          assert.equal(
+            await page.evaluate(() => document.activeElement?.getAttribute('name') === 'accent'),
+            false,
+          );
         }
-        await settings.locator('h2').focus();
-        await page.keyboard.press('Escape');
+        // Back returns to the page the settings were opened from.
+        await page.goBack();
         await expect(settings).toHaveCount(0);
-        // Focus returns to App settings, or on phones to the button of the menu that holds it.
-        await expect(
-          width <= 760
-            ? page.getByRole('button', { name: 'Open navigation', exact: true })
-            : trigger,
-        ).toBeFocused();
+        await expect(page.locator('.view-controls')).toHaveAttribute('data-view-id', /./);
+        await page.waitForLoadState('networkidle');
       }
     }
   }
   console.log(
-    'PASS conversation confirmation/retry focus, settings initial focus and native radio-group Tab behavior',
+    'PASS conversation confirmation/retry focus, the settings page and native radio-group Tab behavior',
   );
 
   assert.deepEqual(providerErrors, []);

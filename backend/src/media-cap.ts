@@ -6,7 +6,8 @@ import { runFolder } from './project-store.js';
 // The media limit per run (docs/storage.md#media-limit). When the files of a run's logged
 // media exceed the limit, entries are removed until they fit again. Removal thins the run
 // instead of dropping its oldest media: each key gives up the entry whose neighbors are
-// closest, so what remains is spread over the whole run.
+// closest on the workspace's X axis, so what remains is spread over the whole run as the
+// workspace shows it.
 
 /** The server setting that holds the limit: whether it is on, and its size in mebibytes. */
 export const mediaCapSetting = 'media-limit';
@@ -32,6 +33,8 @@ async function capBytes(db: DB) {
 export type CapEntry = {
   metric: number;
   step: number;
+  /** The entry's place on the axis that spacing is measured on; its step when absent. */
+  x?: number;
   files: { path: string; bytes: number }[];
   /** False while some file has not been uploaded; such entries are never removed. */
   complete: boolean;
@@ -43,12 +46,15 @@ type Node = {
   removed?: boolean;
 };
 type Candidate = { node: Node; first: boolean; span: number };
+const place = (entry: CapEntry) => entry.x ?? entry.step;
 const before = (a: Candidate, b: Candidate) =>
   a.first !== b.first
     ? !a.first
     : a.span !== b.span
       ? a.span < b.span
-      : a.node.entry.step < b.node.entry.step;
+      : place(a.node.entry) !== place(b.node.entry)
+        ? place(a.node.entry) < place(b.node.entry)
+        : a.node.entry.step < b.node.entry.step;
 class Heap {
   private items: Candidate[] = [];
   push(item: Candidate) {
@@ -91,14 +97,14 @@ class Heap {
 function candidate(node: Node): Candidate | undefined {
   if (node.removed || !node.next || !node.entry.complete) return;
   return node.previous
-    ? { node, first: false, span: node.next.entry.step - node.previous.entry.step }
-    : { node, first: true, span: node.next.entry.step - node.entry.step };
+    ? { node, first: false, span: place(node.next.entry) - place(node.previous.entry) }
+    : { node, first: true, span: place(node.next.entry) - place(node.entry) };
 }
 /**
  * The entries to remove so that a run's media fit `target` bytes, when they exceed `cap`.
  * Each removal comes from the key that holds the most bytes and takes the entry whose
- * neighbors are closest (the earliest among equals), so every key keeps an even spread of
- * steps, its first entry for as long as others remain, and always its newest. A file that
+ * neighbors are closest on the axis (the earliest among equals), so every key keeps an even
+ * spread along it, its first entry for as long as others remain, and always its newest. A file that
  * several entries name is freed with the last of them.
  */
 export function planMediaThinning(
@@ -128,7 +134,7 @@ export function planMediaThinning(
     }
   const size = (entry: CapEntry) => entry.files.reduce((sum, file) => sum + file.bytes, 0);
   for (const [metric, list] of byKey) {
-    list.sort((a, b) => a.step - b.step);
+    list.sort((a, b) => place(a) - place(b) || a.step - b.step);
     const key = { bytes: 0, heap: new Heap() },
       nodes: Node[] = list.map((entry) => ({ entry }));
     for (const [index, node] of nodes.entries()) {
@@ -267,7 +273,7 @@ export class MediaCap {
   }
   /** A run's media entries with the sizes of their uploaded files. */
   async measure(run: string): Promise<CapEntry[]> {
-    const rows: { metric: number; step: number; paths: string[] }[] = await this.db.call(
+    const rows: { metric: number; step: number; x: number; paths: string[] }[] = await this.db.call(
         'runMediaFiles',
         run,
       ),
@@ -287,6 +293,7 @@ export class MediaCap {
     return rows.map((row) => ({
       metric: row.metric,
       step: row.step,
+      x: row.x,
       complete: row.paths.every((path) => sizes.get(path) != null),
       files: row.paths.flatMap((path) => {
         const bytes = sizes.get(path);

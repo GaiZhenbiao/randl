@@ -2335,6 +2335,24 @@ aside {
   z-index: 4;
   background: var(--cds-ui-01);
 }
+/* App settings: a page of its own, a readable column with its tabs kept in view. */
+.app-settings-page {
+  max-width: 720px;
+}
+.app-settings-page > .bx--tabs {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  max-width: 100%;
+  background: var(--cds-ui-background);
+}
+.app-settings-page .bx--tab-content {
+  padding: 24px 0;
+}
+.app-settings-account {
+  padding-top: 16px;
+  border-top: 1px solid var(--cds-ui-03);
+}
 .side-drawer-content:has(> .bx--tabs, > .editor-categories) {
   padding-top: 0;
 }
@@ -4434,8 +4452,7 @@ aside {
   max-width: none;
 }
 /* Settings drawers show every category tab at the drawer width. */
-.side-drawer .editor-categories .bx--tabs__nav-link,
-.side-drawer-content > .bx--tabs .bx--tabs__nav-link {
+.side-drawer .editor-categories .bx--tabs__nav-link {
   width: auto;
   padding-inline: 8px;
 }

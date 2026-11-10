@@ -298,15 +298,15 @@ try {
   );
   checks.push('inline copy action and uniform run-page empty states');
 
-  // App settings: General tab, Theme field, light drawer fields, field-height Install.
+  // App settings page: General tab, Theme field, field fill, field-height Install.
   await page.locator('#app-settings').click();
-  const dialog = page.locator('.side-drawer');
+  const dialog = page.locator('.app-settings-page');
   await expect(dialog.getByRole('tab', { name: 'General' })).toBeVisible();
   await expect(dialog.getByRole('combobox', { name: 'Theme', exact: true })).toBeVisible();
   const fill = await dialog
     .getByRole('combobox', { name: 'Theme', exact: true })
     .evaluate((e) => getComputedStyle(e).backgroundColor);
-  assert.equal(fill, 'rgb(244, 244, 244)', 'drawer fields use the light field fill');
+  assert.equal(fill, 'rgb(255, 255, 255)', 'the page\'s fields stand out from its background');
   await dialog.getByRole('tab', { name: 'Panel plugins' }).click();
   const install = await page.evaluate(() => ({
     input: document.querySelector('#plugin-source').getBoundingClientRect().height,
@@ -316,7 +316,7 @@ try {
   assert.equal(install.button, install.input, 'Install matches the source field height');
   checks.push('App settings labels, drawer field fill and Install height');
 
-  // App settings open from the navigation's end, beside Projects and Server; every tab shows.
+  // App settings are a page of their own, beside Projects and Server; every tab shows.
   assert.equal(
     await page.locator('.bx--header #app-settings').count(),
     0,
@@ -324,7 +324,12 @@ try {
   );
   const rail = page.getByRole('navigation', { name: 'Project pages', exact: true });
   for (const name of ['Projects', 'Server', 'App settings'])
-    await expect(rail.locator('.rail-global').getByRole('button', { name, exact: true })).toBeVisible();
+    await expect(rail.getByRole('button', { name, exact: true })).toBeVisible();
+  await expect(rail.getByRole('button', { name: 'App settings', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page).toHaveURL(/[?&]page=app-settings/);
   for (const name of ['General', 'Assistant', 'Panel plugins', 'Storage'])
     await expect(dialog.getByRole('tab', { name, exact: true })).toBeInViewport({ ratio: 1 });
   // Storage: the media limit is a switch with its size, never a special number.
@@ -354,7 +359,7 @@ try {
     }).then((response) => response.json()),
   );
   assert.deepEqual(storedLimit, { mediaLimit: { enabled: false, megabytes: 750 } });
-  checks.push('App settings in the navigation; media limit switch and size');
+  checks.push('App settings page in the navigation; media limit switch and size');
   await page.close();
 
   // Mobile: the page's name stays visible in the header's one row and the runs drawer closes from the trailing edge.

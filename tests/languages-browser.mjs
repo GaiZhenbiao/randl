@@ -96,10 +96,10 @@ try {
     await page.getByRole('button', { name: en['app.settings.title'], exact: true }).click();
     await page.getByRole('combobox', { name: en['app.settings.language.label'], exact: true }).selectOption(lang);
     await expect(page.locator('html')).toHaveAttribute('lang', lang);
-    await page
-      .getByRole('dialog', { name: copy['app.settings.title'], exact: true })
-      .getByRole('button', { name: copy['common.action.close'], exact: true })
-      .click();
+    await expect(
+      page.getByRole('region', { name: copy['app.settings.title'], exact: true }),
+    ).toBeVisible();
+    await page.goBack();
     await expect(page.locator('.view-controls')).toHaveAttribute('data-view-id', view.id);
     await expect(page.locator('.view-name .bx--visually-hidden')).toHaveText(
       copy['views.picker.saved'].replace('{name}', 'Settings'),

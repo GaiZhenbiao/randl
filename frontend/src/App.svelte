@@ -111,14 +111,14 @@
   let runsPreference = $state(localStorage.getItem('randl.runs-sidebar') || 'auto'),
     menuOpen = $state(false);
   // The brand and missing-object pages link to the project list; modified clicks open it elsewhere.
-  // App settings open from the navigation, beside Projects and Server.
-  function openAppSettings() {
+  // App settings are a page of their own, beside Projects and Server.
+  async function openAppSettings(tab?: number) {
     menuOpen = false;
     agentDialog = false;
-    panelDialog = false;
-    trashOpen = false;
-    drawer = false;
-    settings = true;
+    // One history entry, so Back returns to the page the settings were opened from.
+    if (project && !(await loadProject(''))) return;
+    if (tab !== undefined) settingsTab = tab;
+    await navigate('app-settings');
   }
   async function openProjectList(event: MouseEvent) {
     if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
@@ -483,6 +483,7 @@
   const globalPages: { id: string; name: MessageKey; icon: typeof Dashboard }[] = [
     { id: 'overview', name: 'nav.projects', icon: Dashboard },
     { id: 'server', name: 'server.title', icon: Activity },
+    { id: 'app-settings', name: 'app.settings.title', icon: SettingsAdjust },
   ];
   let runs = $state<Run[]>([]),
     projects = $state<ProjectSummary[]>([]),
@@ -728,19 +729,15 @@
     (shownResolved = steady(shownResolved, resolveRunColors(projectRuns, storedColors, dark))),
   );
   let help = $state(false),
-    settings = $state(false),
     panelDialog = $state(false),
     projectDialog = $state(false),
     viewDialog = $state(false),
     agentDialog = $state(false),
     deleteViewDialog = $state(false);
   let settingsTab = $state(0);
-  let auxiliaryOpen = $derived(
-    settings || agentDialog || trashOpen || (panelDialog && settingsScope !== null),
-  );
+  let auxiliaryOpen = $derived(agentDialog || trashOpen || (panelDialog && settingsScope !== null));
   function openTrash() {
     drawer = false;
-    settings = false;
     agentDialog = false;
     panelDialog = false;
     trashOpen = true;
@@ -799,7 +796,6 @@
     pluginBusy = $state(false),
     pluginError = $state<Message>('');
   async function openAgent() {
-    settings = false;
     panelDialog = false;
     trashOpen = false;
     drawer = false;
@@ -1784,7 +1780,6 @@
     untrack(() => prepareCatalog(candidates.map(([id]) => id)));
   });
   function openPanel(panel?: Panel, section?: string) {
-    settings = false;
     agentDialog = false;
     trashOpen = false;
     settingsScope = null;
@@ -1817,7 +1812,6 @@
     panelDialog = true;
   }
   function openDefaults(section?: string) {
-    settings = false;
     agentDialog = false;
     trashOpen = false;
     drawer = false;
@@ -1915,7 +1909,7 @@
     activeRun = null;
     artifactId = '';
     routeError = '';
-    page = !project ? (next === 'server' ? 'server' : 'overview') : next;
+    page = !project ? (globalPages.some((item) => item.id === next) ? next : 'overview') : next;
     if (wasRun) {
       if (parentView?.project === project) {
         view = parentView;
@@ -2531,7 +2525,9 @@
               : $t('nav.projects')
             : page === 'server'
               ? $t('server.title')
-              : page === 'not-found'
+              : page === 'app-settings'
+                ? $t('app.settings.title')
+                : page === 'not-found'
                 ? $t(routeError || 'app.errors.pageNotFound')
                 : $t(pages.find((p) => p.id === page)?.name))}
     </h1>
@@ -2679,6 +2675,57 @@
       void refresh().then(route);
     }}
   />{:else}
+  {#snippet appSettingsPage()}
+    <section class="app-settings-page" aria-label={$t('app.settings.title')}>
+      <Tabs autoWidth bind:selected={settingsTab}>
+        <Tab label={$t('app.settings.tabs.general')} /><Tab label={$t('assistant.title')} /><Tab
+          label={$t('app.settings.tabs.plugins')}
+        /><Tab label={$t('app.settings.tabs.storage')} />
+        <svelte:fragment slot="content">
+          <TabContent
+            ><div class="form-stack">
+              <LanguagePicker />
+              <Select
+                labelText={$t('app.settings.theme.label')}
+                selected={themeChoice}
+                on:change={(event) => (themeChoice = (event.target as HTMLSelectElement).value)}
+                ><SelectItem value="system" text={$t('app.settings.theme.system')} /><SelectItem
+                  value="g10"
+                  text={$t('app.settings.theme.light')}
+                /><SelectItem value="g100" text={$t('app.settings.theme.dark')} /></Select
+              >
+              <fieldset class="palette">
+                <legend>{$t('app.settings.accent.label')}</legend>{#each accents as [name, hex]}<label
+                    ><input type="radio" name="accent" value={hex} bind:group={accent} /><span
+                      style:background={hex}
+                    ></span>{$t(name)}</label
+                  >{/each}
+              </fieldset>
+            </div></TabContent
+          >
+          <TabContent
+            >{#if settingsTab === 1}<AgentSettings
+                onRequestClose={() => {}}
+              />{/if}</TabContent
+          >
+          <TabContent
+            >{#if settingsTab === 2}{@render pluginSettingsContent()}{/if}</TabContent
+          >
+          <TabContent>{#if settingsTab === 3}<StorageSettings />{/if}</TabContent>
+        </svelte:fragment>
+      </Tabs>
+      {#if authRequired}<div class="app-settings-account">
+          <Button
+            kind="tertiary"
+            size="small"
+            on:click={async () => {
+              await api('/api/auth/logout', {});
+              authenticated = false;
+            }}>{$t('auth.signOut')}</Button
+          >
+        </div>{/if}
+    </section>
+  {/snippet}
   <Header
     inert={width <= 760 && (auxiliaryOpen || drawer)}
     platformName="randl"
@@ -2741,7 +2788,7 @@
           href="/?page=overview"
           icon={Folders}
           text={$t('nav.projects')}
-          isSelected={!project && page !== 'server'}
+          isSelected={!project && page === 'overview'}
           on:click={(event) =>
             followNavigation(event, async () =>
               project ? changeProject('') : navigate('overview'),
@@ -2790,17 +2837,14 @@
             ></button
           >
         </li>
-        <li class="bx--side-nav__item">
-          <button
-            type="button"
-            id="app-settings"
-            class="bx--side-nav__link"
-            onclick={openAppSettings}
-            ><span class="bx--side-nav__icon bx--side-nav__icon--small"><SettingsAdjust /></span><span
-              class="bx--side-nav__link-text">{$t('app.settings.title')}</span
-            ></button
-          >
-        </li></SideNavItems
+<SideNavLink
+          href="/?page=app-settings"
+          id="app-settings"
+          icon={SettingsAdjust}
+          text={$t('app.settings.title')}
+          isSelected={!project && page === 'app-settings'}
+          on:click={(event) => followNavigation(event, () => openAppSettings())}
+        /></SideNavItems
       ></SideNav
     >{/if}
   <div
@@ -2809,7 +2853,6 @@
     class:drawer-open={drawer}
     class:project-only={page !== 'workspace' && page !== 'run'}
     class:settings-open={(panelDialog && settingsScope !== null) ||
-      settings ||
       agentDialog ||
       trashOpen}
     class:runs-collapsed={!showRunSidebar}
@@ -2820,33 +2863,34 @@
           kind="ghost"
           size="small"
           icon={item.icon}
+          id={!project && item.id === 'app-settings' && width > 760 ? 'app-settings' : undefined}
           title={$t(item.name)}
+          aria-label={$t(item.name)}
           aria-pressed={page === item.id || (page === 'run' && item.id === 'workspace')}
           on:click={() => navigate(item.id)}
-          >{item.name === 'nav.settings' ? $t('nav.settingsShort') : $t(item.name)}</Button
+          >{item.name === 'nav.settings'
+            ? $t('nav.settingsShort')
+            : item.id === 'app-settings'
+              ? $t('app.settings.short')
+              : $t(item.name)}</Button
         >{/each}
-      <!-- What belongs to the whole server ends the rail: the other projects, the server's
-           status and the app's settings. Phones have these in the header's menu. -->
-      {#if width > 760}<div class="rail-global">
-          {#if project}{#each globalPages as item}<Button
-                kind="ghost"
-                size="small"
-                icon={item.id === 'overview' ? Folders : item.icon}
-                title={$t(item.name)}
-                on:click={async () => {
-                  await changeProject('');
-                  if (item.id !== 'overview') await navigate(item.id);
-                }}>{$t(item.name)}</Button
-              >{/each}{/if}<Button
-            kind="ghost"
-            size="small"
-            icon={SettingsAdjust}
-            id="app-settings"
-            title={$t('app.settings.title')}
-            aria-label={$t('app.settings.title')}
-            aria-pressed={settings}
-            on:click={openAppSettings}>{$t('app.settings.short')}</Button
-          >
+      <!-- Inside a project, what belongs to the whole server ends the rail: the other
+           projects, the server's status and the app's settings. Phones have these in the
+           header's menu. -->
+      {#if project && width > 760}<div class="rail-global">
+          {#each globalPages as item}<Button
+              kind="ghost"
+              size="small"
+              icon={item.id === 'overview' ? Folders : item.icon}
+              id={item.id === 'app-settings' ? 'app-settings' : undefined}
+              title={$t(item.name)}
+              aria-label={$t(item.name)}
+              on:click={async () => {
+                if (item.id === 'app-settings') return openAppSettings();
+                await changeProject('');
+                if (item.id !== 'overview') await navigate(item.id);
+              }}>{item.id === 'app-settings' ? $t('app.settings.short') : $t(item.name)}</Button
+            >{/each}
         </div>{/if}
     </nav>
     {#if page === 'workspace' || page === 'run'}<aside
@@ -3165,7 +3209,11 @@
           }}
           ongroup={(event) => openRunControl('group', event)}
           onsort={(event) => openRunControl('sort', event)}
-        />{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else}<ProjectPages
+        />{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div
+          class="project-page-content"
+        >
+          {@render appSettingsPage()}
+        </div>{:else}<ProjectPages
           revision={workspaceRevision}
           {page}
           {project}
@@ -3478,54 +3526,7 @@
         </div>{/each}
     </div>
   {/snippet}
-  {#if settings}<SideDrawer title={$t('app.settings.title')} onClose={() => (settings = false)}>
-      <Tabs autoWidth bind:selected={settingsTab}>
-        <Tab label={$t('app.settings.tabs.general')} /><Tab label={$t('assistant.title')} /><Tab
-          label={$t('app.settings.tabs.plugins')}
-        /><Tab label={$t('app.settings.tabs.storage')} />
-        <svelte:fragment slot="content">
-          <TabContent
-            ><div class="form-stack">
-              <LanguagePicker />
-              <Select
-                labelText={$t('app.settings.theme.label')}
-                selected={themeChoice}
-                on:change={(event) => (themeChoice = (event.target as HTMLSelectElement).value)}
-                ><SelectItem value="system" text={$t('app.settings.theme.system')} /><SelectItem
-                  value="g10"
-                  text={$t('app.settings.theme.light')}
-                /><SelectItem value="g100" text={$t('app.settings.theme.dark')} /></Select
-              >
-              <fieldset class="palette">
-                <legend>{$t('app.settings.accent.label')}</legend>{#each accents as [name, hex]}<label
-                    ><input type="radio" name="accent" value={hex} bind:group={accent} /><span
-                      style:background={hex}
-                    ></span>{$t(name)}</label
-                  >{/each}
-              </fieldset>
-            </div></TabContent
-          >
-          <TabContent
-            >{#if settingsTab === 1}<AgentSettings
-                onRequestClose={() => (settings = false)}
-              />{/if}</TabContent
-          >
-          <TabContent
-            >{#if settingsTab === 2}{@render pluginSettingsContent()}{/if}</TabContent
-          >
-          <TabContent>{#if settingsTab === 3}<StorageSettings />{/if}</TabContent>
-        </svelte:fragment>
-      </Tabs>
-      {#snippet footer()}{#if authRequired}<Button
-            kind="ghost"
-            size="small"
-            on:click={async () => {
-              await api('/api/auth/logout', {});
-              settings = false;
-              authenticated = false;
-            }}>{$t('auth.signOut')}</Button
-          >{/if}{/snippet}
-    </SideDrawer>{/if}
+
   <Modal
     iconDescription={$t('common.action.close')}
     bind:open={projectDialog}
@@ -3687,11 +3688,7 @@
           onRequestClose={() => (agentDialog = false)}
           {project}
           viewId={view?.version ? view.id : ''}
-          onSettings={() => {
-            agentDialog = false;
-            settingsTab = 1;
-            settings = true;
-          }}
+          onSettings={() => void openAppSettings(1)}
           onChange={refresh}
         />{:catch error}<InlineNotification
           kind="error"

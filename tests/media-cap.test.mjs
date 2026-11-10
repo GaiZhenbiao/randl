@@ -312,3 +312,114 @@ test('a server thins runs already over the media limit when it starts', async (t
     ),
   );
 });
+test('media limit thinning spaces entries on the axis they are placed on', () => {
+  // Evenly spaced steps whose places on the axis bunch up at the end: the bunch thins first.
+  const entries = [0, 10, 20, 30, 40, 50].map((step, index) => ({
+    ...entry(1, step),
+    x: [0, 100, 200, 300, 310, 320][index],
+  }));
+  assert.deepEqual(steps(planMediaThinning(entries, 59, 40), entries, 1), [0, 10, 20, 50]);
+  // Without places the same steps lose every other entry.
+  const plain = [0, 10, 20, 30, 40, 50].map((step) => entry(1, step));
+  assert.deepEqual(steps(planMediaThinning(plain, 59, 40), plain, 1), [0, 20, 40, 50]);
+});
+test('the media limit places entries on the X axis of the workspace', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'randl-cap-axis-'));
+  const { app, db, tools, mediaCap } = await createServer(dir);
+  t.after(async () => {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const run = await db.call('upsert', { entity: 'e', project: 'axis', name: 'r' });
+  const updates = [0, 100, 200, 300, 310, 320];
+  await db.call('ingest', run.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: 0,
+        content: updates.map((update, i) =>
+          JSON.stringify({
+            _step: i * 10,
+            update,
+            clip: { _type: 'video-file', path: `media/videos/c_${i}.mp4` },
+          }),
+        ),
+      },
+    },
+  });
+  const places = async () => (await db.call('runMediaFiles', run.id)).map((row) => row.x);
+  assert.deepEqual(await places(), [0, 10, 20, 30, 40, 50]);
+  // The X axis of the project's most recently changed view places the entries.
+  const view = await tools.execute('view_create', { project: 'e/axis', name: 'Workspace' });
+  view.body.plotSettings = { xAxis: 'update' };
+  await tools.execute('view_save', { id: view.id, name: view.name, project: view.project, version: view.version, body: view.body });
+  assert.deepEqual(await places(), updates);
+  await tools.execute('settings_update', { mediaLimit: { enabled: false } });
+  for (let i = 0; i < 6; i++)
+    await app.inject({
+      method: 'PUT',
+      url: `/upload/e/axis/r/media/videos/c_${i}.mp4`,
+      payload: Buffer.alloc(1024 * 1024, 1),
+    });
+  await db.call('settingSet', 'media-limit', { enabled: true, megabytes: 5 });
+  assert.equal((await mediaCap.apply(run.id, 5 * 1024 * 1024)).entries, 2);
+  const media = async (body) =>
+    (
+      await app.inject({
+        url: '/api/media',
+        method: 'POST',
+        payload: { runs: [run.id], metric: 'clip', ...body },
+      })
+    ).json();
+  assert.deepEqual((await media({ xAxis: 'update' })).xValues, [0, 100, 200, 320]);
+});
+test('media: the catalog of one run, with Latest still the newest of all runs', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'randl-catalog-'));
+  const { app, db } = await createServer(dir);
+  t.after(async () => {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+  const ids = [];
+  for (const [name, steps] of [
+    ['a', [0, 10, 20]],
+    ['b', [5, 40]],
+  ]) {
+    const run = await db.call('upsert', { entity: 'e', project: 'c', name, displayName: name });
+    await db.call('ingest', run.id, {
+      files: {
+        'wandb-history.jsonl': {
+          offset: 0,
+          content: steps.map((step) =>
+            JSON.stringify({
+              _step: step,
+              epoch: step / 5,
+              s: { _type: 'image-file', path: `media/images/${step}.png` },
+            }),
+          ),
+        },
+      },
+    });
+    ids.push(run.id);
+  }
+  const media = async (body) =>
+    (
+      await app.inject({
+        url: '/api/media',
+        method: 'POST',
+        payload: { runs: ids, metric: 's', ...body },
+      })
+    ).json();
+  for (const [axis, scale] of [
+    [undefined, 1],
+    ['epoch', 1 / 5],
+  ]) {
+    const all = await media({ xAxis: axis }),
+      own = await media({ xAxis: axis, xRun: ids[0] });
+    assert.deepEqual(all.xValues, [0, 5, 10, 20, 40].map((step) => step * scale));
+    assert.deepEqual(own.xValues, [0, 10, 20].map((step) => step * scale));
+    // Latest is the newest of all runs, so the other runs still show their newest media.
+    assert.equal(own.x, 40 * scale);
+    assert.deepEqual(own.entries.map((item) => item.step), [20, 40]);
+  }
+  assert.deepEqual((await media({ xRun: 'e/c/missing' })).xValues, [0, 5, 10, 20, 40]);
+});

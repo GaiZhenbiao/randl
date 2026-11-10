@@ -1709,22 +1709,25 @@ try {
     fixture,
     async ({ page }) => {
       await page.getByRole('button', { name: 'App settings', exact: true }).click();
-      let dialog = page.locator('[role="dialog"]:visible');
+      let dialog = page.getByRole('region', { name: 'App settings', exact: true });
+      await expect(dialog.getByRole('radio').first()).toBeVisible();
       const names = await dialog
         .getByRole('radio')
         .evaluateAll((elements) => elements.map((e) => e.closest('label').textContent.trim()));
       assert.ok(names.length >= 2, 'Accent palette is missing');
-      await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.goBack();
+      await expect(dialog).toHaveCount(0);
       for (const dark of [true, false]) {
         for (const name of names) {
           await page.getByRole('button', { name: 'App settings', exact: true }).click();
-          dialog = page.locator('[role="dialog"]:visible');
+          dialog = page.getByRole('region', { name: 'App settings', exact: true });
           const appearance = dialog.getByRole('combobox', { name: 'Theme', exact: true });
           await expect(appearance.locator('option')).toHaveText(['System', 'Light', 'Dark']);
           await appearance.selectOption(dark ? 'g100' : 'g10');
           await expect(appearance).toHaveValue(dark ? 'g100' : 'g10');
           await dialog.getByRole('radio', { name, exact: true }).check();
-          await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+          await page.goBack();
+          await expect(dialog).toHaveCount(0);
           await expect(page.locator('html')).toHaveAttribute('theme', dark ? 'g100' : 'g10');
           const button = page.getByRole('button', { name: 'Add panel', exact: true }).first();
           await page.mouse.move(0, 0);
@@ -2100,7 +2103,7 @@ try {
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.getByRole('button', { name: 'App settings', exact: true }).click();
       await page.getByRole('tab', { name: 'Panel plugins', exact: true }).click();
-      const pluginDrawer = page.getByRole('dialog', { name: 'App settings', exact: true });
+      const pluginDrawer = page.getByRole('region', { name: 'App settings', exact: true });
       const builtins = (await call('/api/plugins')).plugins.filter((plugin) => plugin.builtin);
       assert.ok(builtins.length > 0, 'Built-in plugin catalog is empty');
       for (const plugin of builtins) {
@@ -2113,7 +2116,8 @@ try {
         await expect(row.getByRole('button', { name: 'Update', exact: true })).toHaveCount(0);
         await expect(row.getByRole('button', { name: 'Uninstall', exact: true })).toHaveCount(0);
       }
-      await pluginDrawer.getByRole('button', { name: 'Close', exact: true }).click();
+      await page.goBack();
+      await expect(pluginDrawer).toHaveCount(0);
     },
   );
 } catch (error) {

@@ -294,6 +294,19 @@
           focusedRun(fetchRuns, null, panel.id))
       : undefined,
   );
+  // The run a media panel shows alone (Coverflow's run tab), as its renderer reports it: the
+  // slider then spans that run's media instead of every run's.
+  let shownRun = $state<string | undefined>();
+  function watchShownRun(node: HTMLElement) {
+    const listen = (event: Event) => {
+      shownRun = (event as CustomEvent<{ run?: string }>).detail.run;
+    };
+    node.addEventListener('randl:media-run', listen);
+    return { destroy: () => node.removeEventListener('randl:media-run', listen) };
+  }
+  let catalogRun = $derived(
+    mediaAcross === 'runs' && fetchRuns.some((run) => run.id === shownRun) ? shownRun : undefined,
+  );
   let xValues = $derived(data?.xValues || []);
   /** The value the slider's thumb is on while it is dragged; released, it is chosen. */
   let draggedPosition = $state<number | undefined>();
@@ -499,6 +512,7 @@
                 : {
                     ...(mediaAxis === '_step' ? {} : { xAxis: mediaAxis }),
                     ...(mediaPosition === undefined ? {} : { x: mediaPosition }),
+                    ...(catalogRun ? { xRun: catalogRun } : {}),
                   }),
             }
           : {
@@ -1116,6 +1130,7 @@
     class="plot"
     class:has-cell-toolbar={cellToolbar || mediaToolbar}
     onkeydown={plotKey}
+    use:watchShownRun
   >
     <div class="chart-canvas" bind:this={plot}></div>
     {#if cellToolbar || mediaToolbar}<div class="cell-toolbar">

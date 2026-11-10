@@ -408,6 +408,7 @@ export async function createServer(
             across: { type: 'string', enum: ['runs', 'steps'] },
             xAxis: str,
             x: { type: ['number', 'null'] },
+            xRun: str,
             run: str,
             files: { type: 'integer', minimum: 1, maximum: panelLimits.media.files.max },
             baseRevision: str,

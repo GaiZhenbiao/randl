@@ -7,9 +7,9 @@ import { createServer } from '../backend/dist/server.js';
 import { launchBrowser, listen } from './helpers.mjs';
 // App settings open from the navigation: its rail on wider screens, its menu on phones.
 async function openSettings(page) {
-  if (page.viewportSize().width <= 760)
-    await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
-  await page.getByRole('button', { name: 'App settings', exact: true }).click();
+  const phone = page.viewportSize().width <= 760;
+  if (phone) await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
+  await page.getByRole(phone ? 'link' : 'button', { name: 'App settings', exact: true }).click();
 }
 const directory = await mkdtemp(join(tmpdir(), 'randl-agent-profile-browser-'));
 const savedKey = process.env.DEEPSEEK_API_KEY;
@@ -39,7 +39,7 @@ try {
   await page.goto(base);
   await openSettings(page);
   await page.getByRole('tab', { name: 'Assistant', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'App settings', exact: true });
+  const dialog = page.getByRole('region', { name: 'App settings', exact: true });
   async function selectProvider(id) {
     const p = (await server.agent.providers()).providers.find((p) => p.id === id);
     await dialog.getByRole('combobox', { name: 'Provider', exact: true }).fill(p.name);
@@ -361,12 +361,14 @@ try {
       const openAppSettings = async () => {
         if (width <= 760)
           await tab.getByRole('button', { name: copy['app.nav.open'], exact: true }).click();
-        await tab.getByRole('button', { name: copy['app.settings.title'], exact: true }).click();
+        await tab
+          .getByRole(width <= 760 ? 'link' : 'button', { name: copy['app.settings.title'], exact: true })
+          .click();
       };
       await tab.goto(base);
       await openAppSettings();
       await tab.getByRole('tab', { name: copy['assistant.title'], exact: true }).click();
-      const settings = tab.getByRole('dialog', { name: copy['app.settings.title'], exact: true });
+      const settings = tab.getByRole('region', { name: copy['app.settings.title'], exact: true });
       await settings
         .getByRole('button', { name: copy['assistant.settings.setup.title'], exact: true })
         .click();
@@ -389,7 +391,7 @@ try {
       await tab.mouse.move(0, 0);
       const snippetStyle = await settings.locator('.pi-setup .bx--snippet').evaluate((el) => ({
         surface: getComputedStyle(el).backgroundColor,
-        drawer: getComputedStyle(el.closest('.side-drawer')).backgroundColor,
+        drawer: getComputedStyle(el.closest('main')).backgroundColor,
         bottom: getComputedStyle(el.querySelector('pre')).paddingBottom,
         top: getComputedStyle(el.querySelector('pre')).paddingTop,
         left: getComputedStyle(el.querySelector('pre')).paddingLeft,

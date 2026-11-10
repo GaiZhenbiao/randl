@@ -739,7 +739,7 @@ export class Store {
    * Logged media of one metric for a set of runs (docs/plugins.md#media-data). Across runs,
    * each run's entry at or before a value on the X axis (the latest by default), in the order
    * of `runs`; across steps, one run's entries by step. Across runs the response carries the
-   * catalog of X values with media. Files per entry are allocated within the panel's
+   * catalog of X values with media: of all the runs, or of `xRun` alone. Files per entry are allocated within the panel's
    * files-per-step limit.
    */
   media(args: Row) {
@@ -770,6 +770,7 @@ export class Store {
       x,
       value: row ? JSON.parse(row.value) : null,
     });
+    const catalogRun = runs.find((run) => run.id === args.xRun);
     let entries: ReturnType<typeof entry>[],
       total: number,
       x: number | null = null,
@@ -803,6 +804,16 @@ export class Store {
       xValues = newest.slice(0, limits.steps).reverse();
       xValuesTruncated = newest.length > limits.steps;
       x = args.x ?? xValues.at(-1) ?? null;
+      // The catalog of one run, when the panel shows that run alone; Latest stays the
+      // newest value of all the runs.
+      if (catalogRun) {
+        const own = this.db
+          .prepare('SELECT step FROM media WHERE run=? AND metric=? ORDER BY step DESC LIMIT ?')
+          .pluck()
+          .all(catalogRun.key, metric.id, limits.steps + 1) as number[];
+        xValues = own.slice(0, limits.steps).reverse();
+        xValuesTruncated = own.length > limits.steps;
+      }
       const at = this.db.prepare(
           'SELECT step,value FROM media WHERE run=? AND metric=? AND step<=? ORDER BY step DESC LIMIT 1',
         ),
@@ -821,6 +832,10 @@ export class Store {
       xValuesTruncated = distinct.length > limits.steps;
       xValues = xValuesTruncated ? distinct.slice(-limits.steps) : distinct;
       x = args.x ?? xValues.at(-1) ?? null;
+      if (catalogRun) {
+        xValues = [...new Set(positions[runs.indexOf(catalogRun)].xs)].sort((a, b) => a - b);
+        xValuesTruncated = false;
+      }
       const value = this.db.prepare(
           'SELECT step,value FROM media WHERE run=? AND metric=? AND step=?',
         ),
@@ -888,13 +903,41 @@ export class Store {
       .pluck()
       .all() as string[];
   }
-  /** A run's media entries with every run file each names, for the media limit. */
+  /**
+   * The X axis of a project's workspace: the X axis setting of its most recently changed
+   * view, or the step.
+   */
+  workspaceAxis(project: string): string {
+    const axis = this.db
+      .prepare(
+        "SELECT json_extract(body,'$.plotSettings.xAxis') FROM views WHERE project=? AND json_extract(body,'$.run') IS NULL ORDER BY updated DESC LIMIT 1",
+      )
+      .pluck()
+      .get(project);
+    return typeof axis === 'string' && axis ? axis : '_step';
+  }
+  /**
+   * A run's media entries with every run file each names and their place (`x`) on the
+   * workspace's X axis, for the media limit. A run with an entry that has no value on that
+   * axis is placed by step throughout, so its places stay comparable.
+   */
   runMediaFiles(id: string) {
     const run = this.history.runKey(id);
     if (run === undefined) return [];
-    return this.history.mediaRows(run).map((row) => ({
+    const rows = this.history.mediaRows(run),
+      axis = this.workspaceAxis(id.split('/').slice(0, 2).join('/')),
+      places = new Map<string, number>();
+    let placed = axis !== '_step';
+    if (placed)
+      for (const metric of new Set(rows.map((row) => row.metric))) {
+        const { steps, xs } = this.mediaPositions(run, metric, axis);
+        for (const [index, step] of steps.entries()) places.set(metric + ':' + step, xs[index]);
+      }
+    placed &&= rows.every((row) => places.has(row.metric + ':' + row.step));
+    return rows.map((row) => ({
       metric: row.metric,
       step: row.step,
+      x: placed ? places.get(row.metric + ':' + row.step)! : row.step,
       paths: [...mediaPaths(JSON.parse(row.value))],
     }));
   }
