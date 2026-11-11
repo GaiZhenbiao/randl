@@ -674,6 +674,15 @@ try {
         hidden: items.length - shown.length - 1,
         charts: node.querySelectorAll('.carousel-item .cell-plot [_echarts_instance_]').length,
         inert: [...node.querySelectorAll('.carousel-peek .cell-plot')].every((plot) => plot.inert),
+        // Each chart fills its item's plot, also for items that entered at an edge.
+        misdrawn: [...node.querySelectorAll('.carousel-item .cell-plot')].filter((plot) => {
+          const canvas = plot.querySelector('canvas');
+          return (
+            !canvas ||
+            Math.abs(canvas.offsetWidth - plot.offsetWidth) > 1 ||
+            Math.abs(canvas.offsetHeight - plot.offsetHeight) > 1
+          );
+        }).length,
       };
     });
   await page.waitForTimeout(600);
@@ -696,11 +705,20 @@ try {
   );
   assert.equal(middle.charts, middle.items, JSON.stringify(middle));
   assert.ok(middle.inert, JSON.stringify(middle));
+  assert.equal(middle.misdrawn, 0, JSON.stringify(middle));
   if (screenshots) {
     await mkdir(screenshots, { recursive: true });
     await panel('grid').screenshot({ path: join(screenshots, 'chart-coverflow-3200.png') });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
+  // Moves in quick succession bring in neighbors at the edge while others still slide; each
+  // chart still fills its item once they come to rest.
+  await page.waitForTimeout(600);
+  for (let step = 0; step < 6; step++) {
+    await next.click();
+    await page.waitForTimeout(150);
+  }
+  await expect.poll(async () => (await flowCounts()).misdrawn).toBe(0);
   checks.push('Coverflow at 3200 px: many neighbors per side, a chart for each, bounded elements');
 
   // Phone widths: one column, the count without the size control.

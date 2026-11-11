@@ -73,6 +73,24 @@ export class CellGrid implements Renderer {
   private carousel: Carousel | undefined;
   private root: HTMLElement;
   private slots = new Map<number, Slot>();
+  // Coverflow's items are sized after their content mounts (an item entering at an edge is
+  // created before its box is set), so each chart follows its plot's size: once a frame, only
+  // charts whose box changed.
+  private sized = new WeakMap<Element, Slot>();
+  private resizing = new Set<Slot>();
+  private resizeFrame = 0;
+  private sizes = new ResizeObserver((entries) => {
+    for (const entry of entries) {
+      const slot = this.sized.get(entry.target);
+      if (slot) this.resizing.add(slot);
+    }
+    this.resizeFrame ||= requestAnimationFrame(() => {
+      this.resizeFrame = 0;
+      for (const slot of this.resizing)
+        if (this.slots.get(slot.index) === slot) slot.mounted?.renderer.resize();
+      this.resizing.clear();
+    });
+  });
   private pool: Mounted[] = [];
   private cells: Cell[] = [];
   private context: PanelContext | undefined;
@@ -289,6 +307,10 @@ export class CellGrid implements Renderer {
       peek,
     };
     this.slots.set(index, slot);
+    if (this.mode === 'coverflow') {
+      this.sized.set(plot, slot);
+      this.sizes.observe(plot);
+    }
     this.caption(slot);
     const reused = this.pool.pop();
     if (reused) this.attach(slot, reused);
@@ -324,6 +346,8 @@ export class CellGrid implements Renderer {
   private unmount(index: number) {
     const slot = this.slots.get(index)!;
     this.slots.delete(index);
+    this.sizes.unobserve(slot.plot);
+    this.resizing.delete(slot);
     cancelPanel(slot.owner);
     if (slot.mounted) {
       slot.mounted.element.remove();
@@ -546,6 +570,8 @@ export class CellGrid implements Renderer {
   }
   destroy() {
     this.destroyed = true;
+    this.sizes.disconnect();
+    cancelAnimationFrame(this.resizeFrame);
     for (const slot of this.slots.values()) cancelPanel(slot.owner);
     this.grid?.destroy();
     this.carousel?.destroy();

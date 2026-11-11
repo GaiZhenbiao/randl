@@ -5109,9 +5109,13 @@ aside {
     pointer-events: none;
   }
 }
-/* Chart items, the current one and its neighbors alike, on the panel's layer. */
+/* Chart items, the current one and its neighbors alike, on the panel's layer. A neighbor
+   keeps its chart inside its box, so the ones stacked behind it stay hidden. */
 .cell-grid .carousel-item {
   background: var(--cds-ui-01);
+}
+.cell-grid .carousel-peek {
+  overflow: hidden;
 }
 .carousel-strip[hidden] {
   display: none;
