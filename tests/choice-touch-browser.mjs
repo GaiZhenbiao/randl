@@ -150,9 +150,13 @@ try {
     await expect(model).toHaveAttribute('aria-expanded', 'false');
     await expect(drawer).toBeVisible();
     await drawer.getByRole('button', { name: t('common.action.close'), exact: true }).tap();
-    await page.getByRole('button', { name: t('app.settings.title'), exact: true }).tap();
+    // App settings are a page, opened from the rail, or on phones the header's menu.
+    if (width <= 760) {
+      await page.getByRole('button', { name: t('app.nav.open'), exact: true }).tap();
+      await page.getByRole('link', { name: t('app.settings.title'), exact: true }).tap();
+    } else await page.getByRole('button', { name: t('app.settings.title'), exact: true }).tap();
     await page.getByRole('tab', { name: t('assistant.title'), exact: true }).tap();
-    const settings = page.getByRole('dialog', { name: t('app.settings.title'), exact: true }),
+    const settings = page.getByRole('region', { name: t('app.settings.title'), exact: true }),
       providerPicker = settings.getByRole('combobox', { name: t('assistant.settings.provider.label'), exact: true });
     await providerPicker.tap();
     await providerPicker.locator('xpath=..').locator('.bx--list-box__menu-icon').tap();

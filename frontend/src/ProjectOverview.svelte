@@ -405,9 +405,6 @@
 </div>
 
 <style>
-  .project-overview {
-    max-width: 80rem;
-  }
   .archived-status {
     display: flex;
     align-items: center;

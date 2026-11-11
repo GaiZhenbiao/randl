@@ -798,7 +798,7 @@ pre {
   color: var(--cds-text-01);
 }
 .run-overview {
-  max-width: 720px;
+  max-width: 48rem;
 }
 .run-overview dl {
   display: grid;
@@ -2432,7 +2432,7 @@ aside {
 }
 /* App settings: a page of its own, a readable column with its tabs kept in view. */
 .app-settings-page {
-  max-width: 720px;
+  max-width: 48rem;
 }
 .app-settings-page > .bx--tabs {
   position: sticky;
@@ -2546,10 +2546,23 @@ aside {
     padding-bottom: 12px;
   }
 }
+/* Content pages share one frame: on wide displays at most 1280 px of content, centred in the
+   space beside the rail (and the runs list). The workspace, a run's Metrics tab and the Runs
+   table keep the full width. Forms within a page keep a readable 48rem column at the
+   frame's left edge. */
+:root {
+  --content-max: 1280px;
+}
+.project-page-content,
+.content-frame {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--content-max) + 32px);
+  margin-inline: auto;
+}
 .project-page-content {
   padding: 16px;
   min-width: 0;
-  max-width: 100%;
 }
 .project-page-content .bx--data-table-container {
   max-width: 100%;
@@ -4682,9 +4695,7 @@ aside {
   font-size: 14px;
   color: var(--cds-text-secondary);
 }
-.server-overview {
-  max-width: 80rem;
-}
+
 @media (max-width: 760px) {
   .overview-charts {
     grid-template-columns: minmax(0, 1fr);

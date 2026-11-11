@@ -182,9 +182,14 @@
   }
 </script>
 
-{#if run.snapshot_at != null}<p class="snapshot-note">{$t('runs.snapshot.notice')}</p>{/if}
-{#if error}<p role="alert" class="error-copy">{$t(error)}</p>{/if}
-<div class="run-tabs">
+<!-- The Metrics tab is the run's charts at full width; the other tabs are content pages. -->
+{#if run.snapshot_at != null}<p class="snapshot-note" class:content-frame={activeTab !== 'metrics'}>
+    {$t('runs.snapshot.notice')}
+  </p>{/if}
+{#if error}<p role="alert" class="error-copy" class:content-frame={activeTab !== 'metrics'}>
+    {$t(error)}
+  </p>{/if}
+<div class="run-tabs" class:content-frame={activeTab !== 'metrics'}>
   <div class="run-tab-picker">
     <Select
       labelText={$t('runPage.tabs.label')}
