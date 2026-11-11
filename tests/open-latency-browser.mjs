@@ -127,9 +127,13 @@ try {
   };
 
   await load();
-  const addButton = page.getByRole('button', { name: 'Add panel', exact: true });
+  // Add panel is an item of the view's menu; timing starts at the item's press.
+  const addButton = async () => {
+    await page.getByRole('button', { name: 'View actions', exact: true }).click();
+    return page.getByRole('menuitem', { name: 'Add panel', exact: true });
+  };
   // A first open shows the editor before the catalog response and marks the field as loading.
-  const cold = await measure(addButton, modal, editorReady);
+  const cold = await measure(await addButton(), modal, editorReady);
   assert.ok(cold.visible < VISIBLE_BUDGET_MS, `Add panel became visible after ${cold.visible} ms`);
   await expect(picker).toHaveAttribute('aria-busy', 'true');
   await expect(picker.getByText('Loading metrics…')).toBeVisible();
@@ -149,7 +153,7 @@ try {
   // Reopening uses the cached catalog: no request and no loading state.
   const warm = [];
   for (let attempt = 0; attempt < 3; attempt++) {
-    warm.push(await measure(addButton, modal, editorReady));
+    warm.push(await measure(await addButton(), modal, editorReady));
     await waitReady();
     warm[attempt] = await page.evaluate(() => window.__openTiming);
     await closeEditor();
@@ -175,7 +179,7 @@ try {
   });
   server.live.changedRun(liveRun);
   await page.waitForTimeout(1000);
-  const refreshed = await measure(addButton, modal, editorReady);
+  const refreshed = await measure(await addButton(), modal, editorReady);
   await waitReady();
   report.addPanelAfterLiveUpdate = await page.evaluate(() => ({
     visible: window.__openTiming.visible,

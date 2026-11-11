@@ -271,8 +271,9 @@ try {
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(editor).toBeHidden();
 
-  // Add panel starts with the metric choice.
-  await page.getByRole('button', { name: 'Add panel', exact: true }).click();
+  // Add panel, from the view's menu, starts with the metric choice.
+  await page.getByRole('button', { name: 'View actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Add panel', exact: true }).click();
   editor = page.getByRole('dialog', { name: 'Add panel', exact: true });
   await expect(editor.locator('.metric-picker input')).toBeFocused();
   await page.keyboard.press('Escape');

@@ -280,7 +280,13 @@ async function deliverRunRevision(page, run) {
 }
 
 async function addLinePanel(page, metric, title) {
-  await page.getByRole('button', { name: 'Add panel', exact: true }).first().click();
+  // Add panel is in the view's menu; an empty workspace also offers it in its section.
+  const empty = page.locator('main').getByRole('button', { name: 'Add panel', exact: true });
+  if (await empty.count()) await empty.first().click();
+  else {
+    await page.getByRole('button', { name: 'View actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Add panel', exact: true }).click();
+  }
   const dialog = page.locator('[role="dialog"]:visible');
   await dialog.getByRole('combobox', { name: 'Panel type', exact: true }).selectOption('line');
   if (!(await dialog.getByRole('button', { name: 'Remove ' + metric, exact: true }).count())) {
@@ -1729,7 +1735,10 @@ try {
           await page.goBack();
           await expect(dialog).toHaveCount(0);
           await expect(page.locator('html')).toHaveAttribute('theme', dark ? 'g100' : 'g10');
-          const button = page.getByRole('button', { name: 'Add panel', exact: true }).first();
+          // A primary button: Create project, on the Projects page.
+          const rail = page.getByRole('navigation', { name: 'Project pages', exact: true });
+          await rail.getByRole('button', { name: 'Projects', exact: true }).click();
+          const button = page.getByRole('button', { name: 'Create project', exact: true }).first();
           await page.mouse.move(0, 0);
           await expect
             .poll(() => primaryContrast(button), {
@@ -1754,6 +1763,8 @@ try {
             await page.mouse.move(0, 0);
             await page.mouse.up();
           }
+          await rail.getByRole('button', { name: 'Workspace', exact: true }).click();
+          await workspace(page);
           const selectedVisibility = page
             .locator('[data-toggle="visible"][aria-pressed="true"]')
             .first();

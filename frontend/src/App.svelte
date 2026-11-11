@@ -128,7 +128,7 @@
     await navigate('overview');
   }
   const textMeasure = document.createElement('canvas').getContext('2d')!,
-    barStages = 5;
+    barStages = 3;
   // Whether the page bar's controls fit: nothing overflows, names keep a readable width, and
   // an open, empty search shows its whole placeholder.
   function pageBarFits(bar: HTMLElement) {
@@ -161,12 +161,11 @@
     return true;
   }
   // Compacts the header's controls by measuring them rather than by fixed widths, since
-  // translations and names differ: the bar shows everything, then moves New view, Undo and
-  // Redo into the view menu, then shows Add panel as an icon, then hides the visible save
-  // status (the live region still announces it), then moves workspace settings into the view
-  // menu and hides the run's state, then moves Add panel into the menu, until it fits. The
-  // steps run before the browser paints, after any width or content change. An open view
-  // menu keeps its items until it closes.
+  // translations and names differ: the bar shows everything, then moves Undo and Redo into
+  // the view menu (and shows the run's actions as icons), then hides the visible save status
+  // (the live region still announces it), then hides the run's state, until it fits. New
+  // view and Add panel are always in the view menu. The steps run before the browser paints,
+  // after any width or content change. An open view menu keeps its items until it closes.
   function fitPageBar(bar: HTMLElement) {
     let fitting = false;
     const fit = () => {
@@ -203,7 +202,7 @@
     };
   }
   let sidebarWidth = $state(Number(localStorage.getItem('randl.sidebar-width')) || 304),
-    sidebarDrag = false;
+    sidebarDrag = $state(false);
   function sidebarResize(event: PointerEvent) {
     if (sidebarDrag) sidebarWidth = Math.max(240, Math.min(sidebarLimit, event.clientX - navWidth));
   }
@@ -502,11 +501,8 @@
   // Page controls sit in the header's one row at every width, where they compact in stages
   // until they fit (see fitPageBar).
   let barStage = $state(0);
-  let inlineViewActions = $derived(barStage < 1);
+  let inlineHistory = $derived(barStage < 1);
   let iconRunActions = $derived(barStage >= 1);
-  let compactAdd = $derived(barStage >= 2);
-  let menuDefaults = $derived(barStage >= 4);
-  let menuAdd = $derived(barStage >= 5);
   let sidebarView = $derived(activeRun && parentView?.project === project ? parentView : view);
   let sidebarFilterCount = $derived(sidebarView?.body.filters?.length || 0);
   $effect(() => {
@@ -1379,6 +1375,26 @@
     closeDrawer();
     return true;
   }
+  // The rail keeps the project's pages while Projects, Server or App settings show: they lead
+  // back to the project opened last in this browser.
+  let recentProject = $state(localStorage.getItem('randl.recent-project') || '');
+  $effect(() => {
+    if (!project || project === recentProject) return;
+    recentProject = project;
+    localStorage.setItem('randl.recent-project', project);
+  });
+  let railProject = $derived(
+    project || (projects.some((item) => item.id === recentProject) ? recentProject : ''),
+  );
+  async function openProjectPage(id: string) {
+    if (!project && !(await loadProject(railProject))) return;
+    await navigate(id);
+  }
+  async function openGlobalPage(id: string) {
+    if (id === 'app-settings') return openAppSettings();
+    if (project) await changeProject('');
+    if (id !== 'overview' || page !== 'overview') await navigate(id);
+  }
   async function changeProject(id: string) {
     if (await loadProject(id)) {
       history.pushState(
@@ -2202,8 +2218,7 @@
   }
   let viewReturn: HTMLElement | null = null;
   function openViewDialog(mode: 'create' | 'rename' | 'duplicate') {
-    const active = document.activeElement as HTMLElement;
-    viewReturn = active?.id === 'new-view' ? active : document.getElementById('view-actions');
+    viewReturn = document.getElementById('view-actions');
     viewMode = mode;
     viewStart = 'current';
     viewName =
@@ -2413,11 +2428,6 @@
             name: view?.name || '',
           })}</span
         ><span aria-hidden="true">{view?.name}</span></span
-      >{/if}{#if inlineViewActions}<Button
-        kind="ghost"
-        size="small"
-        id="new-view"
-        on:click={() => openViewDialog('create')}>{$t('views.actions.new')}</Button
       >{/if}<OverflowMenu
       size="sm"
       flipped
@@ -2427,16 +2437,13 @@
       title={$t('views.actions.menu')}
       aria-label={$t('views.actions.menu')}
       iconDescription={$t('views.actions.menu')}
-      >{#if menuAdd && workspaceTools}<OverflowMenuItem
+      >{#if page === 'workspace' && view}<OverflowMenuItem
           text={$t('workspace.addPanel')}
           on:click={() => openPanel()}
-        />{/if}{#if menuDefaults && workspaceTools}<OverflowMenuItem
-          text={$t('workspace.settings')}
-          on:click={() => openDefaults()}
-        />{/if}{#if !inlineViewActions}<OverflowMenuItem
-          text={$t('views.actions.new')}
-          on:click={() => openViewDialog('create')}
-        /><OverflowMenuItem
+        />{/if}<OverflowMenuItem
+        text={$t('views.actions.new')}
+        on:click={() => openViewDialog('create')}
+      />{#if !inlineHistory}<OverflowMenuItem
           text={$t('views.actions.undo')}
           disabled={!undoStack.length || conflicted}
           on:click={() => restoreHistory('undo')}
@@ -2459,8 +2466,17 @@
           deleteViewDialog = true;
         }}
       /></OverflowMenu
-    >
-    {#if inlineViewActions}
+    >{#if page === 'workspace'}<Button
+        kind="ghost"
+        size="small"
+        icon={Settings}
+        aria-pressed={undefined}
+        hideTooltip
+        title={$t('workspace.settings')}
+        iconDescription={$t('workspace.settings')}
+        on:click={() => openDefaults()}
+      />{/if}
+    {#if inlineHistory}
       <Button
         id="undo-view"
         kind="ghost"
@@ -2493,7 +2509,7 @@
   <span
     class="save-status"
     class:has-notice={failed}
-    hidden={barStage >= 3}
+    hidden={barStage >= 2}
     aria-hidden="true">{$t(saving)}</span
   ><span
     class="bx--visually-hidden"
@@ -2531,16 +2547,16 @@
                 ? $t(routeError || 'app.errors.pageNotFound')
                 : $t(pages.find((p) => p.id === page)?.name))}
     </h1>
-    {#if page === 'run' && currentRun && barStage < 4}<RunStateTag run={currentRun} />{/if}
+    {#if page === 'run' && currentRun && barStage < 3}<RunStateTag run={currentRun} />{/if}
   </div>
 {/snippet}
 {#snippet pageTools()}
   {#if page === 'workspace'}{@render viewControls()}{@render saveStatus()}{#if workspaceTools}<PanelTools
         header
         bind:search={workspaceSearch}
-        compact={compactAdd}
-        settings={!menuDefaults}
-        add={!menuAdd}
+        compact
+        settings={false}
+        add={false}
         onDefaults={() => openDefaults()}
         onAdd={() => openPanel()}
       />{/if}{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
@@ -2804,12 +2820,13 @@
               await navigate('server');
             })}
         />
-        {#if project}<SideNavDivider />{#each pages as item (item.id)}<SideNavLink
-              href={pageURL(project, item.id)}
+        {#if railProject}<SideNavDivider />{#each pages as item (item.id)}<SideNavLink
+              href={pageURL(railProject, item.id)}
               icon={item.icon}
               text={item.name === 'nav.settings' ? $t('nav.settingsShort') : $t(item.name)}
-              isSelected={page === item.id || (page === 'run' && item.id === 'workspace')}
-              on:click={(event) => followNavigation(event, () => navigate(item.id))}
+              isSelected={!!project &&
+                (page === item.id || (page === 'run' && item.id === 'workspace'))}
+              on:click={(event) => followNavigation(event, () => openProjectPage(item.id))}
             />{/each}{/if}<SideNavDivider />{#if project && !routeError}<li
             class="bx--side-nav__item"
           >
@@ -2859,37 +2876,31 @@
     style:--sidebar-width={displayedSidebarWidth + 'px'}
   >
     <nav class="project-rail" aria-label={$t('nav.projectPages')} inert={width <= 760 && !drawer}>
-      {#each project ? pages : globalPages as item}<Button
-          kind="ghost"
-          size="small"
-          icon={item.icon}
-          id={!project && item.id === 'app-settings' && width > 760 ? 'app-settings' : undefined}
-          title={$t(item.name)}
-          aria-label={$t(item.name)}
-          aria-pressed={page === item.id || (page === 'run' && item.id === 'workspace')}
-          on:click={() => navigate(item.id)}
-          >{item.name === 'nav.settings'
-            ? $t('nav.settingsShort')
-            : item.id === 'app-settings'
-              ? $t('app.settings.short')
-              : $t(item.name)}</Button
-        >{/each}
-      <!-- Inside a project, what belongs to the whole server ends the rail: the other
-           projects, the server's status and the app's settings. Phones have these in the
-           header's menu. -->
-      {#if project && width > 760}<div class="rail-global">
-          {#each globalPages as item}<Button
+      <!-- The project's pages lead the rail and stay while a server-wide page shows; what
+           belongs to the whole server ends it: the projects, the server's status and the
+           app's settings. Phones have the server-wide pages in the header's menu. -->
+      {#if railProject}{#each pages as item (item.id)}<Button
+            kind="ghost"
+            size="small"
+            icon={item.icon}
+            title={$t(item.name)}
+            aria-label={$t(item.name)}
+            aria-pressed={!!project &&
+              (page === item.id || (page === 'run' && item.id === 'workspace'))}
+            on:click={() => openProjectPage(item.id)}
+            >{item.name === 'nav.settings' ? $t('nav.settingsShort') : $t(item.name)}</Button
+          >{/each}{/if}
+      {#if width > 760}<div class="rail-global">
+          {#each globalPages as item (item.id)}<Button
               kind="ghost"
               size="small"
               icon={item.id === 'overview' ? Folders : item.icon}
               id={item.id === 'app-settings' ? 'app-settings' : undefined}
               title={$t(item.name)}
               aria-label={$t(item.name)}
-              on:click={async () => {
-                if (item.id === 'app-settings') return openAppSettings();
-                await changeProject('');
-                if (item.id !== 'overview') await navigate(item.id);
-              }}>{item.id === 'app-settings' ? $t('app.settings.short') : $t(item.name)}</Button
+              aria-pressed={!project && page === item.id}
+              on:click={() => openGlobalPage(item.id)}
+              >{item.id === 'app-settings' ? $t('app.settings.short') : $t(item.name)}</Button
             >{/each}
         </div>{/if}
     </nav>
@@ -3059,6 +3070,7 @@
         {#if width > 760}<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Focusable splitter with arrow-key resizing.) -->
           <div
             class="sidebar-resize"
+            class:dragging={sidebarDrag}
             role="separator"
             aria-label={$t('runs.list.resize')}
             aria-orientation="vertical"

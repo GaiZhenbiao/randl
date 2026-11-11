@@ -1196,6 +1196,7 @@
             >{$t('workspace.addPanel')}</button
           >{:else}<button
             class="section-row-resize"
+            class:dragging={drag?.kind === 'section' && drag.id === section.id}
             aria-label={$t('workspace.section.rowsLabel', { name: section.name, count: g.rows })}
             aria-describedby="row-resize-help"
             title={$t('workspace.section.resizeRows')}

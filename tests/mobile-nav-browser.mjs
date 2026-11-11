@@ -134,7 +134,8 @@ try {
   await expect(phone).toHaveURL(/page=server/);
   await open.click();
   assert.deepEqual(await current(), ['Server']);
-  await expect(link('Workspace')).toHaveCount(0);
+  // The project's pages stay, leading back to it, and are not marked.
+  await expect(link('Workspace')).toHaveCount(1);
   await link('Projects').click();
   await expect(phone).toHaveURL(/page=overview/);
   await open.click();

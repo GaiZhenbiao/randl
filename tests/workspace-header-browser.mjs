@@ -417,24 +417,25 @@ try {
     if (geometry.panelMid !== null)
       assert.ok(Math.abs(geometry.viewY + geometry.viewHeight / 2 - geometry.panelMid) <= 1);
     assert.ok(geometry.height <= 48, `${width}: one row`);
-    // Workspace settings and Add panel are each available once: in the bar or in the menu.
-    for (const name of ['Workspace settings', 'Add panel']) {
-      const inBar = await page.locator(bar).getByRole('button', { name, exact: true }).count();
-      await page.getByRole('button', { name: 'View actions', exact: true }).click();
-      const inMenu = await page.getByRole('menuitem', { name, exact: true }).count();
-      await page.keyboard.press('Escape');
-      assert.equal(inBar + inMenu, 1, `${width}: ${name} is available once`);
-    }
-    const newView = page.getByRole('button', { name: 'New view', exact: true });
-    const newViewVisible = await newView.isVisible();
+    // Add panel and New view are in the view menu; workspace settings sits beside it.
     await page.getByRole('button', { name: 'View actions', exact: true }).click();
-    const menuNew = page.getByRole('menuitem', { name: 'New view', exact: true });
-    assert.notEqual(
-      newViewVisible,
-      await menuNew.isVisible(),
-      `${width}: New view is available once`,
-    );
-    if (!newViewVisible) {
+    for (const name of ['Add panel', 'New view'])
+      await expect(page.getByRole('menuitem', { name, exact: true })).toHaveCount(1);
+    await page.keyboard.press('Escape');
+    for (const name of ['Add panel', 'New view'])
+      await expect(page.locator(bar).getByRole('button', { name, exact: true })).toHaveCount(0);
+    const besideMenu = await page.locator(bar).evaluate((toolbar) => {
+      const menu = toolbar.querySelector('#view-actions').getBoundingClientRect(),
+        gear = [...toolbar.querySelectorAll('button')]
+          .find((button) => button.title === 'Workspace settings')
+          .getBoundingClientRect();
+      return gear.left - menu.right;
+    });
+    assert.ok(besideMenu >= 0 && besideMenu <= 8, `${width}: workspace settings beside the menu`);
+    // Undo and Redo are in the bar, or in the menu once the bar is crowded.
+    const undoInBar = await page.locator('#undo-view').isVisible();
+    await page.getByRole('button', { name: 'View actions', exact: true }).click();
+    if (!undoInBar) {
       await expect(
         page.getByRole('menuitem', { name: 'Undo view change', exact: true }),
       ).toBeVisible();

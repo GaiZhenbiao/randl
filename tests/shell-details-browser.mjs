@@ -406,6 +406,49 @@ try {
     'Runtime (seconds)',
   );
   checks.push('project media limit: inherits the server limit, own switch and size, thinning axis');
+
+  // The rail keeps the project's pages on the server-wide pages, which are tabs of it too:
+  // each marks only itself, and a project page leads back to the project.
+  const pagesRail = page.getByRole('navigation', { name: 'Project pages', exact: true }),
+    railNames = async () =>
+      (await pagesRail.getByRole('button').allInnerTexts()).map((text) =>
+        text.replace(/\s+/g, ' ').trim(),
+      ),
+    allPages = ['Overview', 'Workspace', 'Runs', 'Artifacts', 'Settings', 'Projects', 'Server', 'App settings'];
+  assert.deepEqual(await railNames(), allPages);
+  for (const name of ['Projects', 'Server', 'App settings']) {
+    await pagesRail.getByRole('button', { name, exact: true }).click();
+    await expect(pagesRail.locator('[aria-pressed="true"]')).toHaveCount(1);
+    await expect(pagesRail.getByRole('button', { name, exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    assert.deepEqual(await railNames(), allPages);
+  }
+  await pagesRail.getByRole('button', { name: 'Runs', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp('/' + project + '/runs(\\?|$)'));
+  await expect(pagesRail.getByRole('button', { name: 'Runs', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  checks.push("the rail keeps the project's pages beside Projects, Server and App settings");
+
+  // The sidebar's resize handle: a wide strip to grab, a thin line that eases in on hover.
+  await pagesRail.getByRole('button', { name: 'Workspace', exact: true }).click();
+  const handle = page.locator('.sidebar-resize'),
+    handleBox = await handle.boundingBox(),
+    handleLine = () =>
+      handle.evaluate((element) => {
+        const style = getComputedStyle(element, '::after');
+        return [style.width, style.opacity];
+      });
+  assert.equal(handleBox.width, 8);
+  assert.deepEqual(await handleLine(), ['2px', '0']);
+  await page.mouse.move(handleBox.x + 4, handleBox.y + handleBox.height / 2);
+  await expect.poll(handleLine).toEqual(['2px', '1']);
+  await page.mouse.move(handleBox.x + 200, handleBox.y + handleBox.height / 2);
+  await expect.poll(handleLine).toEqual(['2px', '0']);
+  checks.push('the sidebar resize handle shows a 2 px line that eases in on hover');
   await page.close();
 
   // Mobile: the page's name stays visible in the header's one row and the runs drawer closes from the trailing edge.
