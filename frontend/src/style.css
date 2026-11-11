@@ -536,31 +536,83 @@ pre {
 .palette {
   border: 0;
   padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  min-width: 0;
 }
 .palette legend {
+  padding-bottom: 12px;
   font-size: 12px;
   color: var(--cds-text-02);
-  padding-bottom: 8px;
 }
-.palette label {
+.palette-current {
+  margin-inline-start: 8px;
+  color: var(--cds-text-01);
+}
+/* Accent swatches: round chips in the theme's own shade, lifted on hover; the chosen one
+   carries a check and a ring set off from the page by a gap. */
+.palette-swatches {
   display: flex;
-  gap: 8px;
-  align-items: center;
-  min-height: 32px;
-  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.palette-swatches label {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   cursor: pointer;
 }
-.palette label span {
-  height: 16px;
-  width: 16px;
-  border-radius: 50%;
-  border: 1px solid var(--cds-ui-04);
+.palette-swatches input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
 }
-.palette input {
-  accent-color: var(--cds-interactive-01);
+.palette-swatch {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--swatch);
+  color: var(--swatch-on);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
+  transition:
+    transform 150ms cubic-bezier(0.2, 0, 0.38, 0.9),
+    box-shadow 150ms cubic-bezier(0.2, 0, 0.38, 0.9);
+  pointer-events: none;
+}
+.palette-swatch svg {
+  opacity: 0;
+  transform: scale(0.5);
+  transition:
+    opacity 150ms cubic-bezier(0.2, 0, 0.38, 0.9),
+    transform 150ms cubic-bezier(0.2, 0, 0.38, 0.9);
+}
+.palette-swatches label:hover .palette-swatch {
+  transform: scale(1.1);
+}
+.palette-swatches input:checked + .palette-swatch {
+  box-shadow:
+    0 0 0 2px var(--cds-ui-background),
+    0 0 0 4px var(--swatch);
+}
+.palette-swatches input:checked + .palette-swatch svg {
+  opacity: 1;
+  transform: none;
+}
+.palette-swatches input:focus-visible + .palette-swatch {
+  box-shadow:
+    0 0 0 2px var(--cds-ui-background),
+    0 0 0 4px var(--cds-focus);
+}
+@media (prefers-reduced-motion: reduce) {
+  .palette-swatch,
+  .palette-swatch svg {
+    transition: none;
+  }
 }
 .plugin-install {
   display: flex;
@@ -657,8 +709,9 @@ pre {
   .bx--modal-container {
     max-height: 94dvh;
   }
-  .palette label {
-    min-height: 40px;
+  .palette-swatches label {
+    width: 40px;
+    height: 40px;
   }
 }
 @media (max-width: 380px) {

@@ -39,6 +39,7 @@
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Settings from 'carbon-icons-svelte/lib/Settings.svelte';
   import SettingsAdjust from 'carbon-icons-svelte/lib/SettingsAdjust.svelte';
+  import Checkmark from 'carbon-icons-svelte/lib/Checkmark.svelte';
   import Chat from 'carbon-icons-svelte/lib/Chat.svelte';
   import Folders from 'carbon-icons-svelte/lib/Folders.svelte';
   import Undo from 'carbon-icons-svelte/lib/Undo.svelte';
@@ -2710,12 +2711,25 @@
                   text={$t('app.settings.theme.light')}
                 /><SelectItem value="g100" text={$t('app.settings.theme.dark')} /></Select
               >
+              <!-- Swatches in the theme's own shade of each accent, one native radio group (arrow
+                   keys move the choice); the chosen one's name follows the label. -->
               <fieldset class="palette">
-                <legend>{$t('app.settings.accent.label')}</legend>{#each accents as [name, hex]}<label
-                    ><input type="radio" name="accent" value={hex} bind:group={accent} /><span
-                      style:background={hex}
-                    ></span>{$t(name)}</label
-                  >{/each}
+                <legend
+                  >{$t('app.settings.accent.label')}<span class="palette-current" aria-hidden="true"
+                    >{$t(accents.find(([, hex]) => hex === accent)?.[0] ?? accents[0][0])}</span
+                  ></legend
+                >
+                <div class="palette-swatches">
+                  {#each accents as [name, hex] (hex)}{@const shade = palette(hex, dark)}<label
+                      title={$t(name)}
+                      style:--swatch={shade.primary}
+                      style:--swatch-on={shade.onPrimary}
+                      ><input type="radio" name="accent" value={hex} bind:group={accent} /><span
+                        class="palette-swatch"
+                        aria-hidden="true"><Checkmark size={16} /></span
+                      ><span class="bx--visually-hidden">{$t(name)}</span></label
+                    >{/each}
+                </div>
               </fieldset>
             </div></TabContent
           >
