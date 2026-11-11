@@ -5054,6 +5054,39 @@ aside {
 .media-step .bx--slider-text-input-wrapper {
   display: none;
 }
+/* The values with media mark the track while the pointer is over the slider; they replace
+   Carbon's tick in the middle, which marks no value. */
+.media-step .bx--slider__track::before {
+  display: none;
+}
+.media-step-slider {
+  position: relative;
+}
+.media-step-ticks {
+  position: absolute;
+  inset: 0 8px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 110ms cubic-bezier(0.2, 0, 0.38, 0.9);
+}
+.media-step-slider:hover .media-step-ticks,
+.media-step-slider:focus-within .media-step-ticks,
+.media-step-slider:active .media-step-ticks {
+  opacity: 1;
+}
+.media-step-ticks span {
+  position: absolute;
+  top: calc(50% - 7px);
+  width: 2px;
+  height: 4px;
+  transform: translateX(-50%);
+  background: var(--cds-ui-04, #8d8d8d);
+}
+@media (prefers-reduced-motion: reduce) {
+  .media-step-ticks {
+    transition: none;
+  }
+}
 .media-step-label {
   margin: 0 8px;
   white-space: nowrap;

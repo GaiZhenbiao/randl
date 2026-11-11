@@ -44,7 +44,7 @@
   import ChevronLeft from 'carbon-icons-svelte/lib/ChevronLeft.svelte';
   import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
   import { coverflowItems, mediaRuns, mediaPositions } from './panel-session';
-  import { axisName, axisPosition, nearestIndex } from './media-axis';
+  import { axisName, axisPosition, axisTicks, nearestIndex } from './media-axis';
   import ZoomIn from 'carbon-icons-svelte/lib/ZoomIn.svelte';
   import ZoomOut from 'carbon-icons-svelte/lib/ZoomOut.svelte';
   import { mediaCount as fileCount } from '../../backend/src/media-items';
@@ -337,6 +337,13 @@
       max = xValues.at(-1) ?? 0;
     return { min, max: max > min ? max : min + 1, step: max > min ? (max - min) / sliderSteps : 1 };
   });
+  // Hovering the slider marks the values with media along its track. Ticks closer than
+  // tickGap pixels to the previous one shown are left out (the track is the slider less its padding).
+  const tickGap = 8;
+  let sliderWidth = $state(0);
+  let sliderTicks = $derived(
+    axisTicks(xValues, sliderRange.min, sliderRange.max, sliderWidth - 16, tickGap),
+  );
   // The value under the thumb is chosen when the pointer lets go. The slider's own change
   // event is not enough: it misses a press released before its listeners are in place.
   function sliderPress() {
@@ -1160,7 +1167,11 @@
                 class="media-step-slider"
                 onkeydowncapture={sliderKey}
                 onpointerdowncapture={sliderPress}
+                bind:clientWidth={sliderWidth}
               >
+                {#if sliderTicks.length}<div class="media-step-ticks" aria-hidden="true">
+                    {#each sliderTicks as at, index (index)}<span style:left="{at}%"></span>{/each}
+                  </div>{/if}
                 <Slider
                   labelText={axisName(mediaAxis, $t)}
                   hideLabel

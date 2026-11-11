@@ -45,3 +45,19 @@ export function nearestIndex(values: number[], value: number) {
   }
   return value - values[low] <= values[high] - value ? low : high;
 }
+/**
+ * Where to mark `values` (ascending) along a track `width` pixels long that spans `min` to
+ * `max`, as percentages of the track. A value closer than `gap` pixels to the previous mark
+ * gets none, so ticks never crowd; the last value always has a mark.
+ */
+export function axisTicks(values: number[], min: number, max: number, width: number, gap: number) {
+  if (values.length < 2 || width <= 0 || max <= min) return [];
+  const ticks: number[] = [];
+  values.forEach((value, index) => {
+    const at = ((value - min) / (max - min)) * width;
+    if (ticks.length && at - ticks.at(-1)! < gap) {
+      if (index === values.length - 1) ticks[ticks.length - 1] = at;
+    } else ticks.push(at);
+  });
+  return ticks.map((at) => (at / width) * 100);
+}

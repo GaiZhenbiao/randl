@@ -218,6 +218,28 @@ try {
   assert.ok(track.width > toolbar.width * 0.5, 'the step slider takes the free width');
   assert.ok(track.x - (previous.x + previous.width) < 20 && next.x - (track.x + track.width) < 20);
   const at = (share) => [track.x + track.width * share, track.y + track.height / 2];
+  // Hovering the slider marks steps 0, 4 and 8 on its track in place of Carbon's middle tick.
+  const ticks = gallery.locator('.media-step-ticks span');
+  await page.mouse.move(0, 0);
+  await expect(ticks).toHaveCount(3);
+  await expect(gallery.locator('.media-step-ticks')).toHaveCSS('opacity', '0');
+  assert.equal(
+    await gallery
+      .locator('.media-step .bx--slider__track')
+      .evaluate((element) => getComputedStyle(element, '::before').display),
+    'none',
+  );
+  await gallery.locator('.media-step-slider').hover({ position: { x: 4, y: 4 } });
+  await expect(gallery.locator('.media-step-ticks')).toHaveCSS('opacity', '1');
+  const line = await gallery.locator('.media-step .bx--slider__track').boundingBox();
+  for (const [index, share] of [0, 0.5, 1].entries()) {
+    const tick = await ticks.nth(index).boundingBox();
+    assert.ok(Math.abs(tick.x + tick.width / 2 - (line.x + line.width * share)) <= 1.5);
+    assert.ok(
+      tick.y + tick.height <= line.y && line.y - (tick.y + tick.height) <= 4,
+      'above the track',
+    );
+  }
   // Steps 0, 4 and 8: 40% of the way is nearest to step 4, where the thumb goes.
   await page.mouse.click(...at(0.4));
   await expect(stepLabel).toHaveText('Step 4');
