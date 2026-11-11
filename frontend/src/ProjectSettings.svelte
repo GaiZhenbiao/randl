@@ -115,12 +115,16 @@
     deleteOpen = $state(false);
 </script>
 
+<!-- Carbon's settings pattern: each section a row, its title and description beside its
+     controls, rows divided by a rule; on narrow screens the description stands above. -->
 <div class="project-settings">
   {#if error}<InlineNotification kind="error" lowContrast hideCloseButton title={$t(error)} />{/if}
-  <section aria-labelledby="settings-general">
-    <h2 id="settings-general">{$t('projects.general')}</h2>
+  <section class="settings-section" aria-labelledby="settings-general">
+    <div class="settings-intro">
+      <h2 id="settings-general">{$t('projects.general')}</h2>
+    </div>
     <form
-      class="settings-form"
+      class="settings-body"
       onsubmit={(event) => {
         event.preventDefault();
         void save();
@@ -164,90 +168,143 @@
           >{/if}<span class="settings-status" role="status">{$t(status)}</span>
       </div>
     </form>
-    <div class="project-id">
-      <span class="bx--label">{$t('projects.settings.id')}</span>
+  </section>
+  <section class="settings-section" aria-labelledby="settings-id">
+    <div class="settings-intro">
+      <h2 id="settings-id">{$t('projects.settings.id')}</h2>
+      <p>{$t('projects.idHelp')}</p>
+    </div>
+    <div class="settings-body">
       <CodeSnippet
         type="inline"
         code={project}
         copyLabel={$t('projects.copyId')}
         feedback={$t('common.status.copied')}
       />
-      <p class="help-note">{$t('projects.idHelp')}</p>
-      <Button kind="tertiary" size="small" on:click={onConnect}>{$t('connect.title')}</Button>
+      <div class="settings-actions">
+        <Button kind="tertiary" size="small" on:click={onConnect}>{$t('connect.title')}</Button>
+      </div>
     </div>
   </section>
-  <section aria-labelledby="settings-media-limit">
-    <h2 id="settings-media-limit">{$t('projects.mediaLimit.title')}</h2>
-    <ProjectMediaLimit {project} {runs} />
+  <section class="settings-section" aria-labelledby="settings-media-limit">
+    <div class="settings-intro">
+      <h2 id="settings-media-limit">{$t('projects.mediaLimit.title')}</h2>
+      <p>{$t('projects.mediaLimit.help')}</p>
+    </div>
+    <div class="settings-body"><ProjectMediaLimit {project} {runs} /></div>
   </section>
-  <section aria-labelledby="settings-deleted-runs">
-    <h2 id="settings-deleted-runs">{$t('projects.settings.deletedRuns')}</h2>
-    {#if details}<div class="settings-row">
-        <p>
+  <section class="settings-section" aria-labelledby="settings-deleted-runs">
+    <div class="settings-intro">
+      <h2 id="settings-deleted-runs">{$t('projects.settings.deletedRuns')}</h2>
+    </div>
+    <div class="settings-body">
+      {#if details}<p>
           {details.counts.deletedRuns
             ? $t('projects.deletedRunsCount', { count: $number(details.counts.deletedRuns) })
             : $t('projects.noDeletedRuns')}
         </p>
-        <Button kind="tertiary" size="small" on:click={onTrash}>{$t('projects.viewDeletedRuns')}</Button>
-      </div>{/if}
-  </section>
-  <section aria-labelledby="settings-archive">
-    <h2 id="settings-archive">{$t(summary?.archived ? 'projects.restore.action' : 'projects.archive.action')}</h2>
-    <div class="settings-row">
-      <p>{$t(summary?.archived ? 'projects.restoreHelp' : 'projects.archiveHelp')}</p>
-      <Button
-        kind="tertiary"
-        size="small"
-        disabled={archiving || !summary}
-        on:click={async () => {
-          if (!summary) return;
-          archiving = true;
-          try {
-            await onArchive(summary, !summary.archived);
-          } finally {
-            archiving = false;
-          }
-        }}>{$t(summary?.archived ? 'projects.restore.action' : 'projects.archive.action')}</Button
-      >
+        <div class="settings-actions">
+          <Button kind="tertiary" size="small" on:click={onTrash}>{$t('projects.viewDeletedRuns')}</Button>
+        </div>{/if}
     </div>
   </section>
-  <section aria-labelledby="settings-delete">
-    <h2 id="settings-delete">{$t('projects.delete.action')}</h2>
-    {#if details}<ProjectDeleteSummary {details} />
-      {#if details.runningRuns}<p class="settings-warning">
-          {$t('projects.errors.runningRuns', { count: details.runningRuns })}
-        </p>{/if}
-      <Button
-        kind="danger-tertiary"
-        size="small"
-        disabled={!!details.runningRuns}
-        on:click={() => (deleteOpen = true)}>{$t('projects.delete.open')}</Button
-      >{/if}
+  <section class="settings-section" aria-labelledby="settings-archive">
+    <div class="settings-intro">
+      <h2 id="settings-archive">{$t(summary?.archived ? 'projects.restore.action' : 'projects.archive.action')}</h2>
+      <p>{$t(summary?.archived ? 'projects.restoreHelp' : 'projects.archiveHelp')}</p>
+    </div>
+    <div class="settings-body">
+      <div class="settings-actions">
+        <Button
+          kind="tertiary"
+          size="small"
+          disabled={archiving || !summary}
+          on:click={async () => {
+            if (!summary) return;
+            archiving = true;
+            try {
+              await onArchive(summary, !summary.archived);
+            } finally {
+              archiving = false;
+            }
+          }}>{$t(summary?.archived ? 'projects.restore.action' : 'projects.archive.action')}</Button
+        >
+      </div>
+    </div>
+  </section>
+  <section class="settings-section" aria-labelledby="settings-delete">
+    <div class="settings-intro">
+      <h2 id="settings-delete">{$t('projects.delete.action')}</h2>
+    </div>
+    <div class="settings-body">
+      {#if details}<ProjectDeleteSummary {details} />
+        {#if details.runningRuns}<p class="settings-warning">
+            {$t('projects.errors.runningRuns', { count: details.runningRuns })}
+          </p>{/if}
+        <div class="settings-actions">
+          <Button
+            kind="danger"
+            size="small"
+            disabled={!!details.runningRuns}
+            on:click={() => (deleteOpen = true)}>{$t('projects.delete.open')}</Button
+          >
+        </div>{/if}
+    </div>
   </section>
 </div>
 <ProjectDeleteModal bind:open={deleteOpen} {project} {onDeleted} />
 
 <style>
+  /* Carbon spacing: 32 px (spacing-07) inside a section, 16 px between its fields. */
   .project-settings {
-    max-width: 48rem;
+    max-width: 64rem;
   }
-  section {
-    padding-bottom: 2rem;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid var(--cds-border-subtle-01);
+  .settings-section {
+    display: grid;
+    grid-template-columns: minmax(0, 16rem) minmax(0, 1fr);
+    gap: 1rem 2rem;
+    padding: 2rem 0;
+    border-top: 1px solid var(--cds-border-subtle-01, var(--cds-ui-03));
   }
-  section:last-child {
-    border-bottom: 0;
+  .settings-section:first-of-type {
+    border-top: 0;
+    padding-top: 1rem;
   }
-  h2 {
+  /* productive-heading-02 and body-short-01 */
+  .settings-intro h2 {
     font-size: 1rem;
     font-weight: 600;
-    line-height: 1.5;
-    margin-bottom: 1rem;
+    line-height: 1.375;
+    letter-spacing: 0;
+    color: var(--cds-text-primary, var(--cds-text-01));
   }
-  .settings-form {
+  .settings-intro p {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.29;
+    letter-spacing: 0.16px;
+    color: var(--cds-text-secondary, var(--cds-text-02));
+  }
+  .settings-body {
     display: grid;
+    align-content: start;
+    justify-items: stretch;
     gap: 1rem;
+    min-width: 0;
+    max-width: 40rem;
+  }
+  .settings-body > :global(.bx--snippet) {
+    justify-self: start;
+  }
+  .settings-body > :global(.delete-summary) {
+    font-size: 0.875rem;
+    line-height: 1.29;
+    letter-spacing: 0.16px;
+  }
+  .settings-body > p {
+    font-size: 0.875rem;
+    line-height: 1.29;
+    letter-spacing: 0.16px;
   }
   .settings-actions {
     display: flex;
@@ -255,23 +312,17 @@
     flex-wrap: wrap;
     gap: 0.5rem 1rem;
   }
-  .settings-row {
-    display: grid;
-    justify-items: start;
-    gap: 0.75rem;
-  }
   .settings-status {
     font-size: 0.875rem;
     color: var(--cds-text-secondary);
   }
-  .project-id {
-    margin-top: 1.5rem;
-    display: grid;
-    justify-items: start;
-    gap: 0.5rem;
-  }
   .settings-warning {
-    margin-bottom: 1rem;
     color: var(--cds-text-error);
+  }
+  @media (max-width: 671px) {
+    .settings-section {
+      grid-template-columns: minmax(0, 1fr);
+      padding: 1.5rem 0;
+    }
   }
 </style>

@@ -120,7 +120,6 @@
 </script>
 
 <div class="form-stack project-media-limit">
-  <p class="help-note">{$t('projects.mediaLimit.help')}</p>
   <RadioButtonGroup
     legendText={$t('projects.mediaLimit.source')}
     orientation="vertical"

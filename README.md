@@ -103,8 +103,8 @@ with wandb.init(project="quickstart", config={"lr": 3e-4, "batch_size": 64}) as 
 
 **4. Open [http://127.0.0.1:8742](http://127.0.0.1:8742).** The run appears under the
 `local` entity in the **quickstart** project, with a chart for each metric and panels
-for the images and the video. **Connect SDK** in the project header shows these settings
-with the project filled in.
+for the images and the video. **Connect SDK** on the project's **Settings** page shows these
+settings with the project filled in.
 
 Other ways to connect:
 

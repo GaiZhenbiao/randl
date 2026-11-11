@@ -91,7 +91,8 @@ try {
     await expect(link(name)).toBeVisible();
   // Projects are switched from the project list; the menu has no project picker.
   await expect(navigation.getByRole('combobox')).toHaveCount(0);
-  await expect(navigation.getByRole('button', { name: 'Connect SDK', exact: true })).toBeVisible();
+  // Connect SDK is on the project's Settings page, not in the menu.
+  await expect(navigation.getByRole('button', { name: 'Connect SDK', exact: true })).toHaveCount(0);
   checks.push('menu button opens the side navigation at the current page with 48 px targets');
 
   // Focus stays in the navigation; Escape returns it to the menu button.

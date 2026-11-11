@@ -391,9 +391,8 @@ try {
     await mobile.getByRole('button', { name: 'Open navigation', exact: true }).click();
     await mobile.getByRole('navigation', { name: 'Navigation' }).getByRole('link', { name: 'Server', exact: true }).click();
     await expect(mobile.getByRole('heading', { level: 1, name: 'Server' })).toBeVisible();
-    await mobile.goto(baseURL + '/audit/older/workspace');
-    await mobile.getByRole('button', { name: 'Open navigation', exact: true }).click();
-    await mobile.getByRole('navigation', { name: 'Navigation' }).getByRole('button', { name: 'Connect SDK' }).click();
+    await mobile.goto(baseURL + '/audit/older/settings');
+    await mobile.getByRole('main').getByRole('button', { name: 'Connect SDK' }).click();
     await expect(mobile.getByRole('dialog', { name: 'Connect SDK' })).toContainText(
       'wandb.init(entity="audit", project="older")',
     );

@@ -73,7 +73,6 @@
   import ProjectPages from './ProjectPages.svelte';
   import ServerOverview from './ServerOverview.svelte';
   import ConnectSdk from './ConnectSdk.svelte';
-  import Code from 'carbon-icons-svelte/lib/Code.svelte';
   import { pendingProjectConfirmation } from './agent-confirmation';
   import Dashboard from 'carbon-icons-svelte/lib/Dashboard.svelte';
   import Activity from 'carbon-icons-svelte/lib/Activity.svelte';
@@ -2770,22 +2769,7 @@
       {@render pageLead()}{@render pageTitle()}{@render pageTools()}
     </div>
     <div class="header-actions">
-      {#if project && !routeError && width > 760}{#if width < 1280}<Button
-            kind="ghost"
-            size="small"
-            icon={Code}
-            class="connect-sdk-button"
-            hideTooltip
-            title={$t('connect.title')}
-            iconDescription={$t('connect.title')}
-            on:click={() => (help = true)}
-          />{:else}<Button
-            kind="ghost"
-            size="small"
-            icon={Code}
-            class="connect-sdk-button"
-            on:click={() => (help = true)}>{$t('connect.title')}</Button
-          >{/if}{/if}<!-- Narrower headers keep their actions as icons. -->
+      <!-- Narrower headers keep their actions as icons. -->
       {#if width < 1056}<Button
           kind="ghost"
           size="small"
@@ -2841,21 +2825,7 @@
               isSelected={!!project &&
                 (page === item.id || (page === 'run' && item.id === 'workspace'))}
               on:click={(event) => followNavigation(event, () => openProjectPage(item.id))}
-            />{/each}{/if}<SideNavDivider />{#if project && !routeError}<li
-            class="bx--side-nav__item"
-          >
-            <button
-              type="button"
-              class="bx--side-nav__link"
-              onclick={() => {
-                menuOpen = false;
-                help = true;
-              }}
-              ><span class="bx--side-nav__icon bx--side-nav__icon--small"><Code /></span><span
-                class="bx--side-nav__link-text">{$t('connect.title')}</span
-              ></button
-            >
-          </li>{/if}<li class="bx--side-nav__item">
+            />{/each}{/if}<SideNavDivider /><li class="bx--side-nav__item">
           <button
             type="button"
             class="bx--side-nav__link"
