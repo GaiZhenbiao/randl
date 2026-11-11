@@ -297,8 +297,18 @@ try {
     next = carousel.getByRole('button', { name: 'Next item', exact: true });
   await expect(previous).toBeDisabled();
   // Charts take a fixed 4:3 shape: the current run is the largest 4:3 box in the stage, and
-  // neighbours show in the width that leaves. Only the current run has a renderer.
-  await expect(panel('grid').locator('canvas')).toHaveCount(1);
+  // neighbours show in the width that leaves. Every item with an element draws its chart.
+  await expect
+    .poll(async () =>
+      panel('grid').evaluate((node) => [
+        node.querySelectorAll('.carousel-item').length,
+        node.querySelectorAll('.carousel-item .cell-plot [_echarts_instance_]').length,
+      ]),
+    )
+    .toEqual(await panel('grid').evaluate((node) => {
+      const items = node.querySelectorAll('.carousel-item').length;
+      return [items, items];
+    }));
   assert.equal(await slide.evaluate((el) => getComputedStyle(el).transform), 'none');
   const [slideBox, chartStage] = await Promise.all([
     slide.boundingBox(),
@@ -645,8 +655,8 @@ try {
   );
 
   // A very wide panel shows as many neighbors as its width holds, more than three on each
-  // side; only those and one hidden beyond each edge have elements, all sparklines, and the
-  // current run keeps the one renderer.
+  // side; only those and one hidden beyond each edge have elements, each with the chart it
+  // shows when current, inert, so the renderers are bounded by what the width holds.
   await page.setViewportSize({ width: 3200, height: 1000 });
   await expect(slide).toHaveAttribute('aria-label', /^1 of 40: /);
   const flowCounts = () =>
@@ -662,8 +672,8 @@ try {
         left: shown.filter((el) => el.dataset.side === 'left').length,
         right: shown.filter((el) => el.dataset.side === 'right').length,
         hidden: items.length - shown.length - 1,
-        sparklines: node.querySelectorAll('.carousel-peek .cell-sparkline').length,
-        canvases: node.closest('[data-panel-id]').querySelectorAll('canvas').length,
+        charts: node.querySelectorAll('.carousel-item .cell-plot [_echarts_instance_]').length,
+        inert: [...node.querySelectorAll('.carousel-peek .cell-plot')].every((plot) => plot.inert),
       };
     });
   await page.waitForTimeout(600);
@@ -684,14 +694,14 @@ try {
     1 + middle.left + middle.right + middle.hidden,
     JSON.stringify(middle),
   );
-  assert.equal(middle.sparklines, middle.items - 1, JSON.stringify(middle));
-  assert.equal(middle.canvases, 1, JSON.stringify(middle));
+  assert.equal(middle.charts, middle.items, JSON.stringify(middle));
+  assert.ok(middle.inert, JSON.stringify(middle));
   if (screenshots) {
     await mkdir(screenshots, { recursive: true });
     await panel('grid').screenshot({ path: join(screenshots, 'chart-coverflow-3200.png') });
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  checks.push('Coverflow at 3200 px: many neighbors per side, one renderer, bounded elements');
+  checks.push('Coverflow at 3200 px: many neighbors per side, a chart for each, bounded elements');
 
   // Phone widths: one column, the count without the size control.
   const restored = await stored();

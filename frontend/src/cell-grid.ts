@@ -50,6 +50,8 @@ type Slot = {
   mounted?: Mounted;
   /** Keyboard focus is inside the cell's chart. */
   entered: boolean;
+  /** A Coverflow neighbor: drawn like the current cell, but not interactive. */
+  peek?: boolean;
 };
 export type CellGridHost = {
   plugin: Plugin;
@@ -66,8 +68,6 @@ export type CellGridHost = {
   onCurrent?: (key: string) => void;
 };
 const focusable = '[tabindex]:not([tabindex="-1"]),button,a[href],input,select,textarea';
-/** Most points in a coverflow neighbor's sparkline. */
-const sparklinePoints = 64;
 export class CellGrid implements Renderer {
   private grid: TileGrid | undefined;
   private carousel: Carousel | undefined;
@@ -108,14 +108,17 @@ export class CellGrid implements Renderer {
       element.addEventListener('focusout', this.leave);
     }
   }
-  // Coverflow: one live renderer for the current cell; neighbors are sparklines.
+  // Coverflow: a renderer for the current cell and one for each neighbor that has an element
+  // (those in view and one beyond each edge, so the layout bounds them); neighbors draw the
+  // same chart, inert. Moving hands each renderer to the cell's new role without redrawing.
   private createCarousel(ctx: PanelContext) {
     this.carousel = new Carousel(
       this.root,
       {
         stage: (index, element) => this.mount(index, element),
         release: (index) => this.unmount(index),
-        peek: (index, element) => this.peek(index, element),
+        peek: (index, element) => this.mount(index, element, true),
+        unpeek: (index) => this.unmount(index),
         chip: (index, element) => this.chip(index, element),
         name: (index) => this.cells[index].name,
         // Charts have no shape of their own; a fixed 4:3 keeps room for neighbours on wide panels.
@@ -267,15 +270,24 @@ export class CellGrid implements Renderer {
       exportable: this.exportable,
     });
   }
-  private mount(index: number, cell: HTMLElement) {
+  private mount(index: number, cell: HTMLElement, peek = false) {
     const caption = document.createElement('div'),
       plot = document.createElement('div');
     caption.className = 'cell-caption';
     caption.setAttribute('aria-hidden', 'true');
     plot.className = 'cell-plot';
+    // A neighbor's chart takes no pointer, focus or keys; a click on it moves Coverflow.
+    plot.inert = peek;
     cell.append(caption, plot);
     // Coverflow's slide is no grid tile: its chart stays in the tab order.
-    const slot: Slot = { index, cell, plot, owner: {}, entered: this.mode === 'coverflow' };
+    const slot: Slot = {
+      index,
+      cell,
+      plot,
+      owner: {},
+      entered: this.mode === 'coverflow' && !peek,
+      peek,
+    };
     this.slots.set(index, slot);
     this.caption(slot);
     const reused = this.pool.pop();
@@ -454,42 +466,6 @@ export class CellGrid implements Renderer {
     name.textContent = cell.name;
     element.append(swatch, name);
   }
-  // A neighbor shows its caption and a sparkline of its first metric, without a renderer.
-  private peek(index: number, element: HTMLElement) {
-    const cell = this.cells[index],
-      caption = document.createElement('div'),
-      metric = cell.data.metrics[0],
-      points = cell.data.series[0].values[metric] || [];
-    caption.className = 'cell-caption';
-    this.chip(index, caption);
-    element.append(caption);
-    if (points.length < 2) return;
-    const step = Math.max(1, Math.ceil(points.length / sparklinePoints)),
-      sampled = points.filter((_, i) => i % step === 0 || i === points.length - 1);
-    let [x0, x1, y0, y1] = [Infinity, -Infinity, Infinity, -Infinity];
-    for (const [x, y] of sampled) {
-      [x0, x1, y0, y1] = [Math.min(x0, x), Math.max(x1, x), Math.min(y0, y), Math.max(y1, y)];
-    }
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'),
-      line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-    svg.setAttribute('viewBox', '0 0 100 100');
-    svg.setAttribute('preserveAspectRatio', 'none');
-    svg.classList.add('cell-sparkline');
-    line.setAttribute(
-      'points',
-      sampled
-        .map(
-          ([x, y]) =>
-            ((x - x0) / (x1 - x0 || 1)) * 100 + ',' + (100 - ((y - y0) / (y1 - y0 || 1)) * 100),
-        )
-        .join(' '),
-    );
-    line.setAttribute('stroke', cell.color);
-    line.setAttribute('fill', 'none');
-    line.setAttribute('vector-effect', 'non-scaling-stroke');
-    svg.append(line);
-    element.append(svg);
-  }
   /** Shows a cursor in every cell except the one it came from. */
   showCursor(cursor: ChartCursor | null) {
     this.cursor = cursor as PlotCursor | null;
@@ -507,7 +483,7 @@ export class CellGrid implements Renderer {
   async exportImage() {
     const ctx = this.context!;
     if (this.carousel) {
-      const slot = [...this.slots.values()][0];
+      const slot = this.slots.get(this.carousel.index);
       return (await slot?.mounted?.renderer.exportImage?.()) ?? '';
     }
     const grid = this.grid!,

@@ -5109,18 +5109,9 @@ aside {
     pointer-events: none;
   }
 }
-/* Chart neighbors: the caption and a sparkline on the panel's layer. */
+/* Chart items, the current one and its neighbors alike, on the panel's layer. */
 .cell-grid .carousel-item {
   background: var(--cds-ui-01);
-}
-.cell-grid .carousel-peek {
-  border: 1px solid var(--cds-border-subtle);
-}
-.cell-sparkline {
-  flex: 1;
-  width: 100%;
-  min-height: 0;
-  padding: 8px;
 }
 .carousel-strip[hidden] {
   display: none;
