@@ -1,3 +1,4 @@
+import { ensureTables } from './schema.js';
 import type Database from 'better-sqlite3';
 import {randomUUID} from 'node:crypto';
 import {managementError} from './management-errors.js';
@@ -6,7 +7,7 @@ const notFound=()=>managementError('CONVERSATION_NOT_FOUND','Conversation not fo
 export type ChatAction={id:string;name:string;args:Record<string,unknown>;status:'working'|'awaiting'|'declined'|'completed'|'failed';at?:number;result?:unknown;error?:string};
 export type ChatTurn={id:string;conversation:string;seq:number;prompt:string;response:string;actions:ChatAction[];status:'working'|'completed'|'failed'|'stopped';error:string;errorCode:string;parentEntry:string|null;revision:number;created:number};
 export class Conversations{
- constructor(readonly db:Database.Database){db.exec(`
+ constructor(readonly db:Database.Database){ensureTables(db,`
  CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY,title TEXT NOT NULL DEFAULT '',project TEXT NOT NULL DEFAULT '',created REAL NOT NULL,updated REAL NOT NULL,revision INTEGER NOT NULL DEFAULT 0,entries TEXT NOT NULL DEFAULT '[]');
  CREATE TABLE IF NOT EXISTS conversation_turns(id TEXT PRIMARY KEY,conversation TEXT NOT NULL,seq INTEGER NOT NULL,prompt TEXT NOT NULL,response TEXT NOT NULL DEFAULT '',actions TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'working',error TEXT NOT NULL DEFAULT '',error_code TEXT NOT NULL DEFAULT '',parent_entry TEXT,revision INTEGER NOT NULL,created REAL NOT NULL);
  CREATE INDEX IF NOT EXISTS conversation_order ON conversation_turns(conversation,seq);

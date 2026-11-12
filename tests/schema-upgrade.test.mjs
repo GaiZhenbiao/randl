@@ -13,10 +13,11 @@ test('startup adds columns that tables from an earlier version lack', async (t) 
   t.after(() => rm(directory, { recursive: true, force: true }));
   let server = await createServer(directory);
   await server.app.close();
-  // The ledger tables as the first ledger release created them: no `source` columns; and
-  // metric renames without `by`. One journal entry is already there.
+  // The ledger tables as the first ledger release created them: no `source` columns; metric
+  // renames without `by`; runs without `color_index`. One journal entry is already there.
   const raw = new Database(join(directory, 'randl.sqlite3'));
   raw.exec(`
+    DROP INDEX project_run_colors; ALTER TABLE runs DROP COLUMN color_index;
     DROP TABLE findings; DROP TABLE recipe_events; DROP TABLE run_journal; DROP TABLE metric_renames;
     CREATE TABLE findings(project TEXT NOT NULL,id TEXT NOT NULL,topic TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,citations TEXT NOT NULL,version INTEGER NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,deleted REAL,PRIMARY KEY(project,id));
     CREATE TABLE recipe_events(id INTEGER PRIMARY KEY,project TEXT NOT NULL,run TEXT NOT NULL,since REAL NOT NULL,reason TEXT NOT NULL,by TEXT NOT NULL,created REAL NOT NULL);
@@ -54,9 +55,15 @@ test('startup adds columns that tables from an earlier version lack', async (t) 
   assert.deepEqual((await call('finding_get', { project: 'e/p', id: 'f' })).finding.source, source);
   await call('recipe_set', { project: 'e/p', run: 'e/p/base', reason: 'best', source });
   assert.deepEqual((await call('recipe_get', { project: 'e/p' })).current.source, source);
-  // The rename log gained `by` with its default.
+  // Runs regained their colour index; the rename log gained `by` with its default.
   const check = new Database(join(directory, 'randl.sqlite3'), { readonly: true });
   t.after(() => check.close());
+  assert.ok(check.pragma('table_info(runs)').some((column) => column.name === 'color_index'));
+  assert.ok(check.pragma('index_list(runs)').some((index) => index.name === 'project_run_colors'));
+  assert.equal(
+    check.prepare("SELECT color_index FROM runs WHERE name='base'").get().color_index,
+    0,
+  );
   const by = check.pragma('table_info(metric_renames)').find((column) => column.name === 'by');
   assert.equal(by.dflt_value, "''");
   assert.equal(by.notnull, 1);

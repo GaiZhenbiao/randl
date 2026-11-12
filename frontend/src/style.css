@@ -6374,6 +6374,8 @@ aside {
 }
 .occupancy-note {
   margin: 0 0 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
   color: var(--cds-text-02);
 }
 .occupancy-scroll {

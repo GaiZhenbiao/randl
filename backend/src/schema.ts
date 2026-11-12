@@ -1,15 +1,16 @@
 import type Database from 'better-sqlite3';
 
 /**
- * Runs `CREATE TABLE IF NOT EXISTS` statements, then adds the columns a table created by an
- * earlier version lacks, so a column added later cannot break a deployed database. Each
+ * Runs `CREATE TABLE IF NOT EXISTS` statements, adds the columns a table created by an
+ * earlier version lacks, then runs the rest of `sql` (such as indexes that name new columns),
+ * so a column added later cannot break a deployed database. Each
  * declared table is compared with a temporary copy of its declaration; a missing column is
  * added with its type and default, and keeps NOT NULL only when it has a default (existing
  * rows need a value). A missing primary key column cannot be added, and stops startup.
  */
 export function ensureTables(db: Database.Database, sql: string) {
-  db.exec(sql);
   const added: string[] = [];
+  // Tables first, then their missing columns, then the rest (indexes may name new columns).
   for (const match of sql.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(/g)) {
     const table = match[1],
       start = match.index! + match[0].length - 1;
@@ -19,6 +20,8 @@ export function ensureTables(db: Database.Database, sql: string) {
       if (sql[end] === '(') depth++;
       else if (sql[end] === ')' && --depth === 0) break;
     }
+    const close = sql.indexOf(';', end);
+    db.exec(sql.slice(match.index!, close < 0 ? undefined : close));
     const shadow = 'declared_' + table;
     db.exec(`DROP TABLE IF EXISTS temp.${shadow}`);
     db.exec(`CREATE TEMP TABLE ${shadow}${sql.slice(start, end + 1)}`);
@@ -44,5 +47,6 @@ export function ensureTables(db: Database.Database, sql: string) {
       added.push(table + '.' + column.name);
     }
   }
+  db.exec(sql);
   return added;
 }

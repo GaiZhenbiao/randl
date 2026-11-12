@@ -1,10 +1,12 @@
+import { ensureTables } from './schema.js';
 import { managementError } from './management-errors.js';
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 type Row = Record<string, any>;
 export class Artifacts {
   constructor(readonly db: Database.Database) {
-    db.exec(
+    ensureTables(
+      db,
       `CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,entity TEXT,project TEXT,name TEXT,type TEXT,version INTEGER,digest TEXT,state TEXT,description TEXT,metadata TEXT,created TEXT,updated TEXT,producer TEXT,manifest TEXT,size INTEGER DEFAULT 0,file_count INTEGER DEFAULT 0,UNIQUE(entity,project,name,version));CREATE TABLE IF NOT EXISTS artifact_aliases(entity TEXT,project TEXT,name TEXT,alias TEXT,artifact_id TEXT,PRIMARY KEY(entity,project,name,alias));CREATE TABLE IF NOT EXISTS artifact_files(artifact_id TEXT,name TEXT,digest TEXT,size INTEGER DEFAULT 0,PRIMARY KEY(artifact_id,name));CREATE TABLE IF NOT EXISTS artifact_clients(client_id TEXT PRIMARY KEY,artifact_id TEXT);CREATE TABLE IF NOT EXISTS artifact_usage(artifact_id TEXT,run TEXT,PRIMARY KEY(artifact_id,run));`,
     );
   }

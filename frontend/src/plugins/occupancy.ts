@@ -467,9 +467,10 @@ export function create({
     scroller.setAttribute('aria-label', t('occupancy.label'));
     if (data?.unplaced.length) {
       note.hidden = false;
+      note.title = data.unplaced.map((run) => run.name).join('\n');
       note.textContent = t('occupancy.unplaced', {
         count: data.unplaced.length,
-        names: data.unplaced.map((run) => run.name).join(', '),
+        names: data.unplaced.map((run) => shortName(run.name, 0)).join(', '),
       });
     } else note.hidden = true;
   }

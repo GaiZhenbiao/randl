@@ -59,6 +59,8 @@ try {
     [500, 1000],
   );
   const live = await seed('p2_live', null, { compute: compute('a12', [1, 2]) }, [250, 500]);
+  // A running run that logs no compute block and carries no plan: its GPUs are unknown.
+  const bare = await seed('p4_bare', null, {}, [250, 500]);
   // The finished run trained 10 to 4 hours ago; the live one started 2 hours ago.
   const now = Date.now() / 1000,
     hour = 3600,
@@ -71,6 +73,9 @@ try {
   raw
     .prepare('UPDATE runs SET started=?,created=?,heartbeat=? WHERE id=?')
     .run(now - 2 * hour, now - 2 * hour, now, live);
+  raw
+    .prepare('UPDATE runs SET started=?,created=?,heartbeat=? WHERE id=?')
+    .run(now - hour, now - hour, now, bare);
   raw.close();
   await call('project_lineage_settings_update', {
     id: 'test/plans',
@@ -88,6 +93,16 @@ try {
     hypothesis: 'A constant rate holds the gain.',
     baseline: done,
     rule: 'Stop if the audit falls below p1 at matched updates.',
+  });
+
+  // Queued after the run whose GPUs are unknown: it still waits for that run's end.
+  await call('plan_save', {
+    project: 'test/plans',
+    id: 'p5',
+    name: 'p5_after',
+    host: 'hostB',
+    gpus: [0],
+    after: bare,
   });
 
   browser = await launchBrowser();
@@ -112,18 +127,42 @@ try {
   await expect(queued).toContainText('A constant rate holds the gain.');
   await expect(queued).toContainText('Stop if the audit falls below p1');
   await expect(queued.getByRole('link', { name: 'p1_done' })).toBeVisible();
+  // The run without a compute block: named in the timeline's note, in a lane of its own, and
+  // still holding back the plan queued after it (500 of 1000 updates in an hour: 1 h more).
+  await expect(page.locator('.occupancy-note')).toHaveText(
+    '1 running run logs no GPUs, so it is not shown: p4',
+  );
+  const loose = page.getByRole('region', { name: 'No host or slot' });
+  await expect(loose.locator('.plan-running-card')).toContainText('p4_bare');
+  await expect(loose.locator('.plan-running-card')).toContainText('Not logged');
+  await expect(
+    page.getByRole('region', { name: 'hostB' }).locator('.plan-card', { hasText: 'p5_after' }),
+  ).toContainText(/Starts about .* \(in 1h\)/);
   checks.push('Lanes show the running run’s progress and end, then queued plans with their start');
 
   // The timeline: GPU rows 0 to 2 of hostA, a bar of each kind and the now line.
   const timeline = page.locator('.occupancy');
-  await expect(timeline.locator('.occupancy-host')).toHaveText([/hostA/]);
-  await expect(timeline.locator('.occupancy-row-label')).toHaveText(['GPU 0', 'GPU 1', 'GPU 2']);
-  for (const kind of ['past', 'running', 'remaining', 'planned'])
-    await expect(timeline.locator('.occupancy-track .kind-' + kind)).toHaveCount(1);
+  await expect(timeline.locator('.occupancy-host')).toHaveText([/hostA/, /hostB/]);
+  await expect(timeline.locator('.occupancy-row-label')).toHaveText([
+    'GPU 0',
+    'GPU 1',
+    'GPU 2',
+    'GPU 0',
+  ]);
+  for (const [kind, count] of [
+    ['past', 1],
+    ['running', 1],
+    ['remaining', 1],
+    ['planned', 2],
+  ])
+    await expect(timeline.locator('.occupancy-track .kind-' + kind)).toHaveCount(count);
   await expect(timeline.locator('.occupancy-track .kind-past')).toHaveClass(/verdict-adopted/);
   await expect(timeline.locator('.occupancy-now')).toHaveCount(1);
   // Bars cover both GPUs as one block; the plan follows the running run's estimated end.
-  const box = async (kind) => timeline.locator('.occupancy-track .kind-' + kind).boundingBox();
+  const box = async (kind) =>
+    timeline
+      .locator(kind === 'planned' ? '[data-id="plan:p3"]' : '.occupancy-track .kind-' + kind)
+      .boundingBox();
   const [past, remaining, planned] = [
     await box('past'),
     await box('remaining'),
@@ -162,7 +201,7 @@ try {
   await timeline.locator('.occupancy-track .kind-past').hover();
   await expect(timeline.locator('.occupancy-tooltip')).toContainText('p1_done');
   await expect(timeline.locator('.occupancy-tooltip')).toContainText('Adopted');
-  await timeline.locator('.occupancy-track .kind-planned').click();
+  await timeline.locator('[data-id="plan:p3"]').click();
   const dialog = page.getByRole('dialog', { name: 'Edit plan' });
   await expect(dialog.getByLabel('Run name')).toHaveValue('p3_next');
   // Naming its GPUs moves it to them.
@@ -171,8 +210,9 @@ try {
   await dialog.getByRole('button', { name: 'Save plan' }).click();
   await expect(dialog).toBeHidden();
   const { plans } = await call('plans_list', { project: 'test/plans' });
-  assert.deepEqual(plans[0].gpus, [0, 1]);
-  assert.equal(plans[0].updates, 500);
+  const saved = plans.find((item) => item.id === 'p3');
+  assert.deepEqual(saved.gpus, [0, 1]);
+  assert.equal(saved.updates, 500);
   await expect.poll(async () => (await box('planned')).y).toBeLessThan((await box('remaining')).y);
   await timeline.locator('.occupancy-track .kind-past').click();
   await expect(page).toHaveURL(/\/test\/plans\/runs\/p1_done/);

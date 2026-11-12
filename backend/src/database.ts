@@ -156,8 +156,8 @@ export class Store {
     this.db.pragma('busy_timeout = 10000');
     if(empty)this.db.exec('BEGIN');
     try {
-    this.db
-      .exec(`CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,entity TEXT,project TEXT,name TEXT,display_name TEXT,state TEXT,created REAL,updated REAL,config TEXT DEFAULT '{}',summary TEXT DEFAULT '{}',tags TEXT DEFAULT '[]',notes TEXT DEFAULT '',history_count INTEGER DEFAULT 0,revision INTEGER DEFAULT 0,group_name TEXT DEFAULT '',job_type TEXT DEFAULT '',deleted_at REAL,stop_requested INTEGER DEFAULT 0,metadata TEXT DEFAULT '{}',host TEXT DEFAULT '',program TEXT DEFAULT '',git_remote TEXT DEFAULT '',git_commit TEXT DEFAULT '',username TEXT DEFAULT '',runtime REAL DEFAULT 0,runtime_at REAL,runtime_reported INTEGER DEFAULT 0,runtime_raw REAL,runtime_raw_at REAL,started REAL,heartbeat REAL,finished REAL,exit_code INTEGER,metric_revision INTEGER DEFAULT 0,metric_definitions TEXT DEFAULT '[]',snapshot_at REAL,snapshot_source TEXT,stream_bytes INTEGER NOT NULL DEFAULT 0,file_bytes INTEGER NOT NULL DEFAULT 0,resumed_at REAL,color_index INTEGER);
+    // Every table gains the columns added after it was created (schema.ts).
+    ensureTables(this.db, `CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,entity TEXT,project TEXT,name TEXT,display_name TEXT,state TEXT,created REAL,updated REAL,config TEXT DEFAULT '{}',summary TEXT DEFAULT '{}',tags TEXT DEFAULT '[]',notes TEXT DEFAULT '',history_count INTEGER DEFAULT 0,revision INTEGER DEFAULT 0,group_name TEXT DEFAULT '',job_type TEXT DEFAULT '',deleted_at REAL,stop_requested INTEGER DEFAULT 0,metadata TEXT DEFAULT '{}',host TEXT DEFAULT '',program TEXT DEFAULT '',git_remote TEXT DEFAULT '',git_commit TEXT DEFAULT '',username TEXT DEFAULT '',runtime REAL DEFAULT 0,runtime_at REAL,runtime_reported INTEGER DEFAULT 0,runtime_raw REAL,runtime_raw_at REAL,started REAL,heartbeat REAL,finished REAL,exit_code INTEGER,metric_revision INTEGER DEFAULT 0,metric_definitions TEXT DEFAULT '[]',snapshot_at REAL,snapshot_source TEXT,stream_bytes INTEGER NOT NULL DEFAULT 0,file_bytes INTEGER NOT NULL DEFAULT 0,resumed_at REAL,color_index INTEGER);
       CREATE INDEX IF NOT EXISTS running_run_heartbeats ON runs(heartbeat) WHERE state='running';
       CREATE INDEX IF NOT EXISTS project_runs ON runs(entity,project);
       CREATE TABLE IF NOT EXISTS server_settings(key TEXT PRIMARY KEY,value TEXT);CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,expires REAL);
@@ -2514,7 +2514,7 @@ export class Store {
         // The summary's value, else the last one its history logged.
         progress:
           finite(row.progress) ??
-          (compute && settings.progressKey
+          ((compute || row.state === 'running') && settings.progressKey
             ? (this.history.lastPoint(row.id, settings.progressKey)?.value ?? null)
             : null),
         budget: finite(row.budget),
