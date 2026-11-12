@@ -517,7 +517,7 @@ export const toolCatalog = [
   {
     name: 'plan_save',
     description:
-      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name). Callers set status planned or cancelled (planned also releases a claim waiting for its run); the server sets started, done and stopped from the claim and the run. config_yaml is the exact config file text, returned verbatim by plan_claim; resume_run names a run the plan continues in its own directory. gpus names the GPU indices it will use on its host (else those its slot last used); updates is how far it will train, for its estimated end (else its config budget less its start). Omitted fields keep their value; status cancelled keeps it for the record.',
+      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name, unless the plan has a resume_run: those bind only through lineage.plan). Callers set status planned or cancelled (planned also releases a claim waiting for its run); the server sets started, done and stopped from the claim and the run. config_yaml is the exact config file text, returned verbatim by plan_claim; resume_run names a run the plan continues in its own directory. gpus names the GPU indices it will use on its host (else those its slot last used); updates is how far it will train, for its estimated end (else its config budget less its start). Omitted fields keep their value; status cancelled keeps it for the record.',
     agent: false,
     parameters: schema(
       {

@@ -169,6 +169,102 @@ test("a plan resuming an earlier plan's run binds to it, and the earlier plan ke
   );
 });
 
+test("a plan resuming a stopped run waits for its claim instead of taking the run's state", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'randl-plan-resume-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let server = await createServer(directory);
+  // A run that stopped, logging no plan, and a plan to resume it under its own name.
+  const run = await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'paused-run',
+    state: 'killed',
+  });
+  const save = (payload) =>
+    server.app.inject({ method: 'POST', url: '/api/tools/plan_save', payload });
+  assert.equal(
+    (
+      await save({
+        project: 'e/p',
+        id: 'paused-run-resume',
+        name: 'paused-run',
+        host: 'h',
+        slot: 'a',
+        queue: 1,
+        resume_run: run.id,
+      })
+    ).statusCode,
+    200,
+  );
+  const read = async () =>
+    (
+      await server.app.inject({
+        method: 'POST',
+        url: '/api/tools/plans_list',
+        payload: { project: 'e/p' },
+      })
+    )
+      .json()
+      .plans.find((plan) => plan.id === 'paused-run-resume');
+  assert.deepEqual([(await read()).status, (await read()).run], ['planned', null]);
+  // One saved before this rule, bound to the run by name and stopped with it, is waiting again
+  // once the server starts.
+  await server.app.close();
+  const raw = new Database(join(directory, 'randl.sqlite3'));
+  const row = raw.prepare("SELECT record FROM planned_runs WHERE id='paused-run-resume'").get(),
+    record = JSON.parse(row.record);
+  Object.assign(record, {
+    status: 'stopped',
+    run: run.id,
+    events: [
+      { at: 1, status: 'planned' },
+      { at: 2, status: 'stopped', run: run.id },
+    ],
+  });
+  raw
+    .prepare("UPDATE planned_runs SET record=? WHERE id='paused-run-resume'")
+    .run(JSON.stringify(record));
+  raw.close();
+  server = await createServer(directory);
+  t.after(() => server.app.close());
+  const check = new Database(join(directory, 'randl.sqlite3'), { readonly: true });
+  const started = JSON.parse(
+    check.prepare("SELECT record FROM planned_runs WHERE id='paused-run-resume'").get().record,
+  );
+  check.close();
+  assert.deepEqual([started.status, started.run], ['planned', undefined]);
+  const queue = await server.app.inject({
+    method: 'POST',
+    url: '/api/tools/plan_queue',
+    payload: { project: 'e/p', slot: 'a' },
+  });
+  assert.deepEqual(
+    queue.json().plans.map((plan) => plan.id),
+    ['paused-run-resume'],
+  );
+  // Claimed, then the resumed run logs the plan's id: started, then done with it.
+  const claim = await server.app.inject({
+    method: 'POST',
+    url: '/api/tools/plan_claim',
+    payload: { project: 'e/p', slot: 'a', by: 's', host: 'h' },
+  });
+  assert.equal(claim.json().plan.resume_run, run.id);
+  assert.deepEqual([(await read()).status, (await read()).run], ['started', null]);
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'paused-run',
+    state: 'running',
+    config: { lineage: { value: { plan: 'paused-run-resume' } } },
+  });
+  assert.deepEqual([(await read()).status, (await read()).run], ['started', run.id]);
+  await server.db.call('ingest', run.id, {
+    files: { 'wandb-history.jsonl': { offset: 0, content: [JSON.stringify({ _step: 0, x: 1 })] } },
+    complete: true,
+  });
+  assert.equal((await read()).status, 'done');
+});
+
 test('supervisors claim the head of a slot one at a time; stale claims return to the queue', async (t) => {
   const { server, directory, call, launch, plan } = await fixture(t);
   const yaml = '# exact file\nrl:\n  lr: 3.0e-6   # trailing comment  \n  name: "v700 — ü"\n\n';

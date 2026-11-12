@@ -58,6 +58,8 @@ export type Plan = {
   resume_run?: string | null;
   /** The run carrying it out, once one logs `lineage.plan` equal to its id. */
   run?: string | null;
+  /** 'lineage' once that run logged this plan's id; else it was matched by its id or name. */
+  binding?: 'lineage' | null;
   /** The supervisor that took it from its slot's queue (plan_claim). */
   claim?: { by: string; host: string; at: number } | null;
   /** Status changes, oldest first. */
@@ -280,6 +282,7 @@ export class Ledger {
       ...optional('resume_run', field('resume_run', null)),
       // Kept by the server, never set by a save.
       ...optional('run', previous?.run ?? null),
+      ...optional('binding', previous?.binding ?? null),
       ...optional('claim', previous?.claim ?? null),
       ...optional('events', previous?.events?.length ? previous.events : null),
     };

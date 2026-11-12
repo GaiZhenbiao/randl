@@ -439,7 +439,8 @@ Training supervisors take their work from randl. A plan is **planned** while it 
 **started** once a supervisor claims it or a run logs `lineage.plan` equal to its ID, **done**
 when that run finishes and **stopped** when it is stopped, crashes or fails; people and agents
 set **cancelled** (or back to planned). randl keeps these statuses itself, with each change
-recorded on the plan. A run resuming another plan's run logs the new plan's ID; the earlier
+recorded on the plan. A plan with a `resume_run` binds only to a run logging its ID, never by
+name or by that run's earlier state; the resumed run logs the new plan's ID, and the earlier
 plan keeps how it ended.
 
 ```sh

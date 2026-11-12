@@ -199,6 +199,13 @@ export class Store {
       if(this.db.inTransaction)this.db.exec('ROLLBACK');
       this.db.close();throw error;
     }
+    // Plans are brought up to date with their runs at startup, as on every read.
+    this.db.transaction(() => {
+      for (const { project } of this.db
+        .prepare('SELECT DISTINCT project FROM planned_runs')
+        .all() as Row[])
+        this.syncPlans(project);
+    })();
   }
   chatList(args:any){return this.conversations.list(args);}
   chatGet(args:any){return this.conversations.get(args);}
@@ -2502,12 +2509,18 @@ export class Store {
       const mine = (run: Row | undefined) =>
         run && (!run.plan || run.plan === plan.id) ? run : undefined;
       const record = this.ledger.planRecord(project, plan.id)!,
+        logged = byPlan.get(plan.id),
+        // A plan resuming a run shares that run's name and id but not its past: it binds only
+        // to a run logging its id, and keeps a run it had only while that run logged it.
+        resumes = !!record.resume_run,
+        trusted = !resumes || record.binding === 'lineage',
         bound =
-          byPlan.get(plan.id) ??
-          mine(plan.run ? byId.get(plan.run) : undefined) ??
-          mine(byName.get(plan.name)),
-        ended = !bound && ['done', 'stopped'].includes(plan.status) && plan.run,
+          logged ??
+          (trusted ? mine(plan.run ? byId.get(plan.run) : undefined) : undefined) ??
+          (resumes ? undefined : mine(byName.get(plan.name))),
+        ended = !bound && ['done', 'stopped'].includes(plan.status) && plan.run && trusted,
         run = ended ? undefined : bound,
+        binding = logged ? 'lineage' : run ? (record.binding ?? null) : null,
         events = [...((record.events as Row[]) ?? [])];
       if (ended) return { ...plan } as Row;
       let status = plan.status as string,
@@ -2520,14 +2533,21 @@ export class Store {
         claim = null;
         expired = true;
       } else if (status === 'started' && !claim) status = 'planned';
+      // Done or stopped through a run it no longer binds to: waiting again.
+      else if (status === 'done' || status === 'stopped') status = 'planned';
       const changed =
-        status !== plan.status || (run?.id ?? null) !== (plan.run ?? null) || claim !== (record.claim ?? null);
+        status !== plan.status ||
+        (run?.id ?? null) !== (plan.run ?? null) ||
+        claim !== (record.claim ?? null) ||
+        binding !== (record.binding ?? null);
       if (changed) {
         if (status !== plan.status && !expired)
           events.push({ at: now, status, ...(run ? { run: run.id } : {}) });
         const next: Row = { ...record, status, events };
         if (run) next.run = run.id;
         else delete next.run;
+        if (binding) next.binding = binding;
+        else delete next.binding;
         if (claim) next.claim = claim;
         else delete next.claim;
         this.ledger.planWrite(project, plan.id, next);
