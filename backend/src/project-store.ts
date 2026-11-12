@@ -245,6 +245,7 @@ export class Projects {
       this.db.exec('DELETE FROM run_alerts WHERE run IN (SELECT id FROM temp.deleted_project_runs)');
       this.db.exec('DELETE FROM deleted_project_runs');
       this.db.prepare('DELETE FROM projects WHERE id=?').run(a.id);
+      this.db.prepare('DELETE FROM server_settings WHERE key=?').run('lineage:' + a.id);
       return {
         id: a.id,
         name: info.name,

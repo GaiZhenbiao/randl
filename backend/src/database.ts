@@ -20,6 +20,23 @@ import { metricDefinitions, definitionFor, environmentMetadata } from './run-met
 import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runtime.js';
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
+import {
+  RunMatcher,
+  acyclic,
+  configPath,
+  configValues,
+  diffConfigs,
+  edgeChangeLimit,
+  flattenConfig,
+  ignoredKey,
+  lineageNode,
+  loggedChanges,
+  resolveParent,
+  type LineageEdge,
+  type LineageNode,
+  type LineageRun,
+  type LineageSettings,
+} from './lineage.js';
 import Database from 'better-sqlite3';
 import { bucketWidth, chartResolution, chartSampled, type Series } from './chart-diff.js';
 import { mkdirSync } from 'node:fs';
@@ -2002,6 +2019,165 @@ export class Store {
       }
     }
     return [...keys].sort();
+  }
+  /** Edge diffs by child run, kept while neither run's revision nor the ignore list changes. */
+  private lineageDiffs = new Map<string, { key: string; changes: string[] }>();
+  /**
+   * A project's lineage graph (README "Lineage"). Parent keys, tags and the `lineage` block are
+   * read with json_extract; whole configs are parsed only to diff an edge whose `lineage` block
+   * lists no changes, and those diffs are cached. A job, so the worker slices the diffs.
+   */
+  *lineage(project: string, settings: LineageSettings): Generator<void, Row> {
+    const [entity, name] = project.split('/'),
+      keys = [...settings.parentKeys, ...settings.identityKeys];
+    const rows = this.db
+      .prepare(
+        `SELECT id,name,display_name,state,group_name,tags,created,revision,json_extract(config,'$.lineage.value') lineage,${keys
+          .map((_, index) => `json_extract(config,?) k${index}`)
+          .join(',')}${keys.length ? ',' : ''}json_extract(summary,?) latest FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL ORDER BY created`,
+      )
+      .all(
+        ...keys.map(configPath),
+        '$."' + settings.metric.replace(/"/g, '""') + '"',
+        entity,
+        name,
+      ) as Row[];
+    yield;
+    const path = (value: unknown) => (typeof value === 'string' && value ? value : null);
+    const runs: LineageRun[] = rows.map((row) => {
+      let lineage: Row | null = null;
+      try {
+        const parsed = row.lineage ? JSON.parse(row.lineage) : null;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) lineage = parsed;
+      } catch {
+        // A scalar `lineage` value is not a lineage block.
+      }
+      return {
+        id: row.id,
+        name: row.name,
+        display_name: row.display_name || row.name,
+        state: row.state,
+        group: row.group_name || '',
+        tags: JSON.parse(row.tags || '[]'),
+        created: row.created,
+        lineage,
+        parents: settings.parentKeys.map((_, index) => path(row['k' + index])),
+        identities: settings.identityKeys.map((_, index) =>
+          path(row['k' + (settings.parentKeys.length + index)]),
+        ),
+      };
+    });
+    const extents = settings.metric
+      ? this.history.extents(
+          runs.map((run) => run.id),
+          settings.metric,
+        )
+      : new Map();
+    yield;
+    const matcher = new RunMatcher(runs),
+      revisions = new Map(rows.map((row) => [row.id as string, row.revision as number])),
+      created = new Map(runs.map((run) => [run.id, run.created])),
+      nodes: LineageNode[] = [],
+      found: LineageEdge[] = [];
+    for (const [index, run] of runs.entries()) {
+      const extent = extents.get(run.id),
+        latest = rows[index].latest;
+      const node = lineageNode(run, {
+        latest: typeof latest === 'number' && settings.metric ? latest : null,
+        best: extent ? (settings.goal === 'min' ? extent.min : extent.max) : null,
+      });
+      nodes.push(node);
+      const parent = resolveParent(run, matcher, settings);
+      if (!parent) continue;
+      if ('unresolved' in parent) node.unresolved = parent.unresolved;
+      else
+        found.push({
+          source: parent.id,
+          target: run.id,
+          relation: parent.relation,
+          update: parent.update,
+          explicit: parent.explicit,
+          ambiguous: parent.ambiguous,
+          changedKeys: [],
+          changeCount: 0,
+          changeSource: 'lineage',
+        });
+    }
+    const edges = acyclic(found, created),
+      configs = new Map<string, Map<string, any>>(),
+      config = this.db.prepare('SELECT config FROM runs WHERE id=?').pluck();
+    const flat = (id: string) => {
+      let values = configs.get(id);
+      if (!values) {
+        values = flattenConfig(configValues(JSON.parse(config.get(id) as string)));
+        configs.set(id, values);
+      }
+      return values;
+    };
+    const ignore = [...settings.ignoreKeys, ...keys],
+      byId = new Map(runs.map((run) => [run.id, run])),
+      changed = new Map<LineageEdge, string[]>();
+    for (const edge of edges) {
+      let changes = loggedChanges(byId.get(edge.target)!.lineage);
+      if (!changes) {
+        edge.changeSource = 'diff';
+        const key = JSON.stringify([
+          revisions.get(edge.target),
+          edge.source,
+          revisions.get(edge.source),
+          ignore,
+        ]);
+        const cached = this.lineageDiffs.get(edge.target);
+        if (cached?.key === key) changes = cached.changes;
+        else {
+          changes = diffConfigs(flat(edge.source), flat(edge.target), ignore).map(
+            (change) => change.key,
+          );
+          this.lineageDiffs.set(edge.target, { key, changes });
+          yield;
+        }
+      }
+      changed.set(edge, changes);
+    }
+    // Each link lists first the keys that change on the fewest links: what sets this child
+    // apart, rather than keys most children change from an older parent.
+    const frequency = new Map<string, number>();
+    for (const list of changed.values())
+      for (const key of list) frequency.set(key, (frequency.get(key) ?? 0) + 1);
+    for (const [edge, list] of changed) {
+      edge.changeCount = list.length;
+      edge.changedKeys = [...list]
+        .sort((a, b) => frequency.get(a)! - frequency.get(b)! || (a < b ? -1 : 1))
+        .slice(0, edgeChangeLimit);
+    }
+    return {
+      project,
+      settings,
+      nodes,
+      edges,
+      counts: {
+        runs: nodes.length,
+        explicit: edges.filter((edge) => edge.explicit).length,
+        matched: edges.filter((edge) => !edge.explicit).length,
+        unresolved: nodes.filter((node) => node.unresolved).length,
+      },
+    };
+  }
+  /** Every config key whose value differs between two runs, marking those the ignore list hides. */
+  configDiff(from: string, to: string, ignore: string[]) {
+    const config = this.db.prepare('SELECT config FROM runs WHERE id=? AND deleted_at IS NULL');
+    const read = (id: string) => {
+      const row = config.get(id) as Row | undefined;
+      if (!row) throw managementError('RUN_NOT_FOUND', 'Run not found', { run: id }, 404);
+      return flattenConfig(configValues(JSON.parse(row.config)));
+    };
+    const hidden = ignoredKey(ignore);
+    return {
+      changes: diffConfigs(read(from), read(to), []).map((change) => ({
+        ...change,
+        ignored: hidden(change.key),
+      })),
+    };
   }
   viewSave(a: Row) {
     if (a.body.hidePattern) {

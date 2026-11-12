@@ -185,6 +185,50 @@ Search, filter, sort and group runs, choose up to 32 columns from config, summar
 run fields, and select runs to tag, stop or delete them. Deleted runs can be restored
 from project settings.
 
+### Run lineage
+
+The **Lineage** page draws a project's runs as cards linked from the run each one started
+from, so you can follow warm starts, extensions and grown architectures across hundreds of
+experiments. A resumed or extended run stays one card. Each card shows the run's state, a
+verdict from its `verdict:adopted`, `verdict:rejected` or `verdict:running` tag, and the
+latest and best value of the project's lineage metric. Each link is labelled with the
+parent update and the first changed config keys. Select a card for its hypothesis, the
+metric along its lineage, and every config difference from its parent or from another run you
+pick. Filter by name, group or tag, collapse rejected branches, and arrange cards by lineage
+depth, start update or start time. The selected run is kept in the URL (`?run=`).
+
+A run names its parent in a `lineage` config block:
+
+```python
+wandb.config.update({"lineage": {
+    "parent": {"run_id": "jnsf11ul", "run_name": "v621_…", "update": 543000},
+    "relation": "grown_head",  # initialize_from, resume, extend, grown_head, grown_gru,
+                               # added_inputs, added_frames or extends_config
+    "changes": {"model.command_head_dim": [512, 1024]},
+    "recipe": "latched_box40",
+    "hypothesis": "A wider command head holds more boxes",
+}})
+```
+
+`parent.run_id` is the SDK run ID (or the full `entity/project/id`); `parent.run_name`, the
+display name, is used when the ID matches no run. `changes` maps dotted config keys to
+`[old, new]` and replaces the computed diff on the link. Runs without the block are linked
+by the checkpoint path in their **parent checkpoint keys** (default
+`rl.checkpoint.initialize_from`, then `rl.checkpoint.resume`): the path's folder or a
+`<name>_u<update>` warm-source label is matched, from the end of the path, against other
+runs' **run folder keys** (default `rl.checkpoint.save_dir` and `rl.checkpoint.run_name`)
+and display names, ignoring the host-specific start of the path. The update comes from an
+`update_<N>` folder or a `_u<N>` label. A path that names the run's own folder adds no link.
+When several runs share the name, the latest created before the child is linked and marked
+as ambiguous. Changed keys are then computed from the two stored configs, leaving out
+`lineage.*`, the parent and folder keys, and the **keys left out of diffs** (by default
+`*save_dir`, `*run_name`, `*runs_root`, `*_path`, `*_dir`, `*.name`, `*.resume`). Set the
+metric, a display scale (512 shows a success rate as successes out of 512 episodes), whether
+higher or lower is better, and the keys under **Lineage settings** on the page, or with the
+`project_lineage_settings_get` and `project_lineage_settings_update` tools. The graph comes
+from the `project_lineage` tool and full diffs from `runs_config_diff`; the CLI and the
+Assistant use the same tools.
+
 ### Project overview and server status
 
 ![A project overview with one running run, run states and storage use](.github/assets/readme/overview.webp)

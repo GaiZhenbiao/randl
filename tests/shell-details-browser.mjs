@@ -414,7 +414,17 @@ try {
       (await pagesRail.getByRole('button').allInnerTexts()).map((text) =>
         text.replace(/\s+/g, ' ').trim(),
       ),
-    allPages = ['Overview', 'Workspace', 'Runs', 'Artifacts', 'Settings', 'Projects', 'Server', 'App settings'];
+    allPages = [
+      'Overview',
+      'Workspace',
+      'Runs',
+      'Lineage',
+      'Artifacts',
+      'Settings',
+      'Projects',
+      'Server',
+      'App settings',
+    ];
   assert.deepEqual(await railNames(), allPages);
   for (const name of ['Projects', 'Server', 'App settings']) {
     await pagesRail.getByRole('button', { name, exact: true }).click();

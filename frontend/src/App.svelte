@@ -71,12 +71,14 @@
   import Download from 'carbon-icons-svelte/lib/Download.svelte';
   import StopFilled from 'carbon-icons-svelte/lib/StopFilled.svelte';
   import ProjectPages from './ProjectPages.svelte';
+  import ProjectLineage from './ProjectLineage.svelte';
   import ServerOverview from './ServerOverview.svelte';
   import ConnectSdk from './ConnectSdk.svelte';
   import { pendingProjectConfirmation } from './agent-confirmation';
   import Dashboard from 'carbon-icons-svelte/lib/Dashboard.svelte';
   import Activity from 'carbon-icons-svelte/lib/Activity.svelte';
   import Table from 'carbon-icons-svelte/lib/Table.svelte';
+  import DecisionTree from 'carbon-icons-svelte/lib/DecisionTree.svelte';
   import ChartLine from 'carbon-icons-svelte/lib/ChartLine.svelte';
   import Archive from 'carbon-icons-svelte/lib/Archive.svelte';
   import TrashPanel from './TrashPanel.svelte';
@@ -475,6 +477,7 @@
     { id: 'overview', name: 'nav.overview', icon: Dashboard },
     { id: 'workspace', name: 'nav.workspace', icon: ChartLine },
     { id: 'runs', name: 'nav.runs', icon: Table },
+    { id: 'lineage', name: 'nav.lineage', icon: DecisionTree },
     { id: 'artifacts', name: 'nav.artifacts', icon: Archive },
     { id: 'settings', name: 'nav.settings', icon: Settings },
   ];
@@ -1988,6 +1991,7 @@
     runs: 'nav.back.runs',
     overview: 'nav.back.overview',
     artifacts: 'nav.back.artifacts',
+    lineage: 'nav.back.lineage',
   };
   function originOf(url?: string) {
     if (!url) return 'workspace';
@@ -3090,6 +3094,7 @@
     {/snippet}
     <main
       class:runs-page={page === 'runs'}
+      class:lineage-main={page === 'lineage' && !routeError}
       tabindex="-1"
       use:observeCanvas
       id="main"
@@ -3205,6 +3210,14 @@
           }}
           ongroup={(event) => openRunControl('group', event)}
           onsort={(event) => openRunControl('sort', event)}
+        />{:else if page === 'lineage' && project}<ProjectLineage
+          {project}
+          runs={projectRuns}
+          revision={projectRuns.reduce((sum, run) => sum + run.revision, workspaceRevision)}
+          {plugins}
+          colors={resolvedColors}
+          {dark}
+          onRun={(run) => details(run)}
         />{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div
           class="project-page-content"
         >

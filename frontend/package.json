@@ -9,6 +9,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^1.1.8",
     "carbon-components-svelte": "^0.113.1",
     "carbon-icons-svelte": "^13.16.0",
     "echarts": "^6.1.0",

@@ -14,6 +14,7 @@ import {
   projectMediaLimit,
 } from './media-cap.js';
 import type { Plugins } from './plugins.js';
+import { lineageDefaults, type LineageSettings } from './lineage.js';
 type Args = Record<string, any>;
 const string = { type: 'string', maxLength: 4096 },
   strings = { type: 'array', items: string, maxItems: 1000 },
@@ -34,6 +35,17 @@ const chartGroup = {
 };
 function schema(properties: Args = {}, required: string[] = []) {
   return { type: 'object', properties, required, additionalProperties: false };
+}
+const lineageKeys = {
+  type: 'array',
+  items: { type: 'string', minLength: 1, maxLength: 512 },
+  maxItems: 50,
+};
+/** The server setting holding a project's lineage settings. */
+export const lineageSetting = (project: string) => 'lineage:' + project;
+/** A project's lineage settings, defaults filled in. */
+async function lineageSettings(db: DB, project: string): Promise<LineageSettings> {
+  return { ...lineageDefaults, ...(await db.call('settingGet', lineageSetting(project))) };
 }
 export const settingsSchema = schema({
   maxRuns: {
@@ -242,6 +254,41 @@ export const toolCatalog = [
       'Apply the media limit to every run and wait for the result; the server also does this on its own at startup and when the limit changes. dryRun: true only reports the runs, entries, files and bytes that would be removed; dryRun: false permanently deletes media of runs over the limit.',
     agent: false,
     parameters: schema({ dryRun: { type: 'boolean' } }, ['dryRun']),
+  },
+  {
+    name: 'project_lineage',
+    description:
+      "Read a project's run lineage graph: one node per run (state, verdict from verdict:* tags, hypothesis, latest and best value of the lineage metric) and one edge per run that started from another run's checkpoint (relation, parent update, explicit when the run logged a lineage config block, the first changed config keys and their count). Runs whose named parent matched no run carry unresolved.",
+    parameters: schema({ id: string }, ['id']),
+  },
+  {
+    name: 'project_lineage_settings_get',
+    description:
+      "Read a project's lineage settings: the metric shown on each node, its display scale and goal (max or min), the config keys holding a run's parent checkpoint path (parentKeys) and its own folder or name (identityKeys), and the config keys left out of diffs (ignoreKeys, * matches any characters).",
+    parameters: schema({ id: string }, ['id']),
+  },
+  {
+    name: 'project_lineage_settings_update',
+    description:
+      "Change the supplied fields of a project's lineage settings (see project_lineage_settings_get). scale null shows the metric's value unscaled.",
+    parameters: schema(
+      {
+        id: string,
+        metric: { type: 'string', maxLength: 512 },
+        scale: { anyOf: [{ type: 'number', exclusiveMinimum: 0 }, { type: 'null' }] },
+        goal: { type: 'string', enum: ['max', 'min'] },
+        parentKeys: lineageKeys,
+        identityKeys: lineageKeys,
+        ignoreKeys: lineageKeys,
+      },
+      ['id'],
+    ),
+  },
+  {
+    name: 'runs_config_diff',
+    description:
+      "List every config key whose value differs from run from to run to, with both values; ignored marks keys the project's lineage settings leave out of diffs.",
+    parameters: schema({ from: string, to: string }, ['from', 'to']),
   },
   {name:'run_get',description:'Read a run, its environment, configuration, summary, runtime, and logged alerts.',parameters:schema({id:string},['id'])},
   {
@@ -454,6 +501,34 @@ export class Tools {
         result = await this.db.call('runManage', a);
         break;
       case 'project_get': return this.db.call('projectGet',a.id);
+      case 'project_lineage':
+        await this.db.call('projectGet', a.id);
+        return this.db.call('lineage', a.id, await lineageSettings(this.db, a.id));
+      case 'project_lineage_settings_get':
+        await this.db.call('projectGet', a.id);
+        return lineageSettings(this.db, a.id);
+      case 'project_lineage_settings_update': {
+        await this.db.call('projectGet', a.id);
+        const { id, ...changes } = a;
+        await this.db.call('settingSet', lineageSetting(id), {
+          ...(await lineageSettings(this.db, id)),
+          ...changes,
+        });
+        return lineageSettings(this.db, id);
+      }
+      case 'runs_config_diff': {
+        const run = await this.db.call('run', a.to);
+        if (!run) throw managementError('RUN_NOT_FOUND', 'Run not found');
+        const { ignoreKeys, parentKeys, identityKeys } = await lineageSettings(
+          this.db,
+          run.entity + '/' + run.project,
+        );
+        return this.db.call('configDiff', a.from, a.to, [
+          ...ignoreKeys,
+          ...parentKeys,
+          ...identityKeys,
+        ]);
+      }
       case 'project_create': result = await this.db.call('projectCreate',a); break;
       case 'project_update': result = await this.db.call('projectUpdate',a); break;
       case 'project_delete': {
