@@ -331,8 +331,9 @@ Beside the runs, each project keeps what was learned from them and what comes ne
   since when and why, with every earlier promotion kept. Its card on the Lineage page carries a
   star.
 - **Planned runs** (the **Plans** page): name, parent and update, what it changes, hypothesis,
-  config, baseline, stop or decision rule, and its host, slot and queue position. Queues show
-  each slot's running runs and its planned runs in order. Planned runs appear on the Lineage page
+  config, baseline, stop or decision rule, its host, slot and queue position, and optionally
+  its GPUs and how many updates it trains. Queues show each slot's running runs and its
+  planned runs in order. Planned runs appear on the Lineage page
   as dashed cards linked from their parent, and give way to the run that logs
   `lineage.plan` equal to the plan's ID (or has its name).
 - **Run journal** (a run's Overview tab and its Lineage panel): dated entries, optionally at an
@@ -365,7 +366,39 @@ randl journal add --run RUN --update 554000 --text "Collisions fell after the LR
 
 The tools are `finding_save`, `finding_get`, `finding_delete`, `findings_list`, `recipe_set`,
 `recipe_get`, `plan_save`, `plan_delete`, `plans_list`, `journal_add`, `journal_list`,
-`evidence_save` and `runs_compare`. The Assistant is not given the ledger tools.
+`evidence_save`, `runs_compare` and `project_occupancy`. The Assistant is not given the ledger tools.
+
+### Plans and GPU occupancy
+
+The **Plans** page shows where the project stands and what runs next:
+
+- **Best recipe**: the current one, since when and why, beside every earlier promotion on a
+  dated timeline.
+- **GPU occupancy**: one row per GPU, grouped by host, with a bar for each run that held it,
+  running runs drawn up to now and on to their estimated end, and planned runs where they
+  should start. It scrolls sideways through time; Ctrl+scroll (or a touchpad pinch) and the buttons
+  zoom, **Go to now** returns, and a bar opens its run or plan.
+- **Queues**: one lane per host slot, with the run occupying it (progress toward its budget,
+  estimated end and latest audit) followed by its planned runs in order, each with its
+  hypothesis, baseline, stop rule and estimated start.
+
+Runs name their GPUs in their `lineage` block, logged when they start:
+
+```python
+wandb.config.update({"lineage": {"compute": {"host": "Sirius", "gpu_count": 2, "segments": [
+    {"from_update": 543000, "to_update": None, "host": "Sirius", "gpu_count": 2,
+     "gpu_ids": [3, 4], "gpu_model": "RTX 4090 48GB", "slot": "sirius_34"}]}}})
+```
+
+A run that moves between hosts adds a segment per move; randl times each from the run's
+history. Runs that log no GPU indices get rows of their own under their host, and a running
+run that logs no compute block sits on the host and slot of the plan it carries out. Progress
+is the summary's `update` (**progressKey** in the lineage settings), counted toward the
+config's `rl.algorithm.total_updates` (**budgetKey**) from `rl.algorithm.start_update`
+(**startKey**), at the run's own pace. A plan starts once every GPU it needs is free and
+whatever it is queued `after` has ended; it uses its `gpus` (else those its slot last used)
+and trains its `updates` (else its config budget, else as long as runs on its slot usually
+do), at the pace of the slot's recent runs. `project_occupancy` returns the timeline.
 
 ### Project overview and server status
 

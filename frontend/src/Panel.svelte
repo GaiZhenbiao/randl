@@ -25,7 +25,7 @@
   import { schedulePanel, cancelPanel } from './panel-frame';
   import { focusedRun, focusedSeries, supportsFocusedRun } from './focused-run';
   import { groupValueLabel } from './ui';
-  import { apiMessage } from './api';
+  import { apiMessage, tool } from './api';
   import { pluginLocalizer, type Localize } from './plugins/catalogs';
   import { resolveOptions } from '../../backend/src/plugin-options';
   import type {
@@ -37,6 +37,7 @@
     PanelContext,
     RecordTransform,
     PlotSettings,
+    OpenTarget,
   } from './types';
   import { CellGrid, cellWidth } from './cell-grid';
   import { pluginExtent } from './plugins/registry';
@@ -73,6 +74,9 @@
     height = 300,
     onsettings,
     session,
+    project = '',
+    onopen,
+    refresh = 0,
   }: {
     panel: Panel;
     emptySelectionText?: MessageKey;
@@ -100,6 +104,12 @@
     onsettings?: (settings: PlotSettings) => void;
     /** Keys of this tab's unsaved choices: the section's media step and the panel's own. */
     session?: { section: string; panel: string };
+    /** The project of a project-wide panel (data kind `occupancy`); else its runs' project. */
+    project?: string;
+    /** Opens what the plugin's `onOpen` names, such as a run or a plan. */
+    onopen?: (target: OpenTarget) => void;
+    /** Changing it reloads a project-wide panel's data. */
+    refresh?: number;
   } = $props();
   // Resize handles at the bottom corners that face another panel: none at the section's left
   // or right edge, but a one-column panel keeps its right one. The first is the one keyboard
@@ -671,6 +681,7 @@
         if (cursor) plotCursor.set({ ...cursor, source: panel.id });
         else if ($plotCursor?.source === panel.id) plotCursor.set(null);
       },
+      (target) => onopen?.(target),
     )
       .then((value) => {
         owned = value;
@@ -695,7 +706,7 @@
       shown = '';
       return;
     }
-    if (!showing) return;
+    if (!showing || occupancyPanel) return;
     const { endpoint, request, versions, count } = JSON.parse(requestKey);
     if (!laidOut) return;
     if (!count) {
@@ -774,6 +785,42 @@
       // Finish started focus loads into the shared cache. They keep their scheduler
       // slot until completion, so rapid hovering cannot flood the database worker.
       controller.abort(untrack(() => showing && !focused) ? undefined : finishInCache);
+    };
+  });
+  // A project-wide occupancy panel loads its project's timeline, then again each minute
+  // while shown, and whenever `refresh` changes.
+  let occupancyPanel = $derived(plugin?.dataKind === 'occupancy'),
+    occupancyProject = $derived(
+      project || (runs[0] ? runs[0].entity + '/' + runs[0].project : ''),
+    );
+  $effect(() => {
+    if (!occupancyPanel || !plugin?.enabled || !active || !showing || !occupancyProject) return;
+    refresh;
+    const target = occupancyProject;
+    let stopped = false,
+      timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      loading = true;
+      if (!untrack(() => data)) status = 'common.status.loading';
+      try {
+        const result = await tool('project_occupancy', { project: target });
+        if (stopped) return;
+        data = { ...result, series: [], metrics: [] } as unknown as ChartData;
+        status = result.hosts.length ? '' : 'panel.empty.occupancy';
+      } catch (error) {
+        if (!stopped) status = apiMessage(error);
+      } finally {
+        if (!stopped) {
+          loading = false;
+          timer = setTimeout(load, 60_000);
+        }
+      }
+    };
+    void load();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      loading = false;
     };
   });
   // The live item size and the plugin's extent export reach the grid.
@@ -1118,7 +1165,7 @@
                   a.click();
                 }
               }}
-            />{/if}{#if plugin?.dataKind !== 'media'}<OverflowMenuItem
+            />{/if}{#if plugin?.dataKind !== 'media' && !occupancyPanel}<OverflowMenuItem
               hasDivider={!exportable}
               text={$t('panel.menu.exportCsv')}
               disabled={!data}

@@ -21,6 +21,8 @@ import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runti
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
 import { Ledger, seconds } from './ledger.js';
+import { ensureTables } from './schema.js';
+import { occupancy, type OccupancyRun } from './occupancy.js';
 import {
   RunMatcher,
   acyclic,
@@ -33,6 +35,8 @@ import {
   lineageNode,
   loggedChanges,
   resolveParent,
+  verdictOf,
+  computeOf,
   type LineageEdge,
   type LineageNode,
   type LineageRun,
@@ -162,8 +166,12 @@ export class Store {
       CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,manifest TEXT,source TEXT,revision TEXT,enabled INTEGER DEFAULT 0);
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,time REAL,tool TEXT,arguments TEXT);
       CREATE TABLE IF NOT EXISTS run_alerts(id INTEGER PRIMARY KEY,run TEXT,title TEXT,text TEXT,severity TEXT,created REAL);
-      CREATE TABLE IF NOT EXISTS metric_renames(id INTEGER PRIMARY KEY,run TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,merged INTEGER NOT NULL,offsets TEXT NOT NULL,steps TEXT,summary TEXT NOT NULL,by TEXT NOT NULL DEFAULT '',created REAL NOT NULL,undone REAL);
       CREATE INDEX IF NOT EXISTS run_alerts_run ON run_alerts(run,created);`);
+    // Tables added after the storage version gain later columns at startup (schema.ts).
+    ensureTables(
+      this.db,
+      `CREATE TABLE IF NOT EXISTS metric_renames(id INTEGER PRIMARY KEY,run TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,merged INTEGER NOT NULL,offsets TEXT NOT NULL,steps TEXT,summary TEXT NOT NULL,by TEXT NOT NULL DEFAULT '',created REAL NOT NULL,undone REAL);`,
+    );
     this.artifacts = new Artifacts(this.db);
     this.conversations = new Conversations(this.db);
     this.ledger = new Ledger(this.db);
@@ -2456,6 +2464,120 @@ export class Store {
         };
       });
     return { plans, running };
+  }
+  /**
+   * GPU occupancy for the Plans page (occupancy.ts): runs by the GPUs their `lineage.compute`
+   * segments name, the running ones to their estimated end, then the open plans in queue order.
+   */
+  *occupancy(project: string, settings: LineageSettings): Generator<void, Row> {
+    const [entity, name] = project.split('/'),
+      summaryKey = (key: string) => '$."' + key.replace(/"/g, '""') + '"';
+    const rows = this.db
+      .prepare(
+        `SELECT id,display_name,name,state,created,started,finished,heartbeat,updated,tags,revision,json_extract(config,'$.lineage.value') lineage,json_extract(summary,?) progress,json_extract(summary,?) audit${settings.budgetKey ? ',json_extract(config,?) budget' : ''}${settings.startKey ? ',json_extract(config,?) start' : ''} FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL ORDER BY created`,
+      )
+      .all(
+        summaryKey(settings.progressKey),
+        summaryKey(settings.metric),
+        ...(settings.budgetKey ? [configPath(settings.budgetKey)] : []),
+        ...(settings.startKey ? [configPath(settings.startKey)] : []),
+        entity,
+        name,
+      ) as Row[];
+    yield;
+    const due = slicer(),
+      finite = (value: unknown) =>
+        typeof value === 'number' && Number.isFinite(value) ? value : null,
+      runs: OccupancyRun[] = [],
+      carried = new Set<string>();
+    for (const row of rows) {
+      let lineage: Row | null = null;
+      try {
+        const parsed = row.lineage ? JSON.parse(row.lineage) : null;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) lineage = parsed;
+      } catch {
+        // A scalar `lineage` value is not a lineage block.
+      }
+      const compute = computeOf(lineage),
+        plan = typeof lineage?.plan === 'string' ? lineage.plan : null,
+        display = row.display_name || row.name;
+      if (plan) carried.add(plan);
+      carried.add(display);
+      const run: OccupancyRun = {
+        id: row.id,
+        name: display,
+        state: row.state,
+        verdict: verdictOf(JSON.parse(row.tags || '[]'), lineage),
+        start: row.started ?? row.created,
+        end: row.finished ?? row.heartbeat ?? row.updated ?? row.created,
+        compute,
+        // The summary's value, else the last one its history logged.
+        progress:
+          finite(row.progress) ??
+          (compute && settings.progressKey
+            ? (this.history.lastPoint(row.id, settings.progressKey)?.value ?? null)
+            : null),
+        budget: finite(row.budget),
+        from: finite(row.start),
+        plan,
+        audit: settings.metric ? finite(row.audit) : null,
+      };
+      // Where a run moved between hosts, its history tells when it reached each boundary.
+      if ((compute?.segments.length ?? 0) > 1 && settings.progressKey)
+        run.reached = this.remembered(
+          JSON.stringify(['reached', row.id, row.revision, settings.progressKey]),
+          () => this.reachedAt(row.id, settings.progressKey, compute!.segments),
+          () => 256,
+        );
+      runs.push(run);
+      if (due()) yield;
+    }
+    // A plan is carried out by the run logging its id as lineage.plan, else the one named like it.
+    const ledger = this.ledger.plans(project),
+      byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan!, run])),
+      byName = new Map(runs.map((run) => [run.name, run]));
+    for (const plan of ledger) {
+      const run = byPlan.get(plan.id) ?? byName.get(plan.name);
+      if (run && !run.compute && plan.host)
+        run.placement = { host: plan.host, slot: plan.slot, gpus: plan.gpus ?? null };
+    }
+    const plans = ledger.filter(
+      (plan) => plan.status === 'planned' && !carried.has(plan.id) && !carried.has(plan.name),
+    );
+    return {
+      ...occupancy(runs, plans, Date.now() / 1000, {
+        budget: settings.budgetKey,
+        start: settings.startKey,
+      }),
+      // What a running run's `audit` is: the lineage metric, shown times its scale.
+      metric: settings.metric,
+      scale: settings.scale,
+    };
+  }
+  /** When a run's progress first reached each segment boundary, by its `_timestamp`. */
+  private reachedAt(run: string, key: string, segments: { from_update: number | null }[]) {
+    const reached: Record<number, number> = {};
+    if (!this.history.hasPoints(run, key) || !this.history.hasPoints(run, '_timestamp'))
+      return reached;
+    const progress = this.history.series(run, key),
+      times = this.history.series(run, '_timestamp');
+    for (const segment of segments) {
+      const update = segment.from_update;
+      if (update === null) continue;
+      const index = progress.values.findIndex((value) => value >= update);
+      if (index < 0) continue;
+      const step = progress.steps[index];
+      // The first timestamp at or after that step.
+      let lo = 0,
+        hi = times.steps.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (times.steps[mid] < step) lo = mid + 1;
+        else hi = mid;
+      }
+      if (lo < times.steps.length) reached[update] = times.values[lo];
+    }
+    return reached;
   }
   /**
    * Imports an evaluation, diagnostic or calibration as a finished run of its own

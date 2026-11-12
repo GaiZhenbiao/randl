@@ -18,6 +18,12 @@ export type LineageSettings = {
   ignoreKeys: string[];
   /** How many of the metric's last values the recent mean on each card averages. */
   window: number;
+  /** Summary key holding a run's progress, such as its training update (Plans page). */
+  progressKey: string;
+  /** Config key holding the progress a run stops at, for its estimated end ('' for none). */
+  budgetKey: string;
+  /** Config key holding the progress a run starts from ('' for none). */
+  startKey: string;
 };
 export const lineageDefaults: LineageSettings = {
   metric: '',
@@ -27,6 +33,9 @@ export const lineageDefaults: LineageSettings = {
   identityKeys: ['rl.checkpoint.save_dir', 'rl.checkpoint.run_name'],
   ignoreKeys: ['*save_dir', '*run_name', '*runs_root', '*_path', '*_dir', '*.name', '*.resume'],
   window: 5,
+  progressKey: 'update',
+  budgetKey: 'rl.algorithm.total_updates',
+  startKey: 'rl.algorithm.start_update',
 };
 /** At most this many changed keys travel on each edge; the side panel requests the full diff. */
 export const edgeChangeLimit = 12;
@@ -431,12 +440,23 @@ export function basesOf(run: LineageRun, matcher: RunMatcher) {
       return { kind, reference, id: match && match !== 'self' ? match.id : null };
     });
 }
+/** A run's verdict: its `verdict:*` tag decides; the block's verdict applies to runs without one. */
+export function verdictOf(tagList: string[], lineage: Record<string, Json> | null) {
+  const tags = new Set(tagList.map((tag) => tag.toLowerCase()));
+  return (
+    verdicts.find((verdict) => tags.has('verdict:' + verdict)) ??
+    // `verdict` is the status itself, or {status, reason}.
+    verdicts.find(
+      (verdict) => verdict === (text(lineage?.verdict) ?? text(object(lineage?.verdict)?.status)),
+    ) ??
+    null
+  );
+}
 export function lineageNode(
   run: LineageRun,
   values: { latest: number | null; best: number | null; recent?: number | null },
   matcher: RunMatcher,
 ): LineageNode {
-  const tags = new Set(run.tags.map((tag) => tag.toLowerCase()));
   return {
     id: run.id,
     name: run.name,
@@ -445,15 +465,7 @@ export function lineageNode(
     group: run.group,
     tags: run.tags,
     created: run.created,
-    // The verdict tag decides; the block's verdict applies to runs without one.
-    verdict:
-      verdicts.find((verdict) => tags.has('verdict:' + verdict)) ??
-      // `verdict` is the status itself, or {status, reason}.
-      verdicts.find(
-        (verdict) =>
-          verdict === (text(run.lineage?.verdict) ?? text(object(run.lineage?.verdict)?.status)),
-      ) ??
-      null,
+    verdict: verdictOf(run.tags, run.lineage),
     hypothesis: text(run.lineage?.hypothesis),
     change: text(run.lineage?.change),
     result: text(run.lineage?.result),

@@ -49,9 +49,9 @@ install scripts, so a plugin that needs a build must ship its built browser modu
 
 | Field             | Values and behavior                                                                                                                                                                          |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `dataKind`        | `scalar` (default) requests history; `snapshot` requests one observation per run; `media` requests logged media.                                                                             |
+| `dataKind`        | `scalar` (default) requests history; `snapshot` requests one observation per run; `media` requests logged media; `occupancy` requests the project's GPU occupancy (see below).               |
 | `metricTypes`     | Compatible metric kinds. Defaults to `["scalar"]`. Config and summary leaves use `number` or `category`; media uses logged `_type` values such as `histogram`, `image-file` or `table-file`. |
-| `metricSelection` | `single`, `multiple` (default), `xy` or `axes`. Panels accept up to eight metrics; `xy` stores them as `[Y, X]`.                                                                             |
+| `metricSelection` | `single`, `multiple` (default), `xy`, `axes` or `none`. Panels accept up to eight metrics; `xy` stores them as `[Y, X]`.                                                                     |
 | `renderer`        | `dom` omits ECharts; other panels receive the shared modular ECharts instance.                                                                                                               |
 | `recordTransform` | Optional `{"kind": "align", "normalization": "none" \| "percent"}`: multi-metric panels receive the metrics aligned within each history record, as stacked charts need.                      |
 | `settings`        | Host settings the panel uses and the plugin's own options; see below.                                                                                                                        |
@@ -60,7 +60,7 @@ install scripts, so a plugin that needs a build must ship its built browser modu
 ## Renderer lifecycle
 
 ```js
-export function create({ element, echarts, apiVersion, onRange, onHover, onCursor }) {
+export function create({ element, echarts, apiVersion, onRange, onHover, onCursor, onOpen }) {
   return {
     update({ data, panel, options, dark, colors, locale, translate, localize }) {
       // Render data into element. Release data retained from earlier updates.
@@ -108,6 +108,8 @@ between panels. Copy arrays before transforming them, and replace ECharts data w
   when this panel owns the hover.
 - `onCursor({axis, value, runOrder})` shares an X position, or `onCursor(null)` clears
   it. Implement `showCursor(cursor)` to show the cursor of another panel.
+- `onOpen({run})` or `onOpen({plan})` asks the host to open a run (by ID) or a ledger plan;
+  the Plans page opens the run's page or the plan's editor.
 - Implement `exportImage()`, returning a PNG data URL, to enable **Export PNG**.
 - Grid-capable plugins may export a pure `extent(ctx)` function returning the
   `[min, max]` Y range their chart would show, so **Shared Y range** can apply.
@@ -154,6 +156,17 @@ shown. Load a file from `/api/run-file-preview?run=RUN_ID&path=PATH` (add `&dige
 the logged SHA-256 so the browser can reuse its copy); the dashboard's session
 authenticates the request, and range requests let players stream and seek. Declare
 `itemLayout` to use the host's item size and step controls.
+
+## Occupancy panels
+
+A `dataKind: "occupancy"` panel is project-wide: the host loads `project_occupancy` for the
+panel's project (again each minute while shown) instead of runs' metrics, and `data` is
+`{now, hosts, bars, unplaced, metric, scale}`. `hosts` lists `{host, model, rows}`, each row
+`{key, gpu}` (`gpu` is null for rows of runs whose GPU indices were not logged); each bar has
+`run` or `plan`, `name`, `host`, `slot`, `gpus`, `start` and `end` (seconds), `kind`
+(`past`, `running`, `remaining` or `planned`), `estimated`, `unknownLength`, the `rows` it
+covers, and for running runs `progress`, `budget`, `from`, `rate` and `audit`. The built-in
+**GPU occupancy** panel draws them on the Plans page.
 
 ## Installing, updating and trust
 

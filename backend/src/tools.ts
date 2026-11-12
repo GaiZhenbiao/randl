@@ -288,7 +288,7 @@ export const toolCatalog = [
   {
     name: 'project_lineage_settings_get',
     description:
-      "Read a project's lineage settings: the metric shown on each node, its display scale and goal (max or min), the config keys holding a run's parent checkpoint path (parentKeys) and its own folder or name (identityKeys), and the config keys left out of diffs (ignoreKeys, * matches any characters).",
+      "Read a project's lineage settings: the metric shown on each node, its display scale and goal (max or min), the config keys holding a run's parent checkpoint path (parentKeys) and its own folder or name (identityKeys), the config keys left out of diffs (ignoreKeys, * matches any characters), and for the Plans page the summary key of a run's progress (progressKey, such as update) with the config keys of the progress it stops at (budgetKey) and starts from (startKey).",
     parameters: schema({ id: string }, ['id']),
   },
   {
@@ -305,6 +305,9 @@ export const toolCatalog = [
         identityKeys: lineageKeys,
         ignoreKeys: lineageKeys,
         window: { type: 'integer', minimum: 1, maximum: 100 },
+        progressKey: { type: 'string', maxLength: 512 },
+        budgetKey: { type: 'string', maxLength: 512 },
+        startKey: { type: 'string', maxLength: 512 },
       },
       ['id'],
     ),
@@ -489,9 +492,16 @@ export const toolCatalog = [
     parameters: schema({ project: string }, ['project']),
   },
   {
+    name: 'project_occupancy',
+    description:
+      "GPU occupancy over time for the Plans page: each host's GPU rows (indices 0 to the highest a run or plan named, then rows for runs whose GPU indices were not logged) and bars for finished segments of runs' lineage.compute, running runs up to now and on to their estimated end (progress, budget and rate from the lineage settings' progressKey, budgetKey and startKey), and open plans at their estimated start and end on their gpus (else the GPUs their slot last used). unplaced lists running runs that log no compute block.",
+    agent: false,
+    parameters: schema({ project: string }, ['project']),
+  },
+  {
     name: 'plan_save',
     description:
-      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name). Omitted fields keep their value; status cancelled keeps it for the record.',
+      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name). gpus names the GPU indices it will use on its host (else those its slot last used); updates is how far it will train, for its estimated end (else its config budget less its start). Omitted fields keep their value; status cancelled keeps it for the record.',
     agent: false,
     parameters: schema(
       {
@@ -509,6 +519,13 @@ export const toolCatalog = [
         slot: { type: 'string', maxLength: 200 },
         queue: orNull({ type: 'integer' }),
         after: orNull({ type: 'string', maxLength: 512 }),
+        gpus: orNull({
+          type: 'array',
+          items: { type: 'integer', minimum: 0, maximum: 1023 },
+          maxItems: 64,
+          uniqueItems: true,
+        }),
+        updates: orNull({ type: 'number', exclusiveMinimum: 0 }),
         status: { type: 'string', enum: ['planned', 'cancelled'] },
         source,
         dryRun,
@@ -860,6 +877,9 @@ export class Tools {
       case 'plans_list':
         await this.db.call('projectGet', a.project);
         return this.db.call('plans', a);
+      case 'project_occupancy':
+        await this.db.call('projectGet', a.project);
+        return this.db.call('occupancy', a.project, await lineageSettings(this.db, a.project));
       case 'journal_list':
         if (!a.run && !a.project)
           throw managementError('RUN_NOT_FOUND', 'Name a run or a project.', {}, 400);

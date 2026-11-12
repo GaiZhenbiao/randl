@@ -1014,7 +1014,7 @@
               ><div class="form-stack">
                 {#if !settingsOnly}
                 <Select labelText={$t('panelSettings.data.type')} bind:selected={draft.plugin}
-                  >{#each plugins.filter((p) => p.enabled) as p}<SelectItem
+                  >{#each plugins.filter((p) => p.enabled && (p.dataKind !== 'occupancy' || p.id === draft.plugin)) as p}<SelectItem
                       value={p.id}
                       text={pluginName(p, $t)}
                     />{/each}</Select

@@ -121,7 +121,8 @@ try {
   await page.getByRole('option', { name: 'v2_arm' }).click();
   await page.getByLabel('Why it is the best recipe').fill('Highest audit mean');
   await page.getByRole('button', { name: 'Set best recipe' }).click();
-  await expect(page.locator('.recipe-current')).toContainText('v2_arm');
+  await expect(page.locator('.recipe-tile')).toContainText('v2_arm');
+  await expect(page.locator('.recipe-timeline li')).toHaveCount(1);
   await page.getByRole('button', { name: 'Plan a run' }).click();
   const plan = page.getByRole('dialog', { name: 'Plan a run' });
   await plan.getByLabel('Run name').fill('v3_next');
@@ -132,7 +133,7 @@ try {
   await plan.getByLabel('Slot').fill('a1');
   await plan.getByLabel('Queue position').fill('1');
   await plan.getByRole('button', { name: 'Save plan' }).click();
-  const queue = page.locator('.plan-queue', { hasText: 'hostA · a1' });
+  const queue = page.getByRole('region', { name: 'hostA · a1' });
   await expect(queue.locator('.plan-card h4')).toHaveText(['v3_next', 'v4_later']);
   checks.push('The Plans page sets the best recipe and queues planned runs per slot, in order');
 

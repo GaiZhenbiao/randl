@@ -48,6 +48,7 @@ const allowed = new Set([
   'planSave',
   'planDelete',
   'plans',
+  'occupancy',
   'journalAdd',
   'evidenceSave',
   'journal',

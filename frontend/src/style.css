@@ -6007,12 +6007,6 @@ aside {
 .plans-section {
   margin-bottom: 32px;
 }
-.recipe-current {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 16px;
-}
 .recipe-form {
   max-width: 48rem;
   margin-top: 12px;
@@ -6025,32 +6019,282 @@ aside {
   cursor: pointer;
   color: var(--cds-link-01);
 }
-.recipe-history ol {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
+.plans-heading-help {
+  font-size: 14px;
 }
-.plan-queues {
+/* The recipe: the current one in a tile, its history as a dated timeline beside it. */
+.recipe-layout {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  align-items: start;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   gap: 16px;
 }
-.plan-queue > h3 {
-  margin-bottom: 8px;
+.recipe-tile {
+  padding: 16px;
+  border-left: 4px solid var(--cds-support-02);
+  background: var(--cds-ui-01);
+}
+.recipe-tile > * + * {
+  margin-top: 6px;
+}
+.recipe-run {
+  font-size: 20px;
+  line-height: 28px;
+  overflow-wrap: anywhere;
+}
+.recipe-reason {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.recipe-timeline {
+  padding: 16px;
+  background: var(--cds-ui-01);
+}
+.recipe-timeline h3 {
+  margin-bottom: 12px;
   font-size: 14px;
   font-weight: 600;
 }
-.plan-running {
+.recipe-timeline ol {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-left: 20px;
+}
+.recipe-timeline li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 12rem) minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 14px;
+  line-height: 20px;
+}
+/* A dot per promotion on a line; the current recipe's dot is filled. */
+.recipe-timeline li::before {
+  position: absolute;
+  top: 6px;
+  left: -17px;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--cds-text-02);
+  border-radius: 50%;
+  background: var(--cds-ui-01);
+  content: '';
+}
+.recipe-timeline li:not(:last-child)::after {
+  position: absolute;
+  top: 17px;
+  bottom: -11px;
+  left: -13px;
+  border-left: 1px solid var(--cds-ui-03);
+  content: '';
+}
+.recipe-timeline li[aria-current='true']::before {
+  border-color: var(--cds-support-02);
+  background: var(--cds-support-02);
+}
+.recipe-timeline-date {
+  color: var(--cds-text-02);
+  white-space: nowrap;
+}
+.recipe-timeline-run {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recipe-timeline-reason {
+  overflow-wrap: anywhere;
+  color: var(--cds-text-02);
+}
+.plans-occupancy-help {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+/* Lanes: one per host slot, its running run first and its queue after it, left to right. */
+.plan-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--cds-ui-03);
+  border: 1px solid var(--cds-ui-03);
+}
+.plan-lane {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  background: var(--cds-ui-background);
+}
+.plan-lane-head {
+  padding: 16px;
+  background: var(--cds-ui-01);
+  font-size: 14px;
+}
+.plan-lane-head h3 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.plan-lane-slot {
+  margin: 2px 0 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+}
+.plan-lane-head > p + p {
+  margin-top: 4px;
+}
+.plan-lane-cards {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 16px;
+  overflow-x: auto;
+}
+.plan-lane-cards > .plan-card {
+  position: relative;
+  flex: none;
+  width: 320px;
+  margin: 0;
+}
+/* An arrow from each card to the next in the lane. */
+.plan-lane-cards > .plan-card + .plan-card::before {
+  position: absolute;
+  top: 24px;
+  left: -20px;
+  width: 16px;
+  border-top: 1px solid var(--cds-text-02);
+  content: '';
+}
+.plan-lane-cards > .plan-card + .plan-card::after {
+  position: absolute;
+  top: 21px;
+  left: -10px;
+  border: 3px solid transparent;
+  border-left: 6px solid var(--cds-text-02);
+  content: '';
+}
+.plan-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.plan-card-header h4 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 600;
+}
+.plan-position {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cds-text-01);
+  background: color-mix(in srgb, #8a3ffc 18%, var(--cds-ui-01));
+  box-shadow: inset 0 0 0 1px #8a3ffc;
+}
+.plan-running-card {
+  border-left: 4px solid var(--cds-interactive-04);
+}
+.plan-run-name {
+  margin-bottom: 12px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.plan-metric {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.plan-live {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cds-interactive-04);
+  animation: plan-live 1.6s ease-in-out infinite;
+}
+@keyframes plan-live {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plan-live {
+    animation: none;
+  }
+}
+.plan-idle {
+  display: flex;
+  align-items: center;
+  border-style: dashed;
+  background: transparent;
+}
+.plan-when {
   margin-bottom: 8px;
   font-size: 14px;
 }
-.plan-running-state {
-  margin-right: 8px;
-  color: var(--cds-interactive-04);
+.plan-change {
+  margin-bottom: 8px;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.plan-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+.plan-facts dt {
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.plan-facts dd {
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.plan-facts .lineage-hypothesis {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.plan-running-card .bx--progress-bar {
+  margin-top: 4px;
+}
+.plan-card-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+@media (max-width: 800px) {
+  .recipe-layout,
+  .plan-lane {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recipe-timeline li {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .plan-lane-cards > .plan-card {
+    width: min(320px, calc(100vw - 96px));
+  }
 }
 .plan-form-row {
   display: grid;
@@ -6068,4 +6312,304 @@ aside {
   display: block;
   font-size: 12px;
   color: var(--cds-text-02);
+}
+
+/* GPU occupancy timeline (plugins/occupancy.ts): GPU rows grouped by host; the labels and
+   the time axis stay in place while the timeline scrolls. */
+.occupancy {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 0.75rem;
+  color: var(--cds-text-01);
+}
+.occupancy-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0 0 0.5rem;
+}
+.occupancy-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  color: var(--cds-text-02);
+}
+.occupancy-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.occupancy-swatch.occupancy-bar {
+  position: static;
+  display: inline-block;
+  width: 1.5rem;
+  height: 0.75rem;
+  cursor: default;
+}
+.occupancy-controls {
+  display: flex;
+  gap: 1px;
+}
+.occupancy-button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.75rem;
+  border: 0;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--cds-text-01);
+  background: var(--cds-ui-01);
+  cursor: pointer;
+}
+.occupancy-button:hover {
+  background: var(--cds-hover-ui);
+}
+.occupancy-button:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
+}
+.occupancy-note {
+  margin: 0 0 0.5rem;
+  color: var(--cds-text-02);
+}
+.occupancy-scroll {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-background);
+}
+.occupancy-scroll:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
+}
+.occupancy-content {
+  position: relative;
+  min-width: 100%;
+}
+.occupancy-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  height: 40px;
+  border-bottom: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.occupancy-corner {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  width: 148px;
+  border-right: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.occupancy-axis {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+.occupancy-tick {
+  position: absolute;
+  bottom: 0;
+  padding: 0 0 0.25rem 0.25rem;
+  border-left: 1px solid var(--cds-ui-03);
+  white-space: nowrap;
+  color: var(--cds-text-02);
+  font-variant-numeric: tabular-nums;
+}
+.occupancy-tick.day {
+  height: 100%;
+  padding-top: 2px;
+  border-left-color: var(--cds-text-02);
+  color: var(--cds-text-01);
+  font-weight: 600;
+}
+.occupancy-now-label {
+  position: absolute;
+  top: 2px;
+  z-index: 1;
+  padding: 0.0625rem 0.375rem;
+  transform: translateX(-50%);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--cds-text-04, #fff);
+  background: var(--cds-support-01);
+}
+.occupancy-body {
+  display: flex;
+}
+.occupancy-labels {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  flex: none;
+  width: 148px;
+  border-right: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.occupancy-host,
+.occupancy-row-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.75rem;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.occupancy-host {
+  border-top: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-02, var(--cds-ui-01));
+}
+.occupancy-host > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--cds-text-02);
+}
+.occupancy-row-label {
+  height: 26px;
+  padding-left: 1.25rem;
+  color: var(--cds-text-02);
+  font-variant-numeric: tabular-nums;
+}
+.occupancy-row-label.unlogged {
+  font-style: italic;
+}
+.occupancy-track {
+  position: relative;
+  flex: none;
+}
+.occupancy-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.occupancy-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 26px;
+  border-bottom: 1px solid color-mix(in srgb, var(--cds-ui-03) 45%, transparent);
+}
+.occupancy-row.unlogged {
+  background: color-mix(in srgb, var(--cds-ui-03) 18%, transparent);
+}
+.occupancy-day {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 1px solid color-mix(in srgb, var(--cds-ui-03) 70%, transparent);
+}
+.occupancy-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  border-left: 2px solid var(--cds-support-01);
+  pointer-events: none;
+}
+.occupancy-bar {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  min-width: 3px;
+  padding: 0 0.375rem;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-left-width: 3px;
+  font: inherit;
+  white-space: nowrap;
+  text-align: left;
+  cursor: pointer;
+}
+.occupancy-bar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.occupancy-bar:focus-visible {
+  z-index: 2;
+  outline: 2px solid var(--cds-focus);
+  outline-offset: 1px;
+}
+.occupancy-bar.kind-past {
+  color: var(--cds-text-01);
+  background: color-mix(in srgb, var(--cds-ui-03) 70%, var(--cds-ui-01));
+  border-left-color: var(--cds-text-02);
+}
+.occupancy-bar.kind-past.verdict-adopted {
+  background: color-mix(in srgb, var(--cds-support-02) 22%, var(--cds-ui-01));
+  border-left-color: var(--cds-support-02);
+}
+.occupancy-bar.kind-past.verdict-rejected {
+  border-left-color: var(--cds-support-01);
+}
+.occupancy-bar.kind-past.ended-crashed,
+.occupancy-bar.kind-past.ended-failed {
+  border-right: 2px solid var(--cds-support-01);
+}
+.occupancy-bar.kind-running {
+  color: #fff;
+  background: var(--cds-interactive-04);
+  border-left-color: color-mix(in srgb, var(--cds-interactive-04) 60%, #000);
+}
+.occupancy-bar.kind-remaining {
+  color: var(--cds-text-01);
+  border: 1px dashed var(--cds-interactive-04);
+  border-left-width: 1px;
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--cds-interactive-04) 22%, transparent) 0 4px,
+    transparent 4px 8px
+  );
+}
+.occupancy-bar.kind-planned {
+  color: var(--cds-text-01);
+  border: 1px dashed var(--cds-text-02);
+  border-left: 3px solid #8a3ffc;
+  background: color-mix(in srgb, #8a3ffc 12%, var(--cds-ui-01));
+}
+.occupancy-bar.kind-planned.unknown-length {
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, #8a3ffc 12%, var(--cds-ui-01)) 60%,
+    transparent
+  );
+  border-right-color: transparent;
+}
+.occupancy-bar:hover {
+  filter: brightness(0.94);
+}
+.occupancy.dark .occupancy-bar:hover {
+  filter: brightness(1.2);
+}
+.occupancy-tooltip {
+  position: fixed;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  max-width: 22rem;
+  padding: 0.5rem 0.75rem;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--cds-inverse-01, #fff);
+  background: var(--cds-inverse-02, #393939);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
+}
+.occupancy-tooltip[hidden] {
+  display: none;
 }

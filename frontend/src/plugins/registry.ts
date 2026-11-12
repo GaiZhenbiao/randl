@@ -1,5 +1,5 @@
 import { MessageError } from '../api';
-import type { ChartCursor, PanelContext, Plugin, Renderer } from '../types';
+import type { ChartCursor, OpenTarget, PanelContext, Plugin, Renderer } from '../types';
 const builtins: Record<string, () => Promise<any>> = {
   line: () => import('./line'),
   area: () => import('./area'),
@@ -14,6 +14,7 @@ const builtins: Record<string, () => Promise<any>> = {
   video: () => import('./media'),
   table: () => import('./media'),
   histogram: () => import('./histogram'),
+  'gpu-occupancy': () => import('./occupancy'),
 };
 /** The plugin's browser module; dynamic imports are cached by the browser. */
 export function pluginModule(plugin: Plugin): Promise<any> {
@@ -40,6 +41,7 @@ export async function mountPlugin(
   onHover?: (ids: string[]) => void,
   onError: (error: Error) => void = () => {},
   onCursor?: (cursor: ChartCursor | null) => void,
+  onOpen?: (target: OpenTarget) => void,
 ): Promise<Renderer> {
   const element = document.createElement('div');
   element.style.cssText = 'width:100%;height:100%';
@@ -62,6 +64,7 @@ export async function mountPlugin(
       onRange,
       onHover,
       onCursor,
+      onOpen,
     });
     if (
       !result ||

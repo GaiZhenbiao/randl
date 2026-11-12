@@ -129,9 +129,10 @@ export type Plugin = {
   settings: PluginSettings;
   /** Locale IDs to the plugin's own message catalogs. */
   locales?: Record<string, string>;
-  dataKind?: 'scalar' | 'media' | 'snapshot';
+  /** `occupancy` is project-wide: the host loads `project_occupancy`, not runs' metrics. */
+  dataKind?: 'scalar' | 'media' | 'snapshot' | 'occupancy';
   metricTypes?: string[];
-  metricSelection?: 'single' | 'multiple' | 'xy' | 'axes';
+  metricSelection?: 'single' | 'multiple' | 'xy' | 'axes' | 'none';
   recordTransform?: { kind: 'align'; normalization: 'none' | 'percent' };
 };
 export type ChartData = {
@@ -210,6 +211,8 @@ export type PanelContext = {
   panel: Panel;
   dark: boolean;
 };
+/** What a plugin asks its host to open (`onOpen`): a run by ID, or a ledger plan. */
+export type OpenTarget = { run: string } | { plan: string };
 export type ChartCursor = { axis: string; value: number; runOrder?: string[] };
 export type Renderer = {
   update: (ctx: PanelContext) => void | Promise<void>;

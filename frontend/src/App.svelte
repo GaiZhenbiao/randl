@@ -3291,6 +3291,8 @@
           />{/key}{:else if page === 'plans' && project}{#key project}<PlansPage
             {project}
             runs={projectRuns}
+            {plugins}
+            {dark}
             onRun={(run) => details(run)}
             onPage={(next, params) => void openPage(next, params)}
           />{/key}{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div

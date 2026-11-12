@@ -2,6 +2,7 @@
 // versions, the current best recipe and its history, planned runs and their queues, and run
 // journals. Records have caller-chosen ids, so a repeated save is a no-op, and every change is
 // a tool call that the audit log records.
+import { ensureTables } from './schema.js';
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { managementError } from './management-errors.js';
@@ -40,6 +41,10 @@ export type Plan = {
   queue: number | null;
   /** The run or plan this one is queued after, when its position is stated that way. */
   after: string | null;
+  /** GPU indices on its host; otherwise those its slot last used. */
+  gpus?: number[] | null;
+  /** How much progress (updates) it will train, for its estimated length. */
+  updates?: number | null;
   status: 'planned' | 'cancelled';
   source: Source | null;
   created: number;
@@ -61,7 +66,10 @@ const notFound = (kind: string, id: string) =>
 
 export class Ledger {
   constructor(readonly db: Database.Database) {
-    db.exec(`
+    // Tables from an earlier version gain the columns added since.
+    ensureTables(
+      db,
+      `
       CREATE TABLE IF NOT EXISTS findings(project TEXT NOT NULL,id TEXT NOT NULL,topic TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,citations TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',version INTEGER NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,deleted REAL,PRIMARY KEY(project,id));
       CREATE TABLE IF NOT EXISTS finding_versions(project TEXT NOT NULL,id TEXT NOT NULL,version INTEGER NOT NULL,record TEXT NOT NULL,by TEXT NOT NULL,time REAL NOT NULL,PRIMARY KEY(project,id,version));
       CREATE TABLE IF NOT EXISTS recipe_events(id INTEGER PRIMARY KEY,project TEXT NOT NULL,run TEXT NOT NULL,since REAL NOT NULL,reason TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',by TEXT NOT NULL,created REAL NOT NULL);
@@ -69,7 +77,8 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS planned_runs(project TEXT NOT NULL,id TEXT NOT NULL,record TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,PRIMARY KEY(project,id));
       CREATE TABLE IF NOT EXISTS run_journal(id TEXT PRIMARY KEY,run TEXT NOT NULL,time REAL NOT NULL,update_index REAL,step REAL,text TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',by TEXT NOT NULL,created REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS run_journal_time ON run_journal(run,time);
-    `);
+    `,
+    );
   }
 
   // Findings: one current record per id, every earlier version kept.
@@ -222,6 +231,7 @@ export class Ledger {
       previous = old ? (JSON.parse(old.record) as Plan) : undefined;
     const field = <K extends keyof Plan>(key: K, fallback: Plan[K]): Plan[K] =>
       (args[key] !== undefined ? args[key] : (previous?.[key] ?? fallback)) as Plan[K];
+    const optional = (key: string, value: unknown) => (value === null ? {} : { [key]: value });
     const record = {
       name: field('name', args.id),
       parent: field('parent', null),
@@ -237,6 +247,9 @@ export class Ledger {
       after: field('after', null),
       status: field('status', 'planned'),
       source: field('source', null),
+      // Left out while unset, so records saved before these fields existed stay unchanged.
+      ...optional('gpus', field('gpus', null)),
+      ...optional('updates', field('updates', null)),
     };
     if (old && JSON.stringify(record) === old.record)
       return { status: 'unchanged', plan: this.plan(old) };

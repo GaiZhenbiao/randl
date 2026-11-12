@@ -74,14 +74,18 @@ export const builtins = [
   ['video', 'Video'],
   ['table', 'Table'],
   ['histogram', 'Histogram'],
+  ['gpu-occupancy', 'GPU occupancy'],
 ].map(([id, name]) => ({
   id,
   name,
   version: '1.0.0',
   apiVersion: 1,
   builtin: true,
+  // GPU occupancy is project-wide: the host loads `project_occupancy` for the panel's project.
   dataKind: ['image', 'audio', 'video', 'table', 'histogram'].includes(id)
     ? 'media'
+    : id === 'gpu-occupancy'
+      ? 'occupancy'
     : ['bar', 'scatter', 'parallel'].includes(id)
       ? 'snapshot'
       : 'scalar',
@@ -93,6 +97,7 @@ export const builtins = [
         video: ['video-file', 'videos'],
         table: ['table-file'],
         histogram: ['histogram'],
+        'gpu-occupancy': [],
       } as Record<string, string[]>
     )[id] ||
     (['bar', 'scatter', 'parallel'].includes(id)
@@ -100,6 +105,8 @@ export const builtins = [
       : ['scalar']),
   metricSelection: ['scatter', 'scatter-history'].includes(id)
     ? 'xy'
+    : id === 'gpu-occupancy'
+      ? 'none'
     : id === 'parallel'
       ? 'axes'
       : ['image', 'audio', 'video', 'table', 'histogram'].includes(id)
@@ -154,7 +161,7 @@ export const builtins = [
     ...(['image', 'audio', 'video'].includes(id) ? { defaults: { itemSize: 200 } } : {}),
   },
   enabled: true,
-  renderer: ['image', 'audio', 'video', 'table'].includes(id) ? 'dom' : 'echarts',
+  renderer: ['image', 'audio', 'video', 'table', 'gpu-occupancy'].includes(id) ? 'dom' : 'echarts',
 }));
 export function contained(root: string, path: string) {
   const rel = relative(resolve(root), resolve(path));

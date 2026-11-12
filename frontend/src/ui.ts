@@ -17,6 +17,7 @@ const pluginNames: Record<string, MessageKey> = {
   video: 'charts.types.video',
   table: 'charts.types.table',
   histogram: 'charts.types.histogram',
+  'gpu-occupancy': 'charts.types.gpuOccupancy',
 };
 /** A panel plugin's name: built-in names in the interface language, others as installed. */
 export function pluginName(plugin: { id: string; name: string; builtin?: boolean }, t: Translator) {

@@ -86,6 +86,10 @@ export type Plan = {
   queue: number | null;
   /** The run or plan this one is queued after. */
   after: string | null;
+  /** GPU indices on its host; else those its slot last used. */
+  gpus?: number[] | null;
+  /** How far it will train (updates), for its estimated length. */
+  updates?: number | null;
   source: Source | null;
   status: 'planned' | 'cancelled';
   /** The run that carried the plan out, if any. */
