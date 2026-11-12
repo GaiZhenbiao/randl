@@ -76,6 +76,19 @@ function offsetRanges(offsets: number[]) {
     else ranges.push([offset, offset]);
   return ranges;
 }
+/**
+ * The step for a logged value between two records, at their step-per-value rate, or undefined
+ * when a neighbour is missing or the step would not be a whole number.
+ */
+function inferStep(
+  value: number | undefined,
+  near: { below?: { value: number; step: number }; above?: { value: number; step: number } },
+) {
+  const { below, above } = near;
+  if (value === undefined || !below || !above) return undefined;
+  const step = below.step + ((value - below.value) * (above.step - below.step)) / (above.value - below.value);
+  return Number.isInteger(step) ? step : undefined;
+}
 /** True once `ms` have passed since it last returned true: when a job should yield. */
 function slicer(ms = 15) {
   let start = performance.now();
@@ -611,8 +624,11 @@ export class Store {
   /**
    * Writes numeric values into a stored run's history (`run_history_write`), such as audit
    * results computed after training. A row names its record by `_step` (`step`; a record is
-   * added when none has it) or by logged fields (`match`, such as {"update": 473000}; exactly
-   * one record must match). Values merge into the record; a different stored value is a
+   * added when none has it) or by logged fields (`match`, such as {"update": 473000}; more than
+   * one match is refused). When no record matches, a record with the match fields is added at
+   * the row's `step`, or at the step its neighbours imply: with one numeric match field, the
+   * records just below and above that value fix a step-per-value rate, and an integer step
+   * that no record uses is taken. Values merge into the record; a different stored value is a
    * conflict unless `replace` is set, and identical values change nothing. Every row gets a
    * status; with `dryRun` nothing is written, otherwise any refused row refuses the whole
    * request, so a run is never half written.
@@ -637,11 +653,36 @@ export class Store {
       if (row.step !== undefined) byStep.set(row.step, [...(byStep.get(row.step) ?? []), index]);
     });
     let last = -1;
-    const due = slicer();
+    const due = slicer(),
+      steps = new Set<number>(),
+      // For rows matched by one numeric field: the records just below and above its value.
+      near = rows.map(() => ({
+        below: undefined as { value: number; step: number } | undefined,
+        above: undefined as { value: number; step: number } | undefined,
+      })),
+      single = rows.map((row) => {
+        const entries = Object.entries(row.match ?? {});
+        return entries.length === 1 && typeof entries[0][1] === 'number'
+          ? { name: entries[0][0], value: entries[0][1] as number, probe: JSON.stringify(entries[0][0]) + ':' }
+          : undefined;
+      });
     for (const line of this.history.lines(key, file)) {
       last = line.offset;
       let record: Row | undefined;
       const parse = () => (record ??= JSON.parse(line.content) as Row);
+      const stepText = /"_step":(-?[\d.eE+]+)/.exec(line.content);
+      if (stepText) steps.add(Number(stepText[1]));
+      single.forEach((field, index) => {
+        if (!field || !line.content.includes(field.probe)) return;
+        const value = parse()[field.name],
+          step = parse()._step;
+        if (typeof value !== 'number' || typeof step !== 'number') return;
+        const side = near[index];
+        if (value < field.value && (!side.below || value > side.below.value))
+          side.below = { value, step };
+        if (value > field.value && (!side.above || value < side.above.value))
+          side.above = { value, step };
+      });
       const step = /"_step":(-?[\d.eE+]+)/.exec(line.content);
       for (const index of step ? (byStep.get(Number(step[1])) ?? []) : [])
         if (parse()._step === Number(step![1]) && !hits[index].length)
@@ -659,14 +700,33 @@ export class Store {
     // Plan every row against the records as earlier rows leave them.
     const edited = new Map<number, Row>(),
       results: Row[] = [];
+    const taken = new Set(steps);
     for (const [index, row] of rows.entries()) {
       const found = hits[index];
-      if (row.match && found.length !== 1) {
-        results.push({ row: index, status: 'refused', reason: found.length ? 'ambiguous' : 'no-match', matches: found.length });
+      if (row.match && found.length > 1) {
+        results.push({ row: index, status: 'refused', reason: 'ambiguous', matches: found.length });
         continue;
       }
       if (!found.length) {
-        results.push({ row: index, status: 'added', step: row.step, keys: Object.keys(row.values).length });
+        const step = row.step ?? inferStep(single[index]?.value, near[index]);
+        if (step === undefined || (row.match && taken.has(step))) {
+          results.push({
+            row: index,
+            status: 'refused',
+            reason: step === undefined ? 'no-match' : 'step-taken',
+            matches: 0,
+            ...(step === undefined ? {} : { step }),
+          });
+          continue;
+        }
+        taken.add(step);
+        results.push({
+          row: index,
+          status: 'added',
+          step,
+          ...(row.step === undefined ? { inferred: true } : {}),
+          keys: Object.keys(row.values).length,
+        });
         continue;
       }
       const { offset } = found[0],
@@ -715,8 +775,14 @@ export class Store {
       for (const [index, row] of rows.entries()) {
         const result = results[index];
         if (result.status === 'added') {
-          this.history.linePut(key, file, ++last, JSON.stringify({ _step: row.step, ...row.values }));
-          write(row.step!, row.values);
+          const record = { _step: result.step, ...row.match, ...row.values },
+            numbers = Object.fromEntries(
+              Object.entries({ ...row.match, ...row.values }).filter(
+                (entry): entry is [string, number] => typeof entry[1] === 'number',
+              ),
+            );
+          this.history.linePut(key, file, ++last, JSON.stringify(record));
+          write(result.step, numbers);
         } else if (result.status === 'merged') write(result.step, row.values, hits[index][0].record);
       }
       this.history.finishWrites(key);

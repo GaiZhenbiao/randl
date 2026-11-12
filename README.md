@@ -306,9 +306,11 @@ were.
 `run_history_write` (`randl runs write-history --id RUN --rows-file rows.json`) writes numeric
 values into a stored run's history, such as audit results computed after training, which the
 SDK cannot log at earlier steps. A row names its record by a logged field,
-`{"match": {"update": 473000}, "values": {"audit/…/value": 0.73}}`, where exactly one record
-must match, or by step, `{"step": 545000, "values": {…}}`, which adds a record when none has
-that `_step`. A different stored value is refused unless `replace` (`--replace`) is set, and
+`{"match": {"update": 473000}, "values": {"audit/…/value": 0.73}}`, or by step,
+`{"step": 545000, "values": {…}}`. Values merge into the record that matches (several matches
+are refused). When none matches, a record is added: at the row's `step` if it gives one,
+otherwise, for a single numeric match field, at the step implied by the records just below and
+above that value (refused when that is not a whole step or another record already uses it). A different stored value is refused unless `replace` (`--replace`) is set, and
 identical values change nothing. Every row reports a status (merged, added, unchanged, or
 refused for no match, several matches or a conflict); `dryRun` (`--dry-run`) only reports, and
 one refused row refuses the whole request. These three tools are not available to the Assistant, and all

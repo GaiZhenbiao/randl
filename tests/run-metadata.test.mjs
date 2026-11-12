@@ -470,3 +470,66 @@ test('metric renames and history writes are tools with audit, summary and a CLI'
   });
   assert.equal(refused.statusCode, 400);
 });
+
+test('a matched row with no record is added at the given or the implied step', async (t) => {
+  // Records every 100 updates, two steps per update, offset by 5000; one record logs no update.
+  const rows = history(10, (index) => ({
+    _step: 5000 + index * 200,
+    update: index * 100,
+    loss: index,
+  }));
+  rows.push({ _step: 5150, loss: -1 });
+  const { store, id, records, series } = await historyFixture(t, rows);
+  const audit = 'audit/box/value';
+  const result = drain(
+    store.historyWrite({
+      id,
+      rows: [
+        // Between updates 300 and 400: step 5600 + 50 × 2.
+        { match: { update: 350 }, values: { [audit]: 0.5 } },
+        // Given its step outright.
+        { match: { update: 2000 }, step: 9000, values: { [audit]: 0.6 } },
+        // Beyond the last record: no neighbour above, so no step to infer.
+        { match: { update: 5000 }, values: { [audit]: 0.7 } },
+        // Implied step 5150 is already used by another record.
+        { match: { update: 75 }, values: { [audit]: 0.8 } },
+      ],
+      dryRun: true,
+    }),
+  );
+  assert.deepEqual(
+    result.rows.map(({ status, reason, step, inferred }) => [status, reason, step, inferred]),
+    [
+      ['added', undefined, 5700, true],
+      ['added', undefined, 9000, undefined],
+      ['refused', 'no-match', undefined, undefined],
+      ['refused', 'step-taken', 5150, undefined],
+    ],
+  );
+  drain(
+    store.historyWrite({
+      id,
+      rows: [
+        { match: { update: 350 }, values: { [audit]: 0.5 } },
+        { match: { update: 2000 }, step: 9000, values: { [audit]: 0.6 } },
+      ],
+    }),
+  );
+  assert.deepEqual(records().slice(-2), [
+    { _step: 5700, update: 350, [audit]: 0.5 },
+    { _step: 9000, update: 2000, [audit]: 0.6 },
+  ]);
+  assert.deepEqual(series(audit), [
+    [5700, 0.5],
+    [9000, 0.6],
+  ]);
+  assert.ok(series('update').some(([step, value]) => step === 5700 && value === 350));
+  // Running it again finds the added records and changes nothing.
+  const again = drain(
+    store.historyWrite({ id, rows: [{ match: { update: 350 }, values: { [audit]: 0.5 } }] }),
+  );
+  assert.deepEqual(
+    again.rows.map((row) => row.status),
+    ['unchanged'],
+  );
+});
