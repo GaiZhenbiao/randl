@@ -5829,3 +5829,227 @@ aside {
 .lineage-zoom > span {
   margin-right: auto;
 }
+/* Planned runs on the Lineage page: dashed cards and links until the run starts. */
+.lineage-card.planned {
+  border-style: dashed;
+  border-top-style: dashed;
+  background: var(--cds-ui-background);
+}
+.lineage-edge.planned {
+  stroke-dasharray: 3 3;
+}
+.lineage-recipe-icon {
+  flex: none;
+  fill: var(--cds-support-03);
+}
+.lineage-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  font-size: 14px;
+}
+.lineage-facts > div {
+  display: contents;
+}
+.lineage-facts dt {
+  color: var(--cds-text-02);
+}
+.lineage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.lineage-compare {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.lineage-compare th,
+.lineage-compare td {
+  padding: 6px 8px 6px 0;
+  border-bottom: 1px solid var(--cds-ui-03);
+  text-align: left;
+}
+.lineage-compare th {
+  font-weight: 600;
+  color: var(--cds-text-02);
+}
+.lineage-journal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.lineage-journal p {
+  margin-top: 2px;
+}
+.run-ledger {
+  margin-top: 24px;
+}
+.run-ledger h3 {
+  margin-bottom: 8px;
+}
+/* Findings and Plans pages. */
+.findings-page .page-toolbar,
+.plans-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.findings-page .page-toolbar .bx--search {
+  flex: 1 1 auto;
+  max-width: 480px;
+}
+.findings-topic {
+  margin-bottom: 32px;
+}
+.findings-topic > h2,
+.plans-section > h2,
+.plans-heading > h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 20px;
+  line-height: 28px;
+}
+.finding,
+.plan-card {
+  margin-bottom: 12px;
+  padding: 16px;
+  border: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.finding.focused {
+  box-shadow: inset 4px 0 0 var(--cds-interactive-04);
+}
+.finding-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.finding-header h3,
+.finding-header h4 {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.finding-actions {
+  display: flex;
+  margin-left: auto;
+}
+.finding-body {
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.finding-body p,
+.finding-body ul,
+.finding-body ol {
+  margin-bottom: 8px;
+}
+.finding-body ul,
+.finding-body ol {
+  padding-left: 20px;
+  list-style: revert;
+}
+.finding-body code {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+}
+.finding-citations {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  font-size: 14px;
+}
+.finding-citation-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.finding-citation-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+.finding-history {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(0, 3fr);
+  gap: 24px;
+}
+.finding-history ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.finding-history [aria-current='true'] {
+  font-weight: 600;
+}
+.plans-section {
+  margin-bottom: 32px;
+}
+.recipe-current {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 16px;
+}
+.recipe-form {
+  max-width: 48rem;
+  margin-top: 12px;
+}
+.recipe-history {
+  margin-top: 12px;
+  font-size: 14px;
+}
+.recipe-history summary {
+  cursor: pointer;
+  color: var(--cds-link-01);
+}
+.recipe-history ol {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.plan-queues {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.plan-queue > h3 {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.plan-running {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.plan-running-state {
+  margin-right: 8px;
+  color: var(--cds-interactive-04);
+}
+.plan-form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+  gap: 8px;
+}
+@media (max-width: 672px) {
+  .finding-citation-row,
+  .finding-history {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

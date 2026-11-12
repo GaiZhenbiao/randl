@@ -18,8 +18,14 @@ export type LineageNode = {
   result: string | null;
   verdictReason: string | null;
   recipe: Json | null;
+  jobType: string;
   latest: number | null;
   best: number | null;
+  recent: number | null;
+  plan: string | null;
+  examines: string[];
+  /** Set on the stand-in node of a planned run that has not started. */
+  planned?: Plan;
   unresolved: { source: string; update: number | null } | null;
   bases: { kind: string; reference: string; id: string | null }[];
   compute: Compute | null;
@@ -54,12 +60,34 @@ export type LineageSettings = {
   parentKeys: string[];
   identityKeys: string[];
   ignoreKeys: string[];
+  window: number;
 };
+export type Plan = {
+  id: string;
+  name: string;
+  parent: string | null;
+  parentUpdate: number | null;
+  hypothesis: string;
+  change: string;
+  config: Json | null;
+  baseline: string | null;
+  rule: string;
+  host: string;
+  slot: string;
+  queue: number | null;
+  status: 'planned' | 'cancelled';
+  created: number;
+  updated: number;
+  by: string;
+};
+export type RecipeEvent = { id: number; run: string; since: number; reason: string; by: string };
 export type LineageGraph = {
   project: string;
   settings: LineageSettings;
   nodes: LineageNode[];
   edges: LineageEdge[];
+  plans: Plan[];
+  recipe: RecipeEvent | null;
   counts: { runs: number; explicit: number; matched: number; unresolved: number };
 };
 export type Axis = 'depth' | 'update' | 'time';
@@ -353,4 +381,54 @@ export function boundsOf(positions: Map<string, Position>, ids: string[]) {
     right: Math.max(...boxes.map((p) => p.x + nodeWidth)),
     bottom: Math.max(...boxes.map((p) => p.y + nodeHeight)),
   };
+}
+
+/** Planned runs as stand-in nodes (`plan:<id>`), linked from their parent when it is drawn. */
+export function withPlans(graph: LineageGraph): LineageGraph {
+  if (!graph.plans.length) return graph;
+  const ids = new Set(graph.nodes.map((node) => node.id));
+  const nodes = graph.plans.map(
+    (plan): LineageNode => ({
+      id: 'plan:' + plan.id,
+      name: plan.id,
+      display_name: plan.name,
+      state: 'planned',
+      group: '',
+      tags: [],
+      created: plan.created,
+      verdict: null,
+      hypothesis: plan.hypothesis || null,
+      change: plan.change || null,
+      result: null,
+      verdictReason: null,
+      recipe: null,
+      jobType: '',
+      latest: null,
+      best: null,
+      recent: null,
+      plan: plan.id,
+      examines: [],
+      unresolved: null,
+      bases: [],
+      compute: plan.host ? { host: plan.host, gpu_count: null, segments: [] } : null,
+      planned: plan,
+    }),
+  );
+  const edges = graph.plans
+    .filter((plan) => plan.parent && ids.has(plan.parent))
+    .map(
+      (plan): LineageEdge => ({
+        source: plan.parent!,
+        target: 'plan:' + plan.id,
+        relation: 'planned',
+        traits: [],
+        update: plan.parentUpdate,
+        explicit: true,
+        ambiguous: false,
+        changedKeys: [],
+        changeCount: 0,
+        changeSource: 'lineage',
+      }),
+    );
+  return { ...graph, nodes: [...graph.nodes, ...nodes], edges: [...graph.edges, ...edges] };
 }

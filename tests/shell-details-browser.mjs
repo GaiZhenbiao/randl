@@ -419,6 +419,8 @@ try {
       'Workspace',
       'Runs',
       'Lineage',
+      'Findings',
+      'Plans',
       'Artifacts',
       'Settings',
       'Projects',

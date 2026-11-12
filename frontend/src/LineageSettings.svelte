@@ -43,6 +43,7 @@
     metric = $state(stored.metric),
     scale = $state<number | null>(stored.scale),
     goal = $state(stored.goal),
+    window = $state<number | null>(stored.window),
     parentKeys = $state(lines(stored.parentKeys)),
     identityKeys = $state(lines(stored.identityKeys)),
     ignoreKeys = $state(lines(stored.ignoreKeys)),
@@ -65,6 +66,7 @@
     [...new Set([...metrics, ...(metric ? [metric] : [])])].sort().map((id) => ({ id, text: id })),
   );
   let validScale = $derived(scale === null || scale > 0);
+  let validWindow = $derived(window !== null && Number.isInteger(window) && window >= 1 && window <= 100);
   async function save() {
     saving = true;
     error = '';
@@ -74,6 +76,7 @@
         metric,
         scale,
         goal,
+        window,
         parentKeys: keysOf(parentKeys),
         identityKeys: keysOf(identityKeys),
         ignoreKeys: keysOf(ignoreKeys),
@@ -94,7 +97,7 @@
   iconDescription={$t('common.action.close')}
   modalHeading={$t('lineage.settings.title')}
   primaryButtonText={$t(saving ? 'common.status.saving' : 'lineage.settings.save')}
-  primaryButtonDisabled={saving || !validScale}
+  primaryButtonDisabled={saving || !validScale || !validWindow}
   secondaryButtonText={$t('common.action.cancel')}
   on:click:button--secondary={() => (open = false)}
   on:close={onClose}
@@ -131,6 +134,15 @@
       invalid={!validScale}
       invalidText={$t('lineage.settings.scale.invalid')}
       bind:value={scale}
+    />
+    <NumberInput
+      id="lineage-window"
+      labelText={$t('lineage.settings.window.label')}
+      helperText={$t('lineage.settings.window.help')}
+      min={1}
+      max={100}
+      invalid={!validWindow}
+      bind:value={window}
     />
     <RadioButtonGroup
       legendText={$t('lineage.settings.goal.label')}

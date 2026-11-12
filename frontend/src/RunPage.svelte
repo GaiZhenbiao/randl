@@ -22,11 +22,13 @@
   import { statusLabel, artifactURL, interceptLink } from './ui';
   import {loggedCommand} from './run-format';
   import JsonValue from './JsonValue.svelte';
+  import RunLedger from './RunLedger.svelte';
   import type { Run } from './types';
   let {
     run,
     children,
     onArtifact,
+    onFinding,
     activeTab = 'metrics',
     onTab,
     metricsActions,
@@ -35,6 +37,8 @@
     children: Snippet;
     metricsActions?: Snippet;
     onArtifact: (id: string) => void;
+    /** Opens a finding that cites this run. */
+    onFinding: (id: string) => void;
     activeTab?: string;
     onTab: (tab: string) => void;
   } = $props();
@@ -328,6 +332,7 @@
                 editing = true;
               }}>{$t('runPage.edit.open')}</Button
             >{/if}
+          <RunLedger run={run.id} project={run.entity + '/' + run.project} {onFinding} />
         </div></TabContent
       >
       {#each ['config', 'summary'] as key}<TabContent

@@ -316,6 +316,49 @@ refused for no match, several matches or a conflict); `dryRun` (`--dry-run`) onl
 one refused row refuses the whole request. These three tools are not available to the Assistant, and all
 of them are audited with their `by`.
 
+### Experiment ledger
+
+Beside the runs, each project keeps what was learned from them and what comes next:
+
+- **Findings** (the **Findings** page): Markdown notes by topic, each citing the runs (and
+  updates) it rests on, with a **Ruled out** list. Every edit keeps the previous version,
+  shown under **Earlier versions**; a save names the version it started from, so two editors
+  cannot overwrite each other. A run's Overview tab and its Lineage panel list the findings
+  citing it.
+- **Best recipe** (the **Plans** page and the Lineage panel): the run the project builds on,
+  since when and why, with every earlier promotion kept. Its card on the Lineage page carries a
+  star.
+- **Planned runs** (the **Plans** page): name, parent and update, what it changes, hypothesis,
+  config, baseline, stop or decision rule, and its host, slot and queue position. Queues show
+  each slot's running runs and its planned runs in order. Planned runs appear on the Lineage page
+  as dashed cards linked from their parent, and give way to the run that logs
+  `lineage.plan` equal to the plan's ID (or has its name).
+- **Run journal** (a run's Overview tab and its Lineage panel): dated entries, optionally at an
+  update or step, by their author. Entries are only ever added, and are separate from the run's
+  notes.
+- **Evidence**: evaluations, diagnostics and calibration studies are runs with their own
+  `job_type` and files, naming the runs they examine in `lineage.examines`; the examined run's
+  Lineage panel lists them, and findings can cite them.
+- **Comparisons**: Lineage cards show the mean of the metric's last N values (**Recent mean
+  over** in Lineage settings), and the panel of the open run compares the selected runs with it
+  at matching updates: how many points match, and the mean and last difference.
+
+Each record is one tool call, also a CLI command, with a caller-chosen ID so repeating it
+changes nothing; changes are audited with their `by`:
+
+```sh
+randl findings save --project chuanhu/AeroSeeker_Forest --id wide-heads --topic Model \
+  --title "Wider heads hold more boxes" --body-file finding.md --cite RUN@543000
+randl recipe set --project chuanhu/AeroSeeker_Forest --run RUN --reason "Best 5-audit mean"
+randl plans save --project chuanhu/AeroSeeker_Forest --id v660 --name v660_… \
+  --json '{"parent": "RUN", "host": "Sirius", "slot": "sirius_34", "queue": 1}'
+randl journal add --run RUN --update 554000 --text "Collisions fell after the LR drop."
+```
+
+The tools are `finding_save`, `finding_get`, `finding_delete`, `findings_list`, `recipe_set`,
+`recipe_get`, `plan_save`, `plan_delete`, `plans_list`, `journal_add`, `journal_list` and
+`runs_compare`. The Assistant is not given the ledger tools.
+
 ### Project overview and server status
 
 ![A project overview with one running run, run states and storage use](.github/assets/readme/overview.webp)

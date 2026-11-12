@@ -7,6 +7,7 @@
   import Choice from './Choice.svelte';
   import JsonValue from './JsonValue.svelte';
   import PanelCard from './Panel.svelte';
+  import LineageLedger from './LineageLedger.svelte';
   import { tool, apiMessage } from './api';
   import { t, number, type Message } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL, statusLabel } from './ui';
@@ -33,6 +34,9 @@
     onClose,
     onSelect,
     onRun,
+    onPage,
+    picked,
+    onChanged,
   }: {
     node: LineageNode;
     index: GraphIndex;
@@ -45,6 +49,9 @@
     onClose: () => void;
     onSelect: (id: string) => void;
     onRun: (run: Run) => void;
+    onPage: (page: string, params?: Record<string, string>) => void;
+    picked: string[];
+    onChanged: () => void;
   } = $props();
   let parentEdge = $derived(index.parent.get(node.id));
   let parent = $derived(parentEdge ? index.nodes.get(parentEdge.source) : undefined);
@@ -82,7 +89,7 @@
   }
   const parentDiff = diffLoader(),
     pickedDiff = diffLoader();
-  $effect(() => parentDiff.load(parentEdge?.source, node.id));
+  $effect(() => parentDiff.load(node.planned ? undefined : parentEdge?.source, node.id));
   $effect(() => pickedDiff.load(compareWith || undefined, node.id));
 
   let compareItems = $derived(
@@ -165,7 +172,7 @@
       >
     </p>{/if}
 
-  <section>
+  {#if !node.planned}<section>
     <h3>{$t('lineage.panel.parent')}</h3>
     {#if parentEdge && parent}<p>
         <button type="button" class="lineage-link" onclick={() => onSelect(parent.id)}
@@ -204,7 +211,7 @@
               >{:else}<code>{base.reference}</code>{/if}
           </li>{/each}
       </ul>{/if}
-  </section>
+  </section>{/if}
 
   {#if node.compute?.segments.length}<section>
       <h3>{$t('lineage.compute.title')}</h3>
@@ -264,7 +271,9 @@
         <JsonValue value={node.recipe} />{/if}
     </section>{/if}
 
-  <section>
+  <LineageLedger {node} {graph} {picked} {onSelect} {onPage} {onChanged} />
+
+  {#if !node.planned}<section>
     <h3>{graph.settings.metric || $t('lineage.panel.metric')}</h3>
     {#if graph.settings.metric}<p>
         {$t('lineage.panel.values', {
@@ -324,7 +333,7 @@
         pickedDiff.value,
         shortName(index.nodes.get(compareWith)),
       )}{/if}
-  </section>
+  </section>{/if}
 
   {#if children.length}<section>
       <h3>{$t('lineage.panel.children', { count: children.length })}</h3>

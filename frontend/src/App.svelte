@@ -73,6 +73,8 @@
   import StopFilled from 'carbon-icons-svelte/lib/StopFilled.svelte';
   import ProjectPages from './ProjectPages.svelte';
   import ProjectLineage from './ProjectLineage.svelte';
+  import FindingsPage from './FindingsPage.svelte';
+  import PlansPage from './PlansPage.svelte';
   import ServerOverview from './ServerOverview.svelte';
   import ConnectSdk from './ConnectSdk.svelte';
   import { pendingProjectConfirmation } from './agent-confirmation';
@@ -80,6 +82,8 @@
   import Activity from 'carbon-icons-svelte/lib/Activity.svelte';
   import Table from 'carbon-icons-svelte/lib/Table.svelte';
   import DecisionTree from 'carbon-icons-svelte/lib/DecisionTree.svelte';
+  import Notebook from 'carbon-icons-svelte/lib/Notebook.svelte';
+  import Roadmap from 'carbon-icons-svelte/lib/Roadmap.svelte';
   import ChartLine from 'carbon-icons-svelte/lib/ChartLine.svelte';
   import Archive from 'carbon-icons-svelte/lib/Archive.svelte';
   import TrashPanel from './TrashPanel.svelte';
@@ -479,6 +483,8 @@
     { id: 'workspace', name: 'nav.workspace', icon: ChartLine },
     { id: 'runs', name: 'nav.runs', icon: Table },
     { id: 'lineage', name: 'nav.lineage', icon: DecisionTree },
+    { id: 'findings', name: 'nav.findings', icon: Notebook },
+    { id: 'plans', name: 'nav.plans', icon: Roadmap },
     { id: 'artifacts', name: 'nav.artifacts', icon: Archive },
     { id: 'settings', name: 'nav.settings', icon: Settings },
   ];
@@ -1701,6 +1707,13 @@
     if (!view || !selection(view.body.visible, ids, message('lineage.compare.done', { count: ids.length })))
       return;
     await navigate('workspace');
+  }
+  /** Opens a project page with query parameters, such as a finding or a run in the lineage. */
+  async function openPage(next: string, params: Record<string, string> = {}) {
+    const url = new URL(pageURL(project, next), location.origin);
+    for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
+    history.pushState(null, '', url);
+    await route();
   }
   /** Opens the Lineage page on these runs: the first one's details, all of them selected. */
   async function openLineage(ids: string[]) {
@@ -3192,6 +3205,7 @@
           }}
           run={runs.find((r) => r.id === activeRun!.id) || activeRun}
           onArtifact={openArtifact}
+          onFinding={(id) => void openPage('findings', { finding: id })}
           metricsActions={runPanelTools}
           ><Workspace
             bind:search={runPanelSearch}
@@ -3268,8 +3282,18 @@
           {dark}
           onRun={(run) => details(run)}
           onCompare={compareInWorkspace}
+          onPage={(next, params) => void openPage(next, params)}
           rail={width >= 1056 ? lineageRail : undefined}
-        />{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div
+        />{:else if page === 'findings' && project}{#key project}<FindingsPage
+            {project}
+            runs={projectRuns}
+            onRun={(run) => details(run)}
+          />{/key}{:else if page === 'plans' && project}{#key project}<PlansPage
+            {project}
+            runs={projectRuns}
+            onRun={(run) => details(run)}
+            onPage={(next, params) => void openPage(next, params)}
+          />{/key}{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div
           class="project-page-content"
         >
           {@render appSettingsPage()}

@@ -39,6 +39,7 @@
     indexGraph,
     layoutGraph,
     nameDelta,
+    withPlans,
     nodeHeight,
     nodeWidth,
     pathToRoot,
@@ -60,6 +61,7 @@
     dark,
     onRun,
     onCompare,
+    onPage,
     rail,
   }: {
     project: string;
@@ -71,6 +73,8 @@
     onRun: (run: Run) => void;
     /** Opens the workspace with exactly these runs shown. */
     onCompare: (ids: string[]) => void;
+    /** Opens another project page, such as a finding. */
+    onPage: (page: string, params?: Record<string, string>) => void;
     /** The header element the controls move into on wide screens; without it they form a row. */
     rail?: HTMLElement;
   } = $props();
@@ -140,7 +144,7 @@
     try {
       const result: LineageGraph = await tool('project_lineage', { id });
       if (id !== project) return;
-      graph = result;
+      graph = withPlans(result);
       error = '';
     } catch (reason) {
       if (id === project) error = apiMessage(reason);
@@ -487,7 +491,9 @@
   let pathSet = $derived(new Set(path));
   /** The chosen runs in the graph's order (creation). */
   let pickedRuns = $derived(
-    graph?.nodes.filter((node) => picked.has(node.id)).map((node) => node.id) ?? [],
+    graph?.nodes
+      .filter((node) => picked.has(node.id) && !node.planned)
+      .map((node) => node.id) ?? [],
   );
 
   // Arrow keys move along links: left to the parent, right to the first child, up and down
@@ -829,6 +835,7 @@
                   class:on-path={pathSet.has(edge.target) && pathSet.has(edge.source)}
                   class:matched={!edge.explicit && !continues(edge)}
                   class:continues={continues(edge)}
+                  class:planned={edge.relation === 'planned'}
                   class:rejected={index.nodes.get(edge.target)?.verdict === 'rejected'}
                   d={edgePath(from, to)}
                 />{/if}{/each}
@@ -857,6 +864,7 @@
                 y={position.y}
                 selected={selected === id}
                 picked={picked.has(id)}
+                recipe={graph.recipe?.run === id}
                 onPath={pathSet.has(id)}
                 context={visible.context.has(id)}
                 collapsed={visible.collapsed.get(id) ?? 0}
@@ -922,6 +930,9 @@
         onClose={closeDetails}
         onSelect={(id) => select(id, true)}
         {onRun}
+        {onPage}
+        picked={pickedRuns}
+        onChanged={load}
       />{/if}
   </div>
 </div>
