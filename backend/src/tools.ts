@@ -345,7 +345,7 @@ export const toolCatalog = [
   {
     name: 'run_history_write',
     description:
-      "Write numeric values into a stored run's history, such as audit results computed after training (the SDK cannot log at earlier steps). Not available to the Assistant. Each row is {step, values} (the record with that _step, or a new record) or {match, values}, where match names logged fields such as {\"update\": 473000}. A matching record is merged into (several matches are refused); with none, a record holding the match fields is added at the row's step if given, else at the step the neighbouring records imply (refused when that is not a whole, unused step). values maps metric names to numbers and merges into the record; a different stored value is refused unless replace is true, and identical values change nothing. Every row gets a status (merged, added, unchanged, or refused with no-match, ambiguous, step-taken or conflict; added rows report the step and whether it was inferred). dryRun: true writes nothing; otherwise one refused row refuses the whole request. by names the caller in the audit log.",
+      "Write numeric values into a stored run's history, such as audit results computed after training (the SDK cannot log at earlier steps). Not available to the Assistant. Each row is {step, values} (the record with that _step, or a new record) or {match, values}, where match names logged fields such as {\"update\": 473000}. A matching record is merged into; several matches are refused (listing their steps) unless pick is first or last, which takes the matching record with the smallest or largest _step, as when a resumed run logged an update twice; with none, a record holding the match fields is added at the row's step if given, else at the step the neighbouring records imply (refused when that is not a whole, unused step). values maps metric names to numbers and merges into the record; a different stored value is refused unless replace is true, and identical values change nothing. Every row gets a status (merged, added, unchanged, or refused with no-match, ambiguous, step-taken or conflict; added rows report the step and whether it was inferred). dryRun: true writes nothing; otherwise one refused row refuses the whole request. by names the caller in the audit log.",
     agent: false,
     parameters: schema(
       {
@@ -358,6 +358,7 @@ export const toolCatalog = [
             ...schema(
               {
               step: { type: 'number' },
+              pick: { type: 'string', enum: ['first', 'last'] },
               match: {
                 type: 'object',
                 minProperties: 1,
