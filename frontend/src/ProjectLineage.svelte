@@ -632,22 +632,6 @@
       <Button
         kind="ghost"
         size="small"
-        icon={ZoomOut}
-        iconDescription={$t('lineage.zoom.out')}
-        tooltipPosition="bottom"
-        on:click={() => zoom(1 / 1.25)}
-      />
-      <Button
-        kind="ghost"
-        size="small"
-        icon={ZoomIn}
-        iconDescription={$t('lineage.zoom.in')}
-        tooltipPosition="bottom"
-        on:click={() => zoom(1.25)}
-      />
-      <Button
-        kind="ghost"
-        size="small"
         icon={FitToScreen}
         iconDescription={$t('lineage.zoom.fit')}
         tooltipPosition="bottom"
@@ -748,6 +732,22 @@
               text={$t('lineage.colorBy.host')}
             /></Select
           >
+          <div class="lineage-zoom">
+            <span>{$t('lineage.zoom.level', { percent: Math.round(scale * 100) })}</span>
+            <Button
+              kind="ghost"
+              size="small"
+              icon={ZoomOut}
+              iconDescription={$t('lineage.zoom.out')}
+              on:click={() => zoom(1 / 1.25)}
+            /><Button
+              kind="ghost"
+              size="small"
+              icon={ZoomIn}
+              iconDescription={$t('lineage.zoom.in')}
+              on:click={() => zoom(1.25)}
+            />
+          </div>
         </div>{:else if graph && visible}<ul class="lineage-info">
           <li>{$t('lineage.summary.shown', { count: visible.shown.length })}</li>
           {#if visible.isolatedHidden}<li>

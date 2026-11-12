@@ -510,6 +510,7 @@
   "lineage.verdict.running": "待定",
   "lineage.zoom.fit": "顯示全部",
   "lineage.zoom.in": "放大",
+  "lineage.zoom.level": "縮放 {percent}%",
   "lineage.zoom.out": "縮小",
   "lineage.zoom.running": "聚焦執行中的執行",
   "media.panel.empty": "沒有已記錄的媒體",

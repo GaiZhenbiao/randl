@@ -510,6 +510,7 @@
   "lineage.verdict.running": "판정 대기",
   "lineage.zoom.fit": "전체 보기",
   "lineage.zoom.in": "확대",
+  "lineage.zoom.level": "확대/축소 {percent}%",
   "lineage.zoom.out": "축소",
   "lineage.zoom.running": "실행 중인 실행에 초점",
   "media.panel.empty": "기록된 미디어가 없습니다",

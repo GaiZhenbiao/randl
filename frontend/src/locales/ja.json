@@ -510,6 +510,7 @@
   "lineage.verdict.running": "判定待ち",
   "lineage.zoom.fit": "すべて表示",
   "lineage.zoom.in": "ズームイン",
+  "lineage.zoom.level": "ズーム {percent}%",
   "lineage.zoom.out": "ズームアウト",
   "lineage.zoom.running": "実行中の実行に移動",
   "media.panel.empty": "記録されたメディアはありません",

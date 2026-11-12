@@ -510,6 +510,7 @@
   "lineage.verdict.running": "Verdict en attente",
   "lineage.zoom.fit": "Tout afficher",
   "lineage.zoom.in": "Zoom avant",
+  "lineage.zoom.level": "Zoom {percent} %",
   "lineage.zoom.out": "Zoom arrière",
   "lineage.zoom.running": "Centrer sur les exécutions en cours",
   "media.panel.empty": "Aucun média enregistré",

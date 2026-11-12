@@ -363,7 +363,7 @@ export const toolCatalog = [
                 minProperties: 1,
                 maxProperties: 20,
                 propertyNames: { maxLength: 512 },
-                additionalProperties: { type: ['string', 'number', 'boolean'] },
+                additionalProperties: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] },
               },
               values: {
                 type: 'object',

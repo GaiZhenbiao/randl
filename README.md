@@ -203,9 +203,9 @@ parent or from another run you pick.
 
 The controls sit in the page header on wide screens (a single row below it on narrow ones): the name filter; **Filters** (group, tag, host, collapse rejected
 branches, show runs without lineage; the button counts the active ones); **View** (arrange cards
-by lineage depth, start update or start time, and colour them by run or host); the actions for
-the open or selected runs, as icons; and on the right an **i** button with the counts, zoom,
-**Fit all**, **Focus running runs** and **Lineage settings**.
+by lineage depth, start update or start time, colour them by run or host, and zoom in steps);
+the actions for the open or selected runs, as icons; and on the right an **i** button with the
+counts, **Fit all**, **Focus running runs** and **Lineage settings**.
 
 The page opens at 100% on the running runs (all of them when they fit, else the one that
 reported last). Two-finger touchpad scrolling or the mouse wheel pans; pinching (or Ctrl+wheel)

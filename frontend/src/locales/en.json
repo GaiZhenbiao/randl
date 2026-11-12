@@ -510,6 +510,7 @@
   "lineage.verdict.running": "Verdict pending",
   "lineage.zoom.fit": "Fit all",
   "lineage.zoom.in": "Zoom in",
+  "lineage.zoom.level": "Zoom {percent}%",
   "lineage.zoom.out": "Zoom out",
   "lineage.zoom.running": "Focus running runs",
   "media.panel.empty": "No logged media",

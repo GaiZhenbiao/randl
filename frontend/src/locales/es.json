@@ -510,6 +510,7 @@
   "lineage.verdict.running": "Veredicto pendiente",
   "lineage.zoom.fit": "Ver todo",
   "lineage.zoom.in": "Acercar",
+  "lineage.zoom.level": "Zoom {percent} %",
   "lineage.zoom.out": "Alejar",
   "lineage.zoom.running": "Enfocar ejecuciones en curso",
   "media.panel.empty": "No hay contenido multimedia registrado",

@@ -2013,7 +2013,7 @@ aside {
   flex-shrink: 0;
 }
 .lineage-search {
-  flex: 0 1 320px;
+  flex: 0 1 240px;
   min-width: 120px;
 }
 .lineage-options {
@@ -5815,4 +5815,13 @@ aside {
 .lineage-menu .lineage-options {
   flex-direction: column;
   gap: 4px;
+}
+.lineage-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+}
+.lineage-zoom > span {
+  margin-right: auto;
 }
