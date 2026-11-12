@@ -6,7 +6,7 @@
   import CheckboxCheckedFilled from 'carbon-icons-svelte/lib/CheckboxCheckedFilled.svelte';
   import StarFilled from 'carbon-icons-svelte/lib/StarFilled.svelte';
   import { t, number } from './i18n';
-  import { statusLabel } from './ui';
+  import { planPlace, statusLabel } from './ui';
   import {
     computeLabel,
     formatMetric,
@@ -51,17 +51,7 @@
   let head = $derived(node.display_name.split('_')[0]);
   let verdict = $derived(node.verdict ? $t(verdictLabels[node.verdict]) : '');
   let hardware = $derived(
-    node.planned
-      ? [
-          node.planned.host,
-          node.planned.slot,
-          node.planned.queue === null
-            ? ''
-            : $t('lineage.plan.queue', { position: node.planned.queue }),
-        ]
-          .filter(Boolean)
-          .join(' · ')
-      : computeLabel(node.compute),
+    node.planned ? planPlace(node.planned, $t) : computeLabel(node.compute),
   );
 </script>
 

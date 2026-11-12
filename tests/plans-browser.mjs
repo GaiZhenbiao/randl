@@ -105,50 +105,84 @@ try {
     after: bare,
   });
 
+  // The GPU inventory: three GPUs on hostA, one on hostB, and one on hostR kept for others.
+  await call('gpus_save', {
+    project: 'test/plans',
+    host: 'hostA',
+    gpus: [0, 1, 2],
+    model: 'Test GPU',
+    memory_gb: 24,
+  });
+  await call('gpus_save', { project: 'test/plans', host: 'hostB', gpus: [0], memory_gb: 24 });
+  await call('gpus_save', {
+    project: 'test/plans',
+    host: 'hostR',
+    gpus: [0],
+    memory_gb: 80,
+    allowed: false,
+  });
+
   browser = await launchBrowser();
   const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => message.type() === 'error' && errors.push(message.text()));
   await page.goto(`${origin}/test/plans/plans`);
 
-  // The recipe with its history, and the lane: the live run's progress and estimated end, then
-  // the plan queued behind it with its hypothesis, baseline, stop rule and estimated start.
+  // The recipe with its history, then the queue: the running runs with their progress and
+  // end, then the waiting plans in claim order, each with its GPU request and projected start.
   await expect(page.locator('.recipe-tile')).toContainText('p1_done');
   await expect(page.locator('.recipe-timeline li')).toHaveCount(1);
-  const lane = page.getByRole('region', { name: 'hostA · a12' });
-  await expect(lane.locator('.plan-lane-head')).toContainText('GPUs 1, 2 · Test GPU 24GB');
-  const running = lane.locator('.plan-running-card');
-  await expect(running).toContainText('p2_live');
+  const queue = page.locator('.plan-queue');
+  const running = queue.locator('.queue-running', { hasText: 'p2_live' });
   await expect(running).toContainText('Update 500 of 1,000 (50%)');
-  await expect(running).toContainText(/Estimated end.*\(in 2h\)/);
-  const queued = lane.locator('.plan-card', { hasText: 'p3_next' });
-  await expect(queued.locator('.plan-position')).toHaveText('1');
-  await expect(queued).toContainText(/Starts about .* \(in 2h\)/);
-  await expect(queued).toContainText('A constant rate holds the gain.');
-  await expect(queued).toContainText('Stop if the audit falls below p1');
-  await expect(queued.getByRole('link', { name: 'p1_done' })).toBeVisible();
-  // The run without a compute block: named in the timeline's note, in a lane of its own, and
+  await expect(running).toContainText('ends in 2h');
+  await expect(running.locator('td.queue-col-gpus')).toContainText('hostA · GPUs 1, 2');
+  // p3 was saved with slot a12, which last ran on two GPUs: it asks for two on hostA.
+  const queued = queue.locator('.plan-row', { hasText: 'p3_next' });
+  await expect(queued.locator('td.queue-col-gpus')).toContainText('2 GPUs · hostA');
+  await expect(queued).toContainText(/in 2h · runs about/);
+  await expect(queued.locator('td.queue-col-gpus')).toContainText('hostA · GPUs 0, 1');
+  // Its hypothesis, stop rule and baseline open under it.
+  await queued.getByRole('button', { name: 'p3_next' }).click();
+  const details = queue.locator('#plan-details-p3');
+  await expect(details).toContainText('A constant rate holds the gain.');
+  await expect(details).toContainText('Stop if the audit falls below p1');
+  await expect(details.getByRole('link', { name: 'p1_done' })).toBeVisible();
+  // The run without a compute block: named in the timeline's note, listed as running, and
   // still holding back the plan queued after it (500 of 1000 updates in an hour: 1 h more).
   await expect(page.locator('.occupancy-note')).toHaveText(
     '1 running run logs no GPUs, so it is not shown: p4',
   );
-  const loose = page.getByRole('region', { name: 'No host or slot' });
-  await expect(loose.locator('.plan-running-card')).toContainText('p4_bare');
-  await expect(loose.locator('.plan-running-card')).toContainText('Not logged');
-  await expect(
-    page.getByRole('region', { name: 'hostB' }).locator('.plan-card', { hasText: 'p5_after' }),
-  ).toContainText(/Starts about .* \(in 1h\)/);
-  checks.push('Lanes show the running run’s progress and end, then queued plans with their start');
+  await expect(queue.locator('.queue-running', { hasText: 'p4_bare' })).toContainText('Not logged');
+  // p5, queued after it, goes first in claim order and starts on hostB when it ends.
+  await expect(queue.locator('.plan-row.status-planned .queue-name')).toHaveText([
+    'p5_after',
+    'p3_next',
+  ]);
+  await expect(queue.locator('.plan-row', { hasText: 'p5_after' })).toContainText(/in 1h ·/);
+  // The GPU strip: each host's GPUs now, the reserved host last.
+  const strip = page.locator('.gpu-host');
+  await expect(strip.locator('strong')).toHaveText(['hostA', 'hostB', 'hostR']);
+  await expect(strip.nth(0).locator('.gpu-cell')).toHaveClass([
+    /state-free/,
+    /state-running/,
+    /state-running/,
+  ]);
+  await expect(strip.nth(2)).toContainText('Not for plans');
+  checks.push('The queue shows runs on their GPUs, then plans with their request and start');
 
-  // The timeline: GPU rows 0 to 2 of hostA, a bar of each kind and the now line.
+  // The timeline: each host's GPUs from the inventory, reserved ones marked, a bar of each
+  // kind, the now line, and a line from the run to the plan that takes its GPUs next.
   const timeline = page.locator('.occupancy');
-  await expect(timeline.locator('.occupancy-host')).toHaveText([/hostA/, /hostB/]);
+  await expect(timeline.locator('.occupancy-host')).toHaveText([/hostA/, /hostB/, /hostR/]);
   await expect(timeline.locator('.occupancy-row-label')).toHaveText([
     'GPU 0',
     'GPU 1',
     'GPU 2',
     'GPU 0',
+    'GPU 0',
   ]);
+  await expect(timeline.locator('.occupancy-row-label.reserved')).toHaveCount(1);
   for (const [kind, count] of [
     ['past', 1],
     ['running', 1],
@@ -158,6 +192,12 @@ try {
     await expect(timeline.locator('.occupancy-track .kind-' + kind)).toHaveCount(count);
   await expect(timeline.locator('.occupancy-track .kind-past')).toHaveClass(/verdict-adopted/);
   await expect(timeline.locator('.occupancy-now')).toHaveCount(1);
+  await expect(timeline.locator('.occupancy-link')).toHaveCount(1);
+  // The panel is as tall as its rows: no scrolling inside it but sideways.
+  const fit = await timeline
+    .locator('.occupancy-scroll')
+    .evaluate((el) => [el.scrollHeight, el.clientHeight, getComputedStyle(el).overflowY]);
+  assert.ok(fit[0] <= fit[1] + 1 && fit[2] === 'hidden', JSON.stringify(fit));
   // Bars cover both GPUs as one block; the plan follows the running run's estimated end.
   const box = async (kind) =>
     timeline
@@ -180,7 +220,7 @@ try {
     );
   });
   assert.deepEqual(insets, [9, 9]);
-  checks.push('The timeline shows GPU rows by host, bars by kind, the now line and the queue');
+  checks.push('The timeline shows GPU rows by host, bars by kind, and the projected order');
 
   // It scrolls sideways; the buttons and Ctrl+wheel zoom in time.
   const scroller = timeline.locator('.occupancy-scroll');
@@ -188,7 +228,6 @@ try {
   const before = await width();
   await timeline.getByRole('button', { name: 'Zoom in on time' }).click();
   await expect.poll(width).toBeGreaterThan(before);
-  // Zoomed in, the timeline is wider than its view and scrolls sideways.
   const [scrollWidth, clientWidth, start] = await scroller.evaluate((el) => [
     el.scrollWidth,
     el.clientWidth,
@@ -207,33 +246,37 @@ try {
   await timeline.getByRole('button', { name: 'Go to now' }).click();
   checks.push('The timeline scrolls sideways and zooms with its buttons and Ctrl+wheel');
 
-  // A run's bar opens its run; a plan's bar opens the plan.
+  // A run's bar opens its run; a plan's bar opens the plan, whose GPU request is edited.
   await timeline.locator('.occupancy-track .kind-past').hover();
   await expect(timeline.locator('.occupancy-tooltip')).toContainText('p1_done');
   await expect(timeline.locator('.occupancy-tooltip')).toContainText('Adopted');
   await timeline.locator('[data-id="plan:p3"]').click();
   const dialog = page.getByRole('dialog', { name: 'Edit plan' });
   await expect(dialog.getByLabel('Run name')).toHaveValue('p3_next');
-  // Naming its GPUs moves it to them.
-  await dialog.getByLabel('GPUs').fill('0, 1');
+  await expect(dialog.getByLabel('GPUs', { exact: true })).toHaveValue('2');
+  await expect(dialog.getByRole('checkbox', { name: 'hostA' })).toBeChecked();
+  await expect(dialog.getByRole('checkbox', { name: 'hostR' })).toHaveCount(0);
+  // One GPU fits hostA's free GPU 0 now.
+  await dialog.getByLabel('GPUs', { exact: true }).fill('1');
+  await dialog.getByLabel('Minimum memory (GB)').fill('16');
   await dialog.getByLabel('Updates to train').fill('500');
   await dialog.getByRole('button', { name: 'Save plan' }).click();
   await expect(dialog).toBeHidden();
   const { plans } = await call('plans_list', { project: 'test/plans' });
   const saved = plans.find((item) => item.id === 'p3');
-  assert.deepEqual(saved.gpus, [0, 1]);
+  assert.deepEqual(saved.resources, { gpus: 1, min_memory_gb: 16, hosts: ['hostA'] });
   assert.equal(saved.updates, 500);
-  // The timeline redraws after the save, so a bar may be missing for a moment.
   await expect
     .poll(async () => ((await box('planned'))?.y ?? Infinity) - ((await box('remaining'))?.y ?? 0))
     .toBeLessThan(0);
+  await expect(queue.locator('.plan-row', { hasText: 'p3_next' })).toContainText('Now');
   await timeline.locator('.occupancy-track .kind-past').click();
   await expect(page).toHaveURL(/\/test\/plans\/runs\/p1_done/);
-  checks.push('Bars open their run or plan; a plan given GPUs moves to those rows');
+  checks.push('Bars open their run or plan; a plan asking for fewer GPUs starts on a free one');
 
-  // The lane is the slot's live queue: drag a waiting plan before another, move it with the
-  // Earlier button, see a supervisor's claim, and find finished plans under its history.
-  for (const [id, queue] of [
+  // The queue reorders by dragging or with the Earlier button; a host agent's claim shows
+  // on its GPUs; finished plans go to the history.
+  for (const [id, position] of [
     ['q4', 2],
     ['q5', 3],
   ])
@@ -241,44 +284,56 @@ try {
       project: 'test/plans',
       id,
       name: id + '_next',
-      host: 'hostA',
-      slot: 'a12',
-      queue,
+      queue: position,
+      resources: { gpus: 1, hosts: ['hostA'] },
     });
   await page.goto(`${origin}/test/plans/plans`);
-  const queueLane = page.getByRole('region', { name: 'hostA · a12' });
   const order = async () =>
-    (await call('plan_queue', { project: 'test/plans', slot: 'a12' })).plans.map((plan) => plan.id);
-  await expect(queueLane.locator('#plan-q5')).toBeVisible();
-  assert.deepEqual(await order(), ['p3', 'q4', 'q5']);
-  const target = await queueLane.locator('#plan-p3').boundingBox();
-  await queueLane
+    (await call('plan_queue', { project: 'test/plans' })).plans.map((plan) => plan.id);
+  await expect(queue.locator('#plan-q5')).toBeVisible();
+  assert.deepEqual(await order(), ['p5', 'p3', 'q4', 'q5']);
+  await queue
     .locator('#plan-q5')
-    .dragTo(queueLane.locator('#plan-p3'), { targetPosition: { x: 10, y: target.height / 2 } });
-  await expect.poll(order).toEqual(['q5', 'p3', 'q4']);
-  await expect(queueLane.locator('.plan-position')).toHaveText(['1', '2', '3']);
-  await queueLane
+    .dragTo(queue.locator('#plan-p3'), { targetPosition: { x: 200, y: 4 } });
+  await expect.poll(order).toEqual(['p5', 'q5', 'p3', 'q4']);
+  await expect(queue.locator('.plan-position')).toHaveText(['1', '2', '3', '4']);
+  await queue
     .locator('#plan-q4')
     .getByRole('button', { name: 'Move earlier in the queue' })
     .click();
-  await expect.poll(order).toEqual(['q5', 'q4', 'p3']);
-  // A supervisor claims the head: it shows as claimed, waiting for its run.
-  await call('plan_claim', {
+  await expect.poll(order).toEqual(['p5', 'q5', 'q4', 'p3']);
+  // A host agent on hostA with GPU 0 free: p5 is for hostB, so q5 takes GPU 0.
+  const claim = await call('plan_claim', {
     project: 'test/plans',
-    slot: 'a12',
-    by: 'supervisor-a',
     host: 'hostA',
+    free_gpus: [0],
+    by: 'agent-a',
+  });
+  assert.deepEqual([claim.plan.id, claim.gpu_ids], ['q5', [0]]);
+  await page.reload();
+  const claimedRow = queue.locator('#plan-q5');
+  await expect(claimedRow).toContainText('Claimed');
+  await expect(claimedRow).toContainText('by agent-a on hostA');
+  await expect(claimedRow.locator('td.queue-col-gpus')).toContainText('hostA · GPUs 0');
+  await expect(strip.nth(0).locator('.gpu-cell').first()).toHaveClass(/state-claimed/);
+  // A plan no host can run is marked, in the queue and under the timeline.
+  await call('plan_save', {
+    project: 'test/plans',
+    id: 'huge',
+    name: 'huge_plan',
+    resources: { gpus: 8 },
   });
   await page.reload();
-  const claimedCard = queueLane.locator('#plan-q5');
-  await expect(claimedCard).toContainText('Claimed');
-  await expect(claimedCard).toContainText('Claimed by supervisor-a on hostA');
-  // A cancelled plan leaves the lane for the history, opened from the header rail: plans that
-  // are over, filtered by status and searched, each read beside the list with its timeline.
+  await expect(queue.locator('#plan-huge td.queue-col-when')).toHaveText(
+    'No host has enough matching GPUs',
+  );
+  await expect(page.locator('.occupancy-note')).toContainText('1 plan fits no host: huge');
+  // A cancelled plan leaves the queue for the history, opened from the header rail: plans
+  // that are over, filtered by status and searched, each read beside the list.
   await call('plan_save', { project: 'test/plans', id: 'p3', status: 'cancelled' });
   await page.reload();
-  await expect(queueLane.locator('#plan-q4')).toBeVisible();
-  await expect(queueLane.locator('#plan-p3')).toHaveCount(0);
+  await expect(queue.locator('#plan-q4')).toBeVisible();
+  await expect(queue.locator('#plan-p3')).toHaveCount(0);
   const over = (await call('plans_list', { project: 'test/plans' })).plans.filter((plan) =>
     ['done', 'stopped', 'cancelled'].includes(plan.status),
   ).length;
@@ -308,9 +363,51 @@ try {
   await expect(editor).toBeVisible();
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(history).toBeVisible();
-  checks.push(
-    'Lanes are live queues: drag or move plans, see claims; past plans open from the rail',
+  await page.keyboard.press('Escape');
+  await expect(history).toHaveCount(0);
+  checks.push('The queue reorders and shows claims and plans that fit nowhere; history opens');
+
+  // Ideas: the backlog by priority with what each waits on; promoting one opens the plan
+  // editor, and saving puts the plan in the queue linked to the idea.
+  await call('idea_save', {
+    project: 'test/plans',
+    id: 'wide',
+    title: 'Wider floor',
+    hypothesis: 'A wider floor helps.',
+    priority: 'high',
+    waits_on: [{ kind: 'run', id: live }],
+  });
+  await page.reload();
+  const ideas = page.locator('.plan-ideas');
+  const ideaRow = ideas.locator('#idea-wide');
+  await expect(ideaRow.locator('.idea-priority')).toHaveText('High');
+  await expect(ideaRow.locator('.idea-link')).toContainText('p2_live');
+  await expect(ideaRow.locator('.idea-link.met')).toHaveCount(0);
+  await ideas.getByRole('button', { name: 'New idea' }).click();
+  const ideaEditor = page.getByRole('dialog', { name: 'New idea' });
+  await ideaEditor.getByLabel('Title').fill('Cold start');
+  await ideaEditor.getByRole('button', { name: 'Save idea' }).click();
+  await expect(ideas.locator('#idea-cold-start')).toBeVisible();
+  await expect(ideas.locator('.idea-row').first()).toHaveAttribute('id', 'idea-wide');
+  await ideaRow.getByRole('button', { name: 'Promote', exact: true }).click();
+  const promote = page.getByRole('dialog', { name: 'Promote idea to a plan' });
+  await expect(promote).toContainText('Wider floor');
+  await promote.getByLabel('GPUs', { exact: true }).fill('2');
+  await promote.getByRole('checkbox', { name: 'hostA' }).check({ force: true });
+  await promote.getByRole('button', { name: 'Promote to plan' }).click();
+  await expect(promote).toHaveCount(0);
+  await expect(queue.locator('#plan-wide')).toBeVisible();
+  await expect(ideas.locator('#idea-wide')).toHaveCount(0);
+  await ideas.getByRole('button', { name: /^Promoted/ }).click();
+  await expect(ideas.locator('#idea-wide')).toContainText('Plan wide');
+  const made = (await call('plans_list', { project: 'test/plans' })).plans.find(
+    (plan) => plan.id === 'wide',
   );
+  assert.deepEqual(
+    [made.idea, made.hypothesis, made.resources],
+    ['wide', 'A wider floor helps.', { gpus: 2, hosts: ['hostA'] }],
+  );
+  checks.push('Ideas list by priority; promoting one makes a plan asking for its GPUs');
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks }, null, 2));

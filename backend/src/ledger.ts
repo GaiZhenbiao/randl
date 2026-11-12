@@ -60,8 +60,17 @@ export type Plan = {
   run?: string | null;
   /** 'lineage' once that run logged this plan's id; else it was matched by its id or name. */
   binding?: 'lineage' | null;
-  /** The supervisor that took it from its slot's queue (plan_claim). */
-  claim?: { by: string; host: string; at: number } | null;
+  /** The idea it was promoted from (idea_promote). */
+  idea?: string | null;
+  /** The GPUs it asks for; the allocator picks the host and GPU ids (plan_claim). */
+  resources?: GpuRequest | null;
+  /**
+   * The host agent that took it from the queue (plan_claim); `slot` is kept from claims made
+   * before GPU requests.
+   */
+  claim?: { by: string; host: string; at: number; slot?: string } | null;
+  /** The host and GPUs allocated to it, until its run ends (released). */
+  allocation?: Allocation | null;
   /** Status changes, oldest first. */
   events?: PlanEvent[];
   source: Source | null;
@@ -70,6 +79,36 @@ export type Plan = {
   by: string;
 };
 export type PlanStatus = 'planned' | 'started' | 'done' | 'stopped' | 'cancelled';
+/**
+ * What a plan needs: `gpus` GPUs on one host (same_host), each with at least `min_memory_gb`,
+ * whose model contains `model`, on one of `hosts` (any allowed host when empty).
+ */
+export type GpuRequest = {
+  gpus: number;
+  min_memory_gb?: number | null;
+  model?: string | null;
+  hosts?: string[] | null;
+  same_host?: boolean;
+};
+/** GPUs given to a plan: from its claim until its run ends or the claim lapses. */
+export type Allocation = {
+  host: string;
+  gpus: number[];
+  at: number;
+  by: string;
+  released?: number | null;
+};
+/** One GPU of the project's inventory; `allowed` false keeps it out of allocation. */
+export type InventoryGpu = {
+  host: string;
+  gpu: number;
+  model: string;
+  memory_gb: number | null;
+  allowed: boolean;
+  note: string;
+  updated: number;
+  by: string;
+};
 export type PlanEvent = {
   at: number;
   status: PlanStatus | 'claimed' | 'claim_expired' | 'moved';
@@ -79,6 +118,36 @@ export type PlanEvent = {
 };
 /** A claim whose run has not logged after this long returns its plan to the queue. */
 export const claimTimeout = 30 * 60;
+
+/** What an idea waits on before it can be planned. */
+export type IdeaLink = { kind: 'run' | 'plan' | 'finding'; id: string };
+export type IdeaStatus = 'open' | 'promoted' | 'dropped';
+export type IdeaPriority = 'high' | 'medium' | 'low';
+/** A backlog entry: an experiment worth running once what it waits on is in. */
+export type Idea = {
+  project: string;
+  id: string;
+  title: string;
+  hypothesis: string;
+  /** Why it is worth running: the evidence or reason. */
+  evidence: string;
+  /** What must happen first, in words. */
+  prerequisites: string;
+  /** The runs, plans and findings it waits on. */
+  waits_on: IdeaLink[];
+  priority: IdeaPriority;
+  /** open: in the backlog; promoted: a plan was made from it (`plan`); dropped: set aside. */
+  status: IdeaStatus;
+  /** The plan made from it. */
+  plan: string | null;
+  /** Plan fields kept for when it is promoted, such as those of a plan it was made from. */
+  draft: Row | null;
+  source: Source | null;
+  created: number;
+  updated: number;
+  by: string;
+};
+const priorities: Record<IdeaPriority, number> = { high: 0, medium: 1, low: 2 };
 
 /** Seconds since the epoch from seconds or an ISO date, else now. */
 export function seconds(value: number | string | undefined, now = Date.now() / 1000) {
@@ -102,6 +171,8 @@ export class Ledger {
       CREATE TABLE IF NOT EXISTS finding_versions(project TEXT NOT NULL,id TEXT NOT NULL,version INTEGER NOT NULL,record TEXT NOT NULL,by TEXT NOT NULL,time REAL NOT NULL,PRIMARY KEY(project,id,version));
       CREATE TABLE IF NOT EXISTS recipe_events(id INTEGER PRIMARY KEY,project TEXT NOT NULL,run TEXT NOT NULL,since REAL NOT NULL,reason TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',by TEXT NOT NULL,created REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS recipe_history ON recipe_events(project,since);
+      CREATE TABLE IF NOT EXISTS gpu_inventory(project TEXT NOT NULL,host TEXT NOT NULL,gpu INTEGER NOT NULL,model TEXT NOT NULL DEFAULT '',memory_gb REAL,allowed INTEGER NOT NULL DEFAULT 1,note TEXT NOT NULL DEFAULT '',updated REAL NOT NULL,by TEXT NOT NULL,PRIMARY KEY(project,host,gpu));
+      CREATE TABLE IF NOT EXISTS ideas(project TEXT NOT NULL,id TEXT NOT NULL,record TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,PRIMARY KEY(project,id));
       CREATE TABLE IF NOT EXISTS planned_runs(project TEXT NOT NULL,id TEXT NOT NULL,record TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,PRIMARY KEY(project,id));
       CREATE TABLE IF NOT EXISTS run_journal(id TEXT PRIMARY KEY,run TEXT NOT NULL,time REAL NOT NULL,update_index REAL,step REAL,text TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',by TEXT NOT NULL,created REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS run_journal_time ON run_journal(run,time);
@@ -280,10 +351,13 @@ export class Ledger {
       ...optional('updates', field('updates', null)),
       ...optional('config_yaml', field('config_yaml', null)),
       ...optional('resume_run', field('resume_run', null)),
+      ...optional('resources', field('resources', null)),
       // Kept by the server, never set by a save.
       ...optional('run', previous?.run ?? null),
       ...optional('binding', previous?.binding ?? null),
+      ...optional('idea', previous?.idea ?? null),
       ...optional('claim', previous?.claim ?? null),
+      ...optional('allocation', previous?.allocation ?? null),
       ...optional('events', previous?.events?.length ? previous.events : null),
     };
     // A caller may set planned or cancelled; setting planned releases a pending claim.
@@ -406,9 +480,197 @@ export class Ledger {
     return (rows as Row[]).map((row) => this.entry(row));
   }
 
+  // GPU inventory: each host's GPUs by PCI index, with model and memory, allowed or reserved.
+  gpus(project: string): InventoryGpu[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM gpu_inventory WHERE project=? ORDER BY host,gpu')
+        .all(project) as Row[]
+    ).map(({ project: _, allowed, ...row }) => ({ ...row, allowed: !!allowed }) as InventoryGpu);
+  }
+  /** Adds or updates GPUs of one host; with replace, the host's other GPUs are removed. */
+  gpusSave(args: Row) {
+    return this.db.transaction(() => {
+      const now = Date.now() / 1000,
+        old = new Map(
+          this.gpus(args.project)
+            .filter((gpu) => gpu.host === args.host)
+            .map((gpu) => [gpu.gpu, gpu]),
+        ),
+        changed: number[] = [],
+        removed = args.replace
+          ? [...old.keys()].filter((gpu) => !args.gpus.includes(gpu))
+          : [];
+      for (const gpu of args.gpus as number[]) {
+        const previous = old.get(gpu),
+          next = {
+            model: args.model ?? previous?.model ?? '',
+            memory_gb: args.memory_gb !== undefined ? args.memory_gb : (previous?.memory_gb ?? null),
+            allowed: args.allowed ?? previous?.allowed ?? true,
+            note: args.note ?? previous?.note ?? '',
+          };
+        if (
+          previous &&
+          previous.model === next.model &&
+          previous.memory_gb === next.memory_gb &&
+          previous.allowed === next.allowed &&
+          previous.note === next.note
+        )
+          continue;
+        changed.push(gpu);
+        if (args.dryRun) continue;
+        this.db
+          .prepare(
+            'INSERT OR REPLACE INTO gpu_inventory(project,host,gpu,model,memory_gb,allowed,note,updated,by) VALUES(?,?,?,?,?,?,?,?,?)',
+          )
+          .run(
+            args.project,
+            args.host,
+            gpu,
+            next.model,
+            next.memory_gb,
+            next.allowed ? 1 : 0,
+            next.note,
+            now,
+            args.by ?? '',
+          );
+      }
+      if (!args.dryRun)
+        for (const gpu of removed)
+          this.db
+            .prepare('DELETE FROM gpu_inventory WHERE project=? AND host=? AND gpu=?')
+            .run(args.project, args.host, gpu);
+      const status = changed.length || removed.length ? 'updated' : 'unchanged';
+      return {
+        status,
+        ...(args.dryRun ? { dryRun: true } : {}),
+        host: args.host,
+        changed,
+        removed,
+        gpus: this.gpus(args.project).filter((gpu) => gpu.host === args.host),
+      };
+    })();
+  }
+  gpusDelete(args: Row) {
+    const changes = args.gpus?.length
+      ? (args.gpus as number[]).reduce(
+          (sum, gpu) =>
+            sum +
+            this.db
+              .prepare('DELETE FROM gpu_inventory WHERE project=? AND host=? AND gpu=?')
+              .run(args.project, args.host, gpu).changes,
+          0,
+        )
+      : this.db
+          .prepare('DELETE FROM gpu_inventory WHERE project=? AND host=?')
+          .run(args.project, args.host).changes;
+    return { status: changes ? 'deleted' : 'unchanged', removed: changes };
+  }
+
+  // Ideas: the backlog of experiments not yet planned.
+  private idea(row: Row): Idea {
+    return {
+      project: row.project,
+      id: row.id,
+      ...JSON.parse(row.record),
+      created: row.created,
+      updated: row.updated,
+      by: row.by,
+    };
+  }
+  ideaRecord(project: string, id: string) {
+    const row = this.db
+      .prepare('SELECT * FROM ideas WHERE project=? AND id=?')
+      .get(project, id) as Row | undefined;
+    return row ? this.idea(row) : undefined;
+  }
+  /** A project's ideas: open first, then by priority, then the latest changed. */
+  ideas(project: string, status?: IdeaStatus) {
+    const order: Record<IdeaStatus, number> = { open: 0, promoted: 1, dropped: 2 };
+    return (
+      this.db.prepare('SELECT * FROM ideas WHERE project=?').all(project) as Row[]
+    )
+      .map((row) => this.idea(row))
+      .filter((idea) => !status || idea.status === status)
+      .sort(
+        (a, b) =>
+          order[a.status] - order[b.status] ||
+          priorities[a.priority] - priorities[b.priority] ||
+          b.updated - a.updated,
+      );
+  }
+  /** Creates or updates an idea. Callers set open or dropped; promoted comes from a plan. */
+  ideaSave(args: Row) {
+    const now = Date.now() / 1000,
+      previous = this.ideaRecord(args.project, args.id);
+    const field = <K extends keyof Idea>(key: K, fallback: Idea[K]): Idea[K] =>
+      (args[key] !== undefined ? args[key] : (previous?.[key] ?? fallback)) as Idea[K];
+    let status = field('status', 'open');
+    // A promoted idea stays promoted while its plan is linked, unless it is dropped.
+    if (previous?.status === 'promoted' && args.status === 'open' && previous.plan)
+      status = 'promoted';
+    const record = {
+      title: field('title', args.id),
+      hypothesis: field('hypothesis', ''),
+      evidence: field('evidence', ''),
+      prerequisites: field('prerequisites', ''),
+      waits_on: field('waits_on', []),
+      priority: field('priority', 'medium'),
+      status,
+      plan: args.plan !== undefined ? args.plan : (previous?.plan ?? null),
+      draft: field('draft', null),
+      source: field('source', null),
+    };
+    const old = previous
+      ? JSON.stringify({
+          title: previous.title,
+          hypothesis: previous.hypothesis,
+          evidence: previous.evidence,
+          prerequisites: previous.prerequisites,
+          waits_on: previous.waits_on,
+          priority: previous.priority,
+          status: previous.status,
+          plan: previous.plan,
+          draft: previous.draft,
+          source: previous.source,
+        })
+      : null;
+    if (old === JSON.stringify(record)) return { status: 'unchanged', idea: previous };
+    if (args.dryRun) return { status: previous ? 'updated' : 'created', dryRun: true };
+    this.db
+      .prepare(
+        'INSERT OR REPLACE INTO ideas(project,id,record,created,updated,by) VALUES(?,?,?,?,?,?)',
+      )
+      .run(
+        args.project,
+        args.id,
+        JSON.stringify(record),
+        previous?.created ?? now,
+        now,
+        args.by ?? '',
+      );
+    return {
+      status: previous ? 'updated' : 'created',
+      idea: this.ideaRecord(args.project, args.id)!,
+    };
+  }
+  ideaDelete(project: string, id: string) {
+    const changes = this.db
+      .prepare('DELETE FROM ideas WHERE project=? AND id=?')
+      .run(project, id).changes;
+    return { status: changes ? 'deleted' : 'unchanged' };
+  }
+
   /** Removes a project's ledger with the project (`project_delete`). */
   deleteProject(project: string) {
-    for (const table of ['findings', 'finding_versions', 'recipe_events', 'planned_runs'])
+    for (const table of [
+      'findings',
+      'finding_versions',
+      'recipe_events',
+      'planned_runs',
+      'gpu_inventory',
+      'ideas',
+    ])
       this.db.prepare(`DELETE FROM ${table} WHERE project=?`).run(project);
     this.db
       .prepare('DELETE FROM run_journal WHERE substr(run,1,?)=?')

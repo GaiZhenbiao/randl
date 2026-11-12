@@ -10,7 +10,7 @@
   import { tool, apiMessage } from './api';
   import { t, number, date, type Message } from './i18n';
   import { formatMetric, type LineageGraph, type LineageNode } from './lineage-graph';
-  import { formatBytes, runURL } from './ui';
+  import { formatBytes, planPlace, runURL } from './ui';
   let {
     node,
     graph,
@@ -132,17 +132,9 @@
           <dt>{$t('lineage.plan.after')}</dt>
           <dd>{nameOf(plan.after)}</dd>
         </div>{/if}
-      {#if plan.host || plan.slot || plan.queue !== null}<div>
+      {#if planPlace(plan, $t)}<div>
           <dt>{$t('lineage.plan.where')}</dt>
-          <dd>
-            {[
-              plan.host,
-              plan.slot,
-              plan.queue === null ? '' : $t('lineage.plan.queue', { position: plan.queue }),
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          </dd>
+          <dd>{planPlace(plan, $t)}</dd>
         </div>{/if}
     </dl>
     {#if plan.config !== null}<h3>{$t('lineage.plan.config')}</h3>

@@ -7,7 +7,14 @@ import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import Database from 'better-sqlite3';
 import { createServer } from '../backend/dist/server.js';
-import { queueOrder, moveWithin, statusFromRun } from '../backend/dist/plan-queue.js';
+import {
+  queueOrder,
+  moveWithin,
+  statusFromRun,
+  choose,
+  pick,
+  project,
+} from '../backend/dist/plan-queue.js';
 import { listen } from './helpers.mjs';
 
 // Planned runs as the queue supervisors take work from, with synthetic runs and plans.
@@ -43,6 +50,29 @@ async function fixture(t) {
     });
   const plan = async (id) =>
     (await call('plans_list', { project: 'e/p' })).plans.find((item) => item.id === id);
+  // Host h: four 24 GB GPUs; host k: four 48 GB GPUs; host r: one reserved for others.
+  await call('gpus_save', {
+    project: 'e/p',
+    host: 'h',
+    gpus: [0, 1, 2, 3],
+    model: 'RTX 4090',
+    memory_gb: 24,
+  });
+  await call('gpus_save', {
+    project: 'e/p',
+    host: 'k',
+    gpus: [4, 5, 6, 7],
+    model: 'RTX 4090',
+    memory_gb: 48,
+  });
+  await call('gpus_save', {
+    project: 'e/p',
+    host: 'r',
+    gpus: [0],
+    model: 'H100',
+    memory_gb: 80,
+    allowed: false,
+  });
   return { server, directory, call, launch, end, plan };
 }
 
@@ -147,7 +177,12 @@ test("a plan resuming an earlier plan's run binds to it, and the earlier plan ke
     slot: 'a',
     resume_run: run.id,
   });
-  const claimed = await call('plan_claim', { project: 'e/p', slot: 'a', by: 's', host: 'h' });
+  const claimed = await call('plan_claim', {
+    project: 'e/p',
+    host: 'h',
+    free_gpus: [0, 1, 2, 3],
+    by: 's',
+  });
   assert.deepEqual([claimed.plan.id, claimed.plan.resume_run], ['second', run.id]);
   // The supervisor resumes the run, which logs the new plan's id and runs again.
   await server.db.call('upsert', {
@@ -227,6 +262,11 @@ test("a plan resuming a stopped run waits for its claim instead of taking the ru
   raw.close();
   server = await createServer(directory);
   t.after(() => server.app.close());
+  await server.app.inject({
+    method: 'POST',
+    url: '/api/tools/gpus_save',
+    payload: { project: 'e/p', host: 'h', gpus: [0], memory_gb: 24 },
+  });
   const check = new Database(join(directory, 'randl.sqlite3'), { readonly: true });
   const started = JSON.parse(
     check.prepare("SELECT record FROM planned_runs WHERE id='paused-run-resume'").get().record,
@@ -236,7 +276,7 @@ test("a plan resuming a stopped run waits for its claim instead of taking the ru
   const queue = await server.app.inject({
     method: 'POST',
     url: '/api/tools/plan_queue',
-    payload: { project: 'e/p', slot: 'a' },
+    payload: { project: 'e/p' },
   });
   assert.deepEqual(
     queue.json().plans.map((plan) => plan.id),
@@ -246,7 +286,7 @@ test("a plan resuming a stopped run waits for its claim instead of taking the ru
   const claim = await server.app.inject({
     method: 'POST',
     url: '/api/tools/plan_claim',
-    payload: { project: 'e/p', slot: 'a', by: 's', host: 'h' },
+    payload: { project: 'e/p', host: 'h', free_gpus: [0], by: 's' },
   });
   assert.equal(claim.json().plan.resume_run, run.id);
   assert.deepEqual([(await read()).status, (await read()).run], ['started', null]);
@@ -265,186 +305,297 @@ test("a plan resuming a stopped run waits for its claim instead of taking the ru
   assert.equal((await read()).status, 'done');
 });
 
-test('supervisors claim the head of a slot one at a time; stale claims return to the queue', async (t) => {
-  const { server, directory, call, launch, plan } = await fixture(t);
+test('the allocator takes the head first, backfills, and holds a host for a head that has waited too long', () => {
+  const gpu = (host, id, memory) => ({
+    host,
+    gpu: id,
+    model: 'RTX 4090',
+    memory_gb: memory,
+    allowed: true,
+  });
+  const inventory = [0, 1, 2, 3]
+    .map((id) => gpu('h', id, 24))
+    .concat([4, 5, 6, 7].map((id) => gpu('k', id, 48)));
+  const waiting = (id, request, since = 1000) => ({ id, request, since });
+  const queue = [waiting('big', { gpus: 4, min_memory_gb: 48 }), waiting('small', { gpus: 1 })];
+  const free = (host, ids) =>
+    inventory.filter((item) => item.host === host && ids.includes(item.gpu));
+  // On h the head can never run, so the small plan backfills.
+  assert.deepEqual(choose(queue, 'h', free('h', [0, 1]), inventory, 2000), {
+    plan: queue[1],
+    gpus: [0],
+  });
+  // On k, with two of its four free: backfill while the head is fresh, held once it waited 6 h.
+  assert.equal(choose(queue, 'k', free('k', [4, 5]), inventory, 2000).plan.id, 'small');
+  assert.equal(choose(queue, 'k', free('k', [4, 5]), inventory, 1000 + 7 * 3600).held.id, 'big');
+  assert.deepEqual(choose(queue, 'k', free('k', [4, 5, 6, 7]), inventory, 2000).gpus, [4, 5, 6, 7]);
+  assert.deepEqual(pick({ gpus: 2, model: 'h100' }, 'k', inventory), null);
+
+  // The projection: k is busy until t=100 on GPUs 4 and 5; plans start as GPUs come free.
+  const result = project({
+    now: 0,
+    inventory,
+    busy: [
+      { host: 'k', gpu: 4, until: 100, by: 'run-a' },
+      { host: 'k', gpu: 5, until: 100, by: 'run-a' },
+    ],
+    queue: [
+      waiting('wide', { gpus: 4, min_memory_gb: 48 }, 0),
+      waiting('pair', { gpus: 2, min_memory_gb: 48 }, 0),
+      waiting('one', { gpus: 1 }, 0),
+      waiting('huge', { gpus: 8 }, 0),
+    ],
+    readyAt: () => 0,
+    length: () => 50,
+    placeholder: 10,
+  });
+  const at = Object.fromEntries(result.placed.map((item) => [item.id, item]));
+  // pair backfills k's two free GPUs now; one takes the 24 GB host; wide waits for all of k.
+  assert.deepEqual([at.pair.host, at.pair.gpus, at.pair.start], ['k', [6, 7], 0]);
+  assert.deepEqual([at.one.host, at.one.gpus, at.one.start], ['h', [0], 0]);
+  assert.deepEqual([at.wide.host, at.wide.start, at.wide.end], ['k', 100, 150]);
+  assert.deepEqual(at.wide.after.sort(), ['plan:pair', 'run-a']);
+  assert.deepEqual(result.unfit, [{ id: 'huge', reason: 'too-few' }]);
+});
+
+test('host agents claim GPUs for the first plan that fits; claims are atomic, repeatable and released', async (t) => {
+  const { server, directory, call, launch, end, plan } = await fixture(t);
   const yaml = '# exact file\nrl:\n  lr: 3.0e-6   # trailing comment  \n  name: "v700 — ü"\n\n';
   await call('plan_save', {
     project: 'e/p',
-    id: 'q1',
-    host: 'h',
-    slot: 'a',
+    id: 'wide',
     queue: 1,
+    resources: { gpus: 2, min_memory_gb: 48 },
     config_yaml: yaml,
-    updates: 25000,
   });
+  await call('plan_save', { project: 'e/p', id: 'one', queue: 2, resources: { gpus: 1 } });
   await call('plan_save', {
     project: 'e/p',
-    id: 'q2',
-    host: 'h',
-    slot: 'a',
-    queue: 2,
+    id: 'two',
+    queue: 3,
+    resources: { gpus: 1, hosts: ['h'] },
     resume_run: 'e/p/seed',
   });
-  await call('plan_save', { project: 'e/p', id: 'other', host: 'h', slot: 'b', queue: 1 });
   assert.deepEqual(
-    (await call('plan_queue', { project: 'e/p', slot: 'a' })).plans.map((item) => item.id),
-    ['q1', 'q2'],
+    (await call('plan_queue', { project: 'e/p' })).plans.map((item) => [item.id, item.position]),
+    [
+      ['wide', 1],
+      ['one', 2],
+      ['two', 3],
+    ],
   );
-
-  // Five supervisors at once: one takes q1, the others are refused while its run is pending.
+  // Five agents on k at once, each reporting all four GPUs free: wide takes two, one takes
+  // a third, two (h only) is not for k, so the rest find nothing; no GPU is given twice.
   const attempts = await Promise.all(
     [1, 2, 3, 4, 5].map((n) =>
       server.app.inject({
         method: 'POST',
         url: '/api/tools/plan_claim',
-        payload: { project: 'e/p', slot: 'a', by: 'sup' + n, host: 'h' },
+        payload: { project: 'e/p', host: 'k', free_gpus: [4, 5, 6, 7], by: 'agent' + n },
       }),
     ),
   );
-  const claimed = attempts.filter((response) => response.statusCode === 200);
-  assert.equal(claimed.length, 1);
-  assert.ok(
-    attempts
-      .filter((response) => response.statusCode === 409)
-      .every((response) => response.json().code === 'PLAN_CLAIM_PENDING'),
-  );
-  const taken = claimed[0].json();
-  assert.equal(taken.plan.id, 'q1');
-  // The config text comes back byte for byte.
-  assert.equal(taken.plan.config_yaml, yaml);
-  assert.equal(taken.plan.updates, 25000);
-  const by = taken.claim.by;
-  // The same supervisor asking again gets the same plan.
-  const again = await call('plan_claim', { project: 'e/p', slot: 'a', by, host: 'h' });
-  assert.deepEqual([again.plan.id, again.repeat], ['q1', true]);
-  assert.equal((await plan('q1')).status, 'started');
-  assert.deepEqual(
-    (await call('plan_queue', { project: 'e/p', slot: 'a' })).plans.map((item) => item.id),
-    ['q2'],
-  );
-
-  // Its run never logs: after 30 minutes the plan is back in the queue, and says so.
-  const raw = new Database(join(directory, 'randl.sqlite3'));
-  const row = raw.prepare("SELECT record FROM planned_runs WHERE id='q1'").get(),
-    record = JSON.parse(row.record);
-  record.claim.at -= 31 * 60;
-  raw.prepare("UPDATE planned_runs SET record=? WHERE id='q1'").run(JSON.stringify(record));
-  raw.close();
-  const expired = await plan('q1');
-  assert.equal(expired.status, 'planned');
-  assert.equal(expired.claim, undefined);
-  assert.equal(expired.events.at(-1).status, 'claim_expired');
-
-  // Claimed again, and this time its run logs the plan: started, bound to the run.
-  const retaken = await call('plan_claim', { project: 'e/p', slot: 'a', by: 'sup9', host: 'h' });
-  assert.equal(retaken.plan.id, 'q1');
-  const run = await launch('r-q1', 'q1');
-  assert.deepEqual([(await plan('q1')).status, (await plan('q1')).run], ['started', run.id]);
-  // With q1 running, the next claim takes q2, a resume of an existing run.
-  const next = await call('plan_claim', { project: 'e/p', slot: 'a', by: 'sup9', host: 'h' });
-  assert.deepEqual([next.plan.id, next.plan.resume_run], ['q2', 'e/p/seed']);
-  await launch('r-q2', 'q2');
-  assert.deepEqual(await call('plan_claim', { project: 'e/p', slot: 'a', by: 'sup9', host: 'h' }), {
-    status: 'empty',
-    plan: null,
+  const results = attempts.map((response) => response.json());
+  const claimed = results.filter((result) => result.status === 'claimed');
+  assert.deepEqual(claimed.map((result) => result.plan.id).sort(), ['one', 'wide']);
+  const given = claimed.flatMap((result) => result.gpu_ids);
+  assert.equal(new Set(given).size, given.length);
+  assert.deepEqual(claimed.find((result) => result.plan.id === 'wide').gpu_ids, [4, 5]);
+  assert.equal(claimed.find((result) => result.plan.id === 'wide').plan.config_yaml, yaml);
+  assert.ok(results.filter((result) => result.status === 'empty').length === 3);
+  // The agent that took wide, asking again with its GPUs still free, gets the same claim.
+  const wideBy = claimed.find((result) => result.plan.id === 'wide').claim.by;
+  const again = await call('plan_claim', {
+    project: 'e/p',
+    host: 'k',
+    free_gpus: [4, 5, 7],
+    by: wideBy,
   });
-  // Claims are audited; dry runs and empty queues are not.
+  assert.deepEqual([again.plan.id, again.repeat, again.gpu_ids], ['wide', true, [4, 5]]);
+  // A host with no inventory is refused; reserved GPUs are never given.
+  assert.equal(
+    (await call('plan_claim', { project: 'e/p', host: 'nowhere', free_gpus: [0], by: 'x' }, 409))
+      .code,
+    'PLAN_HOST_UNKNOWN',
+  );
+  assert.equal(
+    (await call('plan_claim', { project: 'e/p', host: 'r', free_gpus: [0], by: 'x' })).status,
+    'empty',
+  );
+  const listed = await call('gpus_list', { project: 'e/p' });
+  const k = listed.hosts.find((host) => host.host === 'k');
+  assert.deepEqual(
+    k.gpus.map((item) => item.holder?.plan ?? null),
+    [
+      'wide',
+      'wide',
+      ...(claimed.find((result) => result.plan.id === 'one').gpu_ids[0] === 6
+        ? ['one', null]
+        : [null, 'one']),
+    ],
+  );
+  // wide's run starts and ends: its GPUs are released.
+  const run = await launch('r-wide', 'wide');
+  assert.deepEqual(
+    [(await plan('wide')).status, (await plan('wide')).allocation.released],
+    ['started', undefined],
+  );
+  await end(run.id);
+  const done = await plan('wide');
+  assert.equal(done.status, 'done');
+  assert.ok(done.allocation.released > 0);
+  // one's run never logs: after 30 minutes the claim lapses, its GPU is released, and the
+  // plan waits again.
+  const raw = new Database(join(directory, 'randl.sqlite3'));
+  const record = JSON.parse(
+    raw.prepare("SELECT record FROM planned_runs WHERE id='one'").get().record,
+  );
+  record.claim.at -= 31 * 60;
+  raw.prepare("UPDATE planned_runs SET record=? WHERE id='one'").run(JSON.stringify(record));
+  raw.close();
+  const lapsed = await plan('one');
+  assert.deepEqual([lapsed.status, lapsed.events.at(-1).status], ['planned', 'claim_expired']);
+  assert.ok(lapsed.allocation.released > 0);
+  // Claims are audited; empty answers and repeats are not.
   const audited = (await server.db.call('auditList')).filter(
     (entry) => entry.tool === 'plan_claim',
   );
-  assert.equal(audited.length, 3);
+  assert.equal(audited.length, 2);
+  // On h, the resume plan (h only) is taken with its run to resume.
+  const resume = await call('plan_claim', {
+    project: 'e/p',
+    host: 'h',
+    free_gpus: [3],
+    by: 'agent-h',
+  });
+  assert.deepEqual([resume.plan.id, resume.gpu_ids, resume.plan.resume_run], ['one', [3], null]);
 });
 
-test("a claim or move with a host keeps to that host's plans in a slot name two hosts share", async (t) => {
-  const { call } = await fixture(t);
-  await call('plan_save', { project: 'e/p', id: 'k1', host: 'k', slot: '0', queue: 1 });
-  await call('plan_save', { project: 'e/p', id: 'h1', host: 'h', slot: '0', queue: 2 });
-  await call('plan_save', { project: 'e/p', id: 'h2', host: 'h', slot: '0', queue: 3 });
-  // Moving h2 ahead of h1 renumbers h's queue only.
-  await call('plan_move', { project: 'e/p', id: 'h2', before: 'h1' });
-  const order = async (host) =>
-    (await call('plan_queue', { project: 'e/p', slot: '0', host })).plans.map((item) => [
-      item.id,
-      item.queue,
-    ]);
-  assert.deepEqual(await order('h'), [
-    ['h2', 1],
-    ['h1', 2],
-  ]);
-  assert.deepEqual(await order('k'), [['k1', 1]]);
-  await call('plan_move', { project: 'e/p', id: 'h1', before: 'h2' });
-  const taken = await call('plan_claim', { project: 'e/p', slot: '0', by: 's', host: 'h' });
-  assert.equal(taken.plan.id, 'h1');
-  // h's pending claim does not hold up k's supervisor.
-  const other = await call('plan_claim', { project: 'e/p', slot: '0', by: 't', host: 'k' });
-  assert.equal(other.plan.id, 'k1');
-});
-
-test('plans move within a slot and between slots, renumbering both queues', async (t) => {
-  const { call, launch } = await fixture(t);
-  for (const [id, slot, queue] of [
-    ['a1', 'a', 1],
-    ['a2', 'a', 2],
-    ['a3', 'a', 3],
-    ['b1', 'b', 1],
-  ])
-    await call('plan_save', { project: 'e/p', id, host: slot === 'a' ? 'h' : 'k', slot, queue });
-  const ids = async (slot) =>
-    (await call('plan_queue', { project: 'e/p', slot })).plans.map((item) => [item.id, item.queue]);
+test('older plans with a slot become GPU requests; the queue moves as one', async (t) => {
+  const { server, call, plan } = await fixture(t);
+  // A slot that last ran on two GPUs: its plans ask for two on that host.
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'slot-run',
+    state: 'finished',
+    config: {
+      lineage: {
+        value: {
+          compute: {
+            host: 'k',
+            gpu_count: 2,
+            segments: [
+              {
+                host: 'k',
+                slot: 'k_45',
+                gpu_ids: [4, 5],
+                gpu_count: 2,
+                from_update: 0,
+                to_update: null,
+              },
+            ],
+          },
+        },
+      },
+    },
+  });
+  await call('plan_save', { project: 'e/p', id: 'a1', host: 'k', slot: 'k_45', queue: 1 });
+  await call('plan_save', { project: 'e/p', id: 'a2', host: 'h', slot: 'h_0', queue: 2 });
+  await call('plan_save', { project: 'e/p', id: 'a3', queue: 3, resources: { gpus: 1 } });
+  assert.deepEqual((await plan('a1')).resources, { gpus: 2, hosts: ['k'], same_host: true });
+  assert.deepEqual((await plan('a2')).resources, { gpus: 1, hosts: ['h'], same_host: true });
+  const order = async () =>
+    (await call('plan_queue', { project: 'e/p' })).plans.map((item) => [item.id, item.queue]);
   await call('plan_move', { project: 'e/p', id: 'a3', before: 'a1', by: 'me' });
-  assert.deepEqual(await ids('a'), [
+  assert.deepEqual(await order(), [
     ['a3', 1],
     ['a1', 2],
     ['a2', 3],
   ]);
-  await call('plan_move', { project: 'e/p', id: 'a1', slot: 'b', after: 'b1', by: 'me' });
-  assert.deepEqual(await ids('a'), [
-    ['a3', 1],
-    ['a2', 2],
-  ]);
-  assert.deepEqual(await ids('b'), [
-    ['b1', 1],
-    ['a1', 2],
-  ]);
-  const moved = (await call('plans_list', { project: 'e/p' })).plans.find(
-    (item) => item.id === 'a1',
+  await call('plan_move', { project: 'e/p', id: 'a3' });
+  assert.deepEqual(
+    (await order()).map(([id]) => id),
+    ['a1', 'a2', 'a3'],
   );
-  assert.deepEqual([moved.slot, moved.host, moved.events.at(-1).status], ['b', 'k', 'moved']);
-  // A plan already under way does not move.
-  await launch('r-a3', 'a3');
-  const refused = await call('plan_move', { project: 'e/p', id: 'a3', after: 'a2' }, 409);
-  assert.equal(refused.code, 'PLAN_NOT_WAITING');
+  // A plan under way does not move.
+  await call('plan_claim', { project: 'e/p', host: 'k', free_gpus: [4, 5], by: 'agent' });
+  assert.equal(
+    (await call('plan_move', { project: 'e/p', id: 'a1', after: 'a2' }, 409)).code,
+    'PLAN_NOT_WAITING',
+  );
+  // The timeline places what waits on the GPUs it would get, and marks what can never fit.
+  await call('plan_save', { project: 'e/p', id: 'huge', resources: { gpus: 16 } });
+  const timeline = await call('project_occupancy', { project: 'e/p' });
+  const bars = Object.fromEntries(
+    timeline.bars.filter((bar) => bar.plan).map((bar) => [bar.plan, bar]),
+  );
+  assert.deepEqual([bars.a1.claimed, bars.a1.gpus], [true, [4, 5]]);
+  assert.equal(bars.a2.host, 'h');
+  assert.deepEqual(
+    timeline.unfit.map((item) => [item.id, item.reason]),
+    [['huge', 'too-few']],
+  );
+  assert.deepEqual(timeline.hosts.find((host) => host.host === 'r').reserved, [0]);
 });
 
-test('randl plans claim prints the plan to launch', async (t) => {
+test('randl gpus and plans claim from the command line', async (t) => {
   const { server, call } = await fixture(t);
   const url = await listen(server);
+  const cli = async (...args) =>
+    JSON.parse(
+      (
+        await promisify(execFile)(
+          process.execPath,
+          ['backend/dist/cli.js', ...args, '--url', url],
+          {
+            env: { ...process.env, RANDL_API_KEY: '' },
+          },
+        )
+      ).stdout,
+    );
+  const saved = await cli(
+    'gpus',
+    'save',
+    '--project',
+    'e/p',
+    '--host',
+    'z',
+    '--gpus',
+    '0,1',
+    '--model',
+    'RTX 4090',
+    '--memory-gb',
+    '24',
+  );
+  assert.deepEqual(
+    saved.gpus.map((gpu) => [gpu.gpu, gpu.memory_gb, gpu.allowed]),
+    [
+      [0, 24, true],
+      [1, 24, true],
+    ],
+  );
+  await cli('gpus', 'save', '--project', 'e/p', '--host', 'z', '--gpus', '1', '--reserved');
   await call('plan_save', {
     project: 'e/p',
     id: 'c1',
-    host: 'h',
-    slot: 'a',
+    resources: { gpus: 1, hosts: ['z'] },
     config_yaml: 'a: 1\n',
   });
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    [
-      'backend/dist/cli.js',
-      'plans',
-      'claim',
-      '--url',
-      url,
-      '--project',
-      'e/p',
-      '--slot',
-      'a',
-      '--by',
-      'sup',
-      '--host',
-      'h',
-    ],
-    { env: { ...process.env, RANDL_API_KEY: '' } },
+  const result = await cli(
+    'plans',
+    'claim',
+    '--project',
+    'e/p',
+    '--host',
+    'z',
+    '--free-gpus',
+    '0,1',
+    '--by',
+    'agent',
   );
-  const result = JSON.parse(stdout);
-  assert.deepEqual([result.plan.id, result.plan.config_yaml], ['c1', 'a: 1\n']);
+  assert.deepEqual(
+    [result.plan.id, result.gpu_ids, result.plan.config_yaml],
+    ['c1', [0], 'a: 1\n'],
+  );
 });

@@ -136,13 +136,17 @@ try {
   await plan.getByRole('combobox', { name: 'Starts from' }).fill('v2');
   await page.getByRole('option', { name: 'v2_arm' }).click();
   await plan.getByLabel('What it changes').fill('Constant LR');
-  await plan.getByLabel('Host').fill('hostA');
-  await plan.getByLabel('Slot').fill('a1');
+  // It asks for two GPUs of at least 24 GB, first in the queue.
+  await plan.getByLabel('GPUs', { exact: true }).fill('2');
+  await plan.getByLabel('Minimum memory (GB)').fill('24');
   await plan.getByLabel('Queue position').fill('1');
   await plan.getByRole('button', { name: 'Save plan' }).click();
-  const queue = page.getByRole('region', { name: 'hostA · a1' });
-  await expect(queue.locator('.plan-card h4')).toHaveText(['v3_next', 'v4_later']);
-  checks.push('The Plans page sets the best recipe and queues planned runs per slot, in order');
+  const queue = page.locator('.plan-queue');
+  await expect(queue.locator('.plan-row .queue-name')).toHaveText(['v3_next', 'v4_later']);
+  await expect(queue.locator('.plan-row', { hasText: 'v3_next' })).toContainText(
+    '2 GPUs ≥ 24 GB',
+  );
+  checks.push('The Plans page sets the best recipe and queues planned runs with GPU requests');
 
   // Lineage: the recipe star, the dashed planned node, its plan, a journal entry and a comparison.
   await page.goto(`${origin}/test/ledger/lineage`);
@@ -154,7 +158,7 @@ try {
   await card('v3').click();
   const details = page.locator('.lineage-details');
   await expect(details).toContainText('Starts from');
-  await expect(details).toContainText('hostA · a1 · #1');
+  await expect(details).toContainText('2 GPUs ≥ 24 GB · #1');
   await card('v2').click();
   await expect(details).toContainText('Best recipe since');
   await expect(details.getByRole('button', { name: 'Wider heads hold more boxes' })).toBeVisible();

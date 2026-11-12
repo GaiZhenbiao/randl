@@ -13,6 +13,10 @@ type Bar = {
   host: string;
   slot: string;
   gpus: number[] | null;
+  /** A projected plan: the runs (by id) or plans (`plan:` id) whose GPUs it takes next. */
+  follows?: string[];
+  /** A plan claimed for these GPUs, its run not started yet. */
+  claimed?: boolean;
   count: number | null;
   start: number;
   end: number;
@@ -31,12 +35,20 @@ type Bar = {
   audit?: number | null;
   rate?: number | null;
 };
-type Host = { host: string; model: string; rows: { key: string; gpu: number | null }[] };
+type Host = {
+  host: string;
+  model: string;
+  rows: { key: string; gpu: number | null }[];
+  /** GPUs the inventory keeps out of allocation. */
+  reserved?: number[];
+};
 export type OccupancyData = {
   now: number;
   hosts: Host[];
   bars: Bar[];
   unplaced: { id: string; name: string }[];
+  /** Waiting plans no host can run. */
+  unfit?: { id: string; name: string; reason: string }[];
 };
 
 const rowHeight = 26,
@@ -416,15 +428,19 @@ export function create({
       trackItems.push(band);
       for (const row of host.rows) {
         const rowTop = rows.get(row.key)!,
-          item = document.createElement('div');
-        item.className = 'occupancy-row-label' + (row.gpu === null ? ' unlogged' : '');
+          item = document.createElement('div'),
+          reserved = row.gpu !== null && !!host.reserved?.includes(row.gpu);
+        item.className =
+          'occupancy-row-label' + (row.gpu === null ? ' unlogged' : '') + (reserved ? ' reserved' : '');
+        if (reserved) item.title = t('occupancy.reserved');
         item.style.top = rowTop + 'px';
         item.textContent =
           row.gpu === null ? t('occupancy.unlogged') : t('occupancy.gpu', { index: row.gpu });
         if (row.gpu === null) item.title = t('occupancy.unloggedHelp');
         labelItems.push(item);
         const line = document.createElement('div');
-        line.className = 'occupancy-row' + (row.gpu === null ? ' unlogged' : '');
+        line.className =
+          'occupancy-row' + (row.gpu === null ? ' unlogged' : '') + (reserved ? ' reserved' : '');
         line.style.top = rowTop + 'px';
         trackItems.push(line);
       }
@@ -460,6 +476,7 @@ export function create({
           'kind-' + bar.kind,
           bar.verdict ? 'verdict-' + bar.verdict : '',
           bar.unknownLength ? 'unknown-length' : '',
+          bar.claimed ? 'claimed' : '',
           bar.kind === 'past' && bar.state !== 'finished' ? 'ended-' + bar.state : '',
         ]
           .filter(Boolean)
@@ -494,10 +511,47 @@ export function create({
         });
         trackItems.push(item);
       }
+    // The projected order: a line from each run or plan to the plan that takes its GPUs next,
+    // on a GPU row they share.
+    const links = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    links.setAttribute('class', 'occupancy-links');
+    links.setAttribute('aria-hidden', 'true');
+    links.setAttribute('width', String(width));
+    links.setAttribute('height', String(height));
+    const byPlan = new Map(data.bars.filter((bar) => bar.plan).map((bar) => [bar.plan!, bar])),
+      lastOfRun = new Map<string, Bar>();
+    for (const bar of data.bars)
+      if (bar.run && (bar.kind === 'remaining' || (bar.kind === 'running' && !lastOfRun.has(bar.run))))
+        lastOfRun.set(bar.run, bar);
+    for (const bar of data.bars.filter((item) => item.follows?.length)) {
+      for (const follow of bar.follows!) {
+        const before = follow.startsWith('plan:')
+          ? byPlan.get(follow.slice(5))
+          : lastOfRun.get(follow);
+        if (!before) continue;
+        const shared = bar.rows.find((row) => before.rows.includes(row)) ?? bar.rows[0],
+          y = (rows.get(shared) ?? 0) + rowHeight / 2,
+          from = x(before.end),
+          to = x(bar.start),
+          path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        // An elbow: out of the earlier bar's end, along the row, into the later bar's start.
+        path.setAttribute(
+          'd',
+          `M ${from - 6} ${y} L ${Math.max(from, to - 8)} ${y} L ${to} ${y}`,
+        );
+        path.setAttribute('class', 'occupancy-link');
+        links.append(path);
+        const head = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        head.setAttribute('d', `M ${to - 5} ${y - 3} L ${to} ${y} L ${to - 5} ${y + 3}`);
+        head.setAttribute('class', 'occupancy-link-head');
+        links.append(head);
+      }
+    }
     const now = document.createElement('div');
     now.className = 'occupancy-now';
     now.style.left = x(data.now) + 'px';
     trackItems.push(now);
+    trackItems.push(links as unknown as HTMLElement);
     labels.replaceChildren(...labelItems);
     track.replaceChildren(...trackItems);
     drawAxis();
@@ -525,14 +579,25 @@ export function create({
     toNow.textContent = t('occupancy.showNow');
     toNow.title = t('occupancy.showNow');
     scroller.setAttribute('aria-label', t('occupancy.label'));
-    if (data?.unplaced.length) {
-      note.hidden = false;
-      note.title = data.unplaced.map((run) => run.name).join('\n');
-      note.textContent = t('occupancy.unplaced', {
-        count: data.unplaced.length,
-        names: data.unplaced.map((run) => shortName(run.name, 0)).join(', '),
-      });
-    } else note.hidden = true;
+    const notes = [
+      data?.unplaced.length
+        ? t('occupancy.unplaced', {
+            count: data.unplaced.length,
+            names: data.unplaced.map((run) => shortName(run.name, 0)).join(', '),
+          })
+        : '',
+      data?.unfit?.length
+        ? t('occupancy.unfit', {
+            count: data.unfit.length,
+            names: data.unfit.map((plan) => shortName(plan.name, 0)).join(', '),
+          })
+        : '',
+    ].filter(Boolean);
+    note.hidden = !notes.length;
+    note.textContent = notes.join(' ');
+    note.title = [...(data?.unplaced ?? []), ...(data?.unfit ?? [])]
+      .map((item) => item.name)
+      .join('\n');
   }
 
   const onScroll = () => {

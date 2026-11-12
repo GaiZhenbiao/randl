@@ -20,10 +20,10 @@ import { metricDefinitions, definitionFor, environmentMetadata } from './run-met
 import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runtime.js';
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
-import { Ledger, seconds, claimTimeout, type Plan } from './ledger.js';
-import { moveWithin, queueOrder, statusFromRun } from './plan-queue.js';
+import { Ledger, seconds, claimTimeout, type GpuRequest, type Plan } from './ledger.js';
+import { choose, moveWithin, queueOrder, statusFromRun } from './plan-queue.js';
 import { ensureTables } from './schema.js';
-import { occupancy, type OccupancyRun } from './occupancy.js';
+import { occupancy, type OccupancyPlan, type OccupancyRun } from './occupancy.js';
 import {
   RunMatcher,
   acyclic,
@@ -2503,6 +2503,19 @@ export class Store {
     const byId = new Map(runs.map((run) => [run.id, run])),
       byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan, run])),
       byName = new Map(runs.map((run) => [run.display_name, run]));
+    // How many GPUs each host's slot last ran on, for plans saved with a slot before GPU
+    // requests: they ask for that many GPUs on that host.
+    const slotGpus = new Map<string, number>();
+    for (const run of runs) {
+      try {
+        const segment = run.compute ? JSON.parse(run.compute)?.segments?.at?.(-1) : null,
+          count = segment?.gpu_ids?.length || segment?.gpu_count;
+        if (segment?.slot && segment.host && count)
+          slotGpus.set(segment.host + '\u0000' + segment.slot, count);
+      } catch {
+        // A compute block that is not JSON names no slot.
+      }
+    }
     const plans = this.ledger.plans(project).map((plan) => {
       // A run logging another plan's id carries that plan out, not this one: a resumed run
       // that once carried this plan leaves it as it ended.
@@ -2535,11 +2548,29 @@ export class Store {
       } else if (status === 'started' && !claim) status = 'planned';
       // Done or stopped through a run it no longer binds to: waiting again.
       else if (status === 'done' || status === 'stopped') status = 'planned';
+      // Its GPUs are released once its run has ended, or its claim lapsed or was released.
+      let allocation = record.allocation ?? null;
+      if (allocation && !allocation.released && (status !== 'started' || !claim) && !run)
+        allocation = { ...allocation, released: now };
+      else if (allocation && !allocation.released && run && ['done', 'stopped'].includes(status))
+        allocation = { ...allocation, released: now };
+      let resources = record.resources ?? null;
+      if (!resources && ['planned', 'started'].includes(status))
+        resources = {
+          gpus:
+            (Array.isArray(record.gpus) && record.gpus.length) ||
+            slotGpus.get((record.host ?? '') + '\u0000' + (record.slot ?? '')) ||
+            1,
+          ...(record.host ? { hosts: [record.host] } : {}),
+          same_host: true,
+        };
       const changed =
         status !== plan.status ||
         (run?.id ?? null) !== (plan.run ?? null) ||
         claim !== (record.claim ?? null) ||
-        binding !== (record.binding ?? null);
+        binding !== (record.binding ?? null) ||
+        allocation !== (record.allocation ?? null) ||
+        resources !== (record.resources ?? null);
       if (changed) {
         if (status !== plan.status && !expired)
           events.push({ at: now, status, ...(run ? { run: run.id } : {}) });
@@ -2550,6 +2581,8 @@ export class Store {
         else delete next.binding;
         if (claim) next.claim = claim;
         else delete next.claim;
+        if (allocation) next.allocation = allocation;
+        if (resources) next.resources = resources;
         this.ledger.planWrite(project, plan.id, next);
         return {
           project: plan.project,
@@ -2584,85 +2617,160 @@ export class Store {
       });
     return { plans, running };
   }
-  /** A slot's waiting plans in queue order (plan_queue). */
+  /** What a plan asks for: its GPU request, or one GPU when it names none. */
+  static requestOf(plan: Row): GpuRequest {
+    return plan.resources ?? { gpus: 1, same_host: true };
+  }
+  /** Since when a waiting plan has waited: its last return to the queue, else its creation. */
+  static waitingSince(plan: Row) {
+    const back = [...((plan.events as Row[]) ?? [])]
+      .reverse()
+      .find((event) => ['planned', 'claim_expired'].includes(event.status));
+    return back?.at ?? plan.created;
+  }
+  /** The project's waiting plans in claim order: one queue for every host. */
+  private waiting(plans: Row[]) {
+    return queueOrder(plans.filter((plan) => plan.status === 'planned') as Plan[]) as Row[];
+  }
+  /** Whether what a plan is queued after is out of its way: a run that ended, a plan under way. */
+  private afterDone(plan: Row, plans: Row[], runs: Row[]) {
+    if (!plan.after) return true;
+    const id = String(plan.after).replace(/^plan:/, ''),
+      before = plans.find((item) => item.id === id);
+    if (String(plan.after).startsWith('plan:') || before) return !before || before.status !== 'planned';
+    const run = runs.find((item) => item.id === plan.after || item.display_name === plan.after);
+    return !run || run.state !== 'running';
+  }
+  /** The project's waiting plans in the order host agents take them (plan_queue). */
   planQueue(a: Row) {
     const { plans } = this.syncPlans(a.project);
     return {
       project: a.project,
-      slot: a.slot,
-      plans: queueOrder(
-        plans.filter(
-          (plan) =>
-            plan.status === 'planned' &&
-            plan.slot === a.slot &&
-            (!a.host || !plan.host || plan.host === a.host),
-        ) as Plan[],
-      ),
+      plans: this.waiting(plans).map((plan, index) => ({
+        ...plan,
+        position: index + 1,
+        resources: Store.requestOf(plan),
+      })),
     };
   }
   /**
-   * Takes the head of a slot's queue for a supervisor (plan_claim): marks it started with the
-   * claim and returns what the supervisor launches. The worker runs one call at a time, so
-   * two supervisors cannot take the same plan. While a claim waits for its run, the same
-   * claimant gets it again and any other is refused.
+   * Gives a host's free GPUs to the first waiting plan they fit (plan_claim): head of the
+   * queue first, a later plan when the head does not fit (backfill), unless the head has
+   * waited longer than six hours and this host could run it. The plan is started with its
+   * claim and the GPUs allocated to it until its run ends. The worker runs one call at a
+   * time, so two agents never take the same plan or GPU. A claim still waiting for its run is
+   * returned again to the agent that made it while its GPUs are reported free.
    */
   planClaim(a: Row) {
     return this.db.transaction(() => {
       const now = Date.now() / 1000,
-        { plans } = this.syncPlans(a.project, now);
-      // With a host, only that host's plans (or plans naming no host) are in the slot.
-      const inSlot = (plan: Row) =>
-          plan.slot === a.slot && (!a.host || !plan.host || plan.host === a.host),
-        pending = plans.find(
-          (plan) => inSlot(plan) && plan.status === 'started' && plan.claim && !plan.run,
+        { plans, runs } = this.syncPlans(a.project, now),
+        inventory = this.ledger.gpus(a.project),
+        onHost = inventory.filter((gpu) => gpu.host === a.host);
+      if (!onHost.length)
+        throw managementError(
+          'PLAN_HOST_UNKNOWN',
+          `No GPUs are registered for host ${a.host}; add them with gpus_save.`,
+          { host: a.host },
+          409,
         );
-      const launch = (plan: Row) => ({
+      const reported = new Set<number>(a.free_gpus ?? []),
+        active = plans.filter(
+          (plan) =>
+            plan.status === 'started' && plan.allocation && !plan.allocation.released,
+        );
+      const launch = (plan: Row, gpus: number[]) => ({
         id: plan.id,
         name: plan.name,
         config_yaml: plan.config_yaml ?? null,
         config: plan.config ?? null,
         resume_run: plan.resume_run ?? null,
         updates: plan.updates ?? null,
-        gpus: plan.gpus ?? null,
         parent: plan.parent ?? null,
         parentUpdate: plan.parentUpdate ?? null,
-        host: plan.host,
-        slot: plan.slot,
+        resources: Store.requestOf(plan),
+        host: a.host,
+        gpu_ids: gpus,
       });
-      if (pending) {
-        if (pending.claim.by === (a.by ?? '') && pending.claim.host === (a.host ?? ''))
-          return { status: 'claimed', repeat: true, plan: launch(pending), claim: pending.claim };
-        throw managementError(
-          'PLAN_CLAIM_PENDING',
-          `Slot ${a.slot} has a claimed plan waiting for its run: ${pending.id}`,
-          { slot: a.slot, plan: pending.id, by: pending.claim.by },
-          409,
+      // A retry after a launch that did not happen: the same claim back.
+      const mine = active.find(
+        (plan) =>
+          !plan.run &&
+          plan.claim?.by === (a.by ?? '') &&
+          plan.allocation.host === a.host &&
+          plan.allocation.gpus.every((gpu: number) => reported.has(gpu)),
+      );
+      if (mine)
+        return {
+          status: 'claimed',
+          repeat: true,
+          plan: launch(mine, mine.allocation.gpus),
+          gpu_ids: mine.allocation.gpus,
+          host: a.host,
+          allocation: mine.allocation,
+          claim: mine.claim,
+        };
+      const taken = new Set(
+        active
+          .filter((plan) => plan.allocation.host === a.host)
+          .flatMap((plan) => plan.allocation.gpus as number[]),
+      );
+      const free = onHost.filter((gpu) => reported.has(gpu.gpu) && !taken.has(gpu.gpu)),
+        queue = this.waiting(plans).map((plan) => ({
+          ...plan,
+          id: plan.id as string,
+          request: Store.requestOf(plan),
+          since: Store.waitingSince(plan) as number,
+        })),
+        chosen = choose(queue, a.host, free, inventory, now, (plan) =>
+          this.afterDone(plan, plans, runs),
         );
-      }
-      const head = queueOrder(
-        plans.filter((plan) => plan.status === 'planned' && inSlot(plan)) as Plan[],
-      )[0] as Row | undefined;
-      if (!head) return { status: 'empty', plan: null };
-      if (a.dryRun) return { status: 'claimed', dryRun: true, plan: launch(head) };
-      const record = this.ledger.planRecord(a.project, head.id)!,
-        claim = { by: a.by ?? '', host: a.host ?? '', at: now };
+      if (!chosen)
+        return {
+          status: 'empty',
+          plan: null,
+          waiting: queue.length,
+          free_gpus: free.map((gpu) => gpu.gpu),
+        };
+      if ('held' in chosen)
+        return {
+          status: 'held',
+          plan: null,
+          head: chosen.held.id,
+          free_gpus: free.map((gpu) => gpu.gpu),
+        };
+      const { plan, gpus } = chosen;
+      if (a.dryRun)
+        return { status: 'claimed', dryRun: true, plan: launch(plan, gpus), gpu_ids: gpus, host: a.host };
+      const record = this.ledger.planRecord(a.project, plan.id)!,
+        claim = { by: a.by ?? '', host: a.host, at: now },
+        allocation = { host: a.host, gpus, at: now, by: claim.by };
       this.ledger.planWrite(
         a.project,
-        head.id,
+        plan.id,
         {
           ...record,
           status: 'started',
           claim,
-          events: [...(record.events ?? []), { at: now, status: 'claimed', by: claim.by, note: claim.host }],
+          allocation,
+          events: [
+            ...(record.events ?? []),
+            {
+              at: now,
+              status: 'claimed',
+              by: claim.by,
+              note: a.host + ' GPUs ' + gpus.join(','),
+            },
+          ],
         },
         claim.by || 'randl',
       );
-      return { status: 'claimed', plan: launch(head), claim };
+      return { status: 'claimed', plan: launch(plan, gpus), gpu_ids: gpus, host: a.host, allocation, claim };
     })();
   }
   /**
-   * Moves a waiting plan within its slot's queue or to another slot (plan_move), before or
-   * after another waiting plan or to the end, and numbers both queues 1, 2, … in order.
+   * Moves a waiting plan in the queue (plan_move): before or after another waiting plan, else
+   * to the end, and numbers the queue 1, 2, … in order.
    */
   planMove(a: Row) {
     return this.db.transaction(() => {
@@ -2677,53 +2785,255 @@ export class Store {
           { id: a.id, status: plan.status },
           409,
         );
-      const slot = a.slot ?? plan.slot,
-        host =
-          a.host ??
-          (slot === plan.slot
-            ? plan.host
-            : (plans.find((item) => item.slot === slot && item.host)?.host ?? plan.host)),
-        // A slot is its name on its host: two hosts' slots of the same name are two queues.
-        waiting = (name: string, on: string) =>
-          queueOrder(
-            plans.filter(
-              (item) =>
-                item.status === 'planned' &&
-                item.slot === name &&
-                (!on || !item.host || item.host === on),
-            ) as Plan[],
-          );
-      const target = moveWithin(waiting(slot, host), plan as Plan, {
+      const listed = moveWithin(this.waiting(plans) as (Row & { id: string })[], plan as Row & { id: string }, {
         before: a.before,
         after: a.after,
       });
-      const order = new Map<string, Row>();
-      target.forEach((item, index) => order.set(item.id, { queue: index + 1 }));
-      if (slot !== plan.slot || host !== plan.host)
-        waiting(plan.slot, plan.host)
-          .filter((item) => item.id !== plan.id)
-          .forEach((item, index) => order.set(item.id, { queue: index + 1 }));
-      if (a.dryRun) return { status: 'moved', dryRun: true, slot, order: target.map((item) => item.id) };
-      for (const [id, change] of order) {
-        const record = this.ledger.planRecord(a.project, id)!,
-          moved = id === plan.id;
-        const next: Row = {
-          ...record,
-          ...change,
-          ...(moved ? { slot, host, after: null } : {}),
-          ...(moved
-            ? {
-                events: [
-                  ...(record.events ?? []),
-                  { at: now, status: 'moved', by: a.by ?? '', note: slot },
-                ],
-              }
-            : {}),
-        };
+      if (a.dryRun) return { status: 'moved', dryRun: true, order: listed.map((item) => item.id) };
+      listed.forEach((item, index) => {
+        const record = this.ledger.planRecord(a.project, item.id)!,
+          moved = item.id === plan.id,
+          next: Row = {
+            ...record,
+            queue: index + 1,
+            ...(moved ? { after: null } : {}),
+            ...(moved
+              ? { events: [...(record.events ?? []), { at: now, status: 'moved', by: a.by ?? '' }] }
+              : {}),
+          };
         if (JSON.stringify(next) !== JSON.stringify(record))
-          this.ledger.planWrite(a.project, id, next, a.by || 'randl');
+          this.ledger.planWrite(a.project, item.id, next, a.by || 'randl');
+      });
+      return { status: 'moved', order: listed.map((item) => item.id) };
+    })();
+  }
+
+  // GPU inventory (ledger.ts): what each host has, and what holds each GPU now.
+  gpusSave(a: Row) {
+    return this.ledger.gpusSave(a);
+  }
+  gpusDelete(a: Row) {
+    return this.ledger.gpusDelete(a);
+  }
+  /** Each host's GPUs with what holds them now: a running run, or a plan's allocation. */
+  gpusList(a: Row) {
+    const { plans, runs } = this.syncPlans(a.project),
+      inventory = this.ledger.gpus(a.project),
+      holders = new Map<string, Row>();
+    // Running runs hold the GPUs their compute block names.
+    for (const run of runs.filter((item) => item.state === 'running' && item.compute))
+      try {
+        const segment = JSON.parse(run.compute)?.segments?.at?.(-1);
+        for (const gpu of segment?.gpu_ids ?? [])
+          holders.set((segment.host ?? '') + '/' + gpu, {
+            plan: plans.find((plan) => plan.run === run.id)?.id ?? null,
+            name: run.display_name,
+            run: run.id,
+            state: 'running',
+          });
+      } catch {
+        // A compute block that is not JSON names no GPUs.
       }
-      return { status: 'moved', slot, order: target.map((item) => item.id) };
+    for (const plan of plans)
+      if (plan.status === 'started' && plan.allocation && !plan.allocation.released)
+        for (const gpu of plan.allocation.gpus)
+          holders.set(plan.allocation.host + '/' + gpu, {
+            plan: plan.id,
+            name: plan.name,
+            run: plan.run ?? null,
+            state: plan.run ? 'running' : 'claimed',
+          });
+    const hosts = [...new Set(inventory.map((gpu) => gpu.host))].map((host) => ({
+      host,
+      gpus: inventory
+        .filter((gpu) => gpu.host === host)
+        .map((gpu) => ({ ...gpu, holder: holders.get(host + '/' + gpu.gpu) ?? null })),
+    }));
+    return { hosts };
+  }
+
+  // Ideas: the backlog (ledger.ts). Promoting one makes a plan from it; a plan can become one.
+  ideaSave(a: Row) {
+    if (a.status === 'promoted')
+      throw managementError(
+        'IDEA_STATUS_INVALID',
+        'An idea is promoted by idea_promote, which makes its plan.',
+        { id: a.id },
+      );
+    return this.ledger.ideaSave(a);
+  }
+  ideaList(a: Row) {
+    return { ideas: this.ledger.ideas(a.project, a.status) };
+  }
+  ideaDelete(a: Row) {
+    return this.ledger.ideaDelete(a.project, a.id);
+  }
+  /** Plan fields an idea keeps for its plan, from a plan it was made from or set on it. */
+  private static planFields = [
+    'name',
+    'parent',
+    'parentUpdate',
+    'hypothesis',
+    'change',
+    'config',
+    'baseline',
+    'rule',
+    'host',
+    'slot',
+    'queue',
+    'after',
+    'gpus',
+    'resources',
+    'updates',
+    'config_yaml',
+    'resume_run',
+  ];
+  /**
+   * Makes a plan from an idea (idea_promote): the idea's draft fields, then its hypothesis and
+   * source, then those given. The plan links back to the idea, and the idea becomes promoted.
+   */
+  ideaPromote(a: Row) {
+    return this.db.transaction(() => {
+      const idea = this.ledger.ideaRecord(a.project, a.id);
+      if (!idea) throw managementError('LEDGER_NOT_FOUND', `Idea not found: ${a.id}`, { id: a.id }, 404);
+      const planId: string = a.plan ?? idea.draft?.from_plan ?? idea.id;
+      if (idea.status === 'promoted' && idea.plan) {
+        if (planId === idea.plan)
+          return {
+            status: 'unchanged',
+            idea,
+            plan: this.ledger.plans(a.project).find((plan) => plan.id === idea.plan) ?? null,
+          };
+        throw managementError(
+          'IDEA_PROMOTED',
+          `Idea ${a.id} was already promoted to plan ${idea.plan}.`,
+          { id: a.id, plan: idea.plan },
+          409,
+        );
+      }
+      if (this.ledger.planRecord(a.project, planId))
+        throw managementError(
+          'IDEA_PLAN_EXISTS',
+          `A plan with id ${planId} already exists; name another with plan.`,
+          { id: a.id, plan: planId },
+          409,
+        );
+      const fields: Row = {};
+      for (const key of Store.planFields) if (idea.draft?.[key] !== undefined) fields[key] = idea.draft[key];
+      if (!fields.hypothesis) fields.hypothesis = idea.hypothesis;
+      fields.name ??= planId;
+      for (const key of Store.planFields) if (a[key] !== undefined) fields[key] = a[key];
+      if (a.dryRun) return { status: 'promoted', dryRun: true, plan: { id: planId, ...fields } };
+      this.planSave({
+        project: a.project,
+        id: planId,
+        ...fields,
+        source: idea.source ?? null,
+        status: 'planned',
+        by: a.by,
+      });
+      this.ledger.planWrite(
+        a.project,
+        planId,
+        { ...this.ledger.planRecord(a.project, planId)!, idea: idea.id },
+        a.by || 'randl',
+      );
+      const saved = this.ledger.ideaSave({
+        project: a.project,
+        id: idea.id,
+        status: 'promoted',
+        plan: planId,
+        by: a.by,
+      });
+      return {
+        status: 'promoted',
+        idea: saved.idea,
+        plan: this.syncPlans(a.project).plans.find((plan) => plan.id === planId) ?? null,
+      };
+    })();
+  }
+  /**
+   * Turns a waiting or cancelled plan into an idea (idea_from_plan), keeping its plan fields
+   * for when it is promoted, and removes the plan. Plans queued after it are queued after what
+   * it was queued after.
+   */
+  ideaFromPlan(a: Row) {
+    return this.db.transaction(() => {
+      const ideaId: string = a.id ?? a.plan,
+        existing = this.ledger.ideaRecord(a.project, ideaId),
+        record = this.ledger.planRecord(a.project, a.plan);
+      if (!record) {
+        if (existing?.draft?.from_plan === a.plan) return { status: 'unchanged', idea: existing };
+        throw managementError('LEDGER_NOT_FOUND', `Plan not found: ${a.plan}`, { id: a.plan }, 404);
+      }
+      if (existing)
+        throw managementError(
+          'IDEA_EXISTS',
+          `An idea with id ${ideaId} already exists; name another with id.`,
+          { id: ideaId },
+          409,
+        );
+      const plan = this.syncPlans(a.project).plans.find((item) => item.id === a.plan)!;
+      if (!['planned', 'cancelled'].includes(plan.status))
+        throw managementError(
+          'PLAN_NOT_WAITING',
+          `Only a waiting or cancelled plan becomes an idea; ${a.plan} is ${plan.status}`,
+          { id: a.plan, status: plan.status },
+          409,
+        );
+      const draft: Row = { from_plan: a.plan };
+      for (const key of Store.planFields)
+        if (plan[key] !== undefined && plan[key] !== null && plan[key] !== '') draft[key] = plan[key];
+      delete draft.queue;
+      const after: string | null = plan.after ?? null,
+        waits: Row[] = [];
+      if (after) {
+        const id = after.replace(/^plan:/, '');
+        waits.push(
+          after.startsWith('plan:') || this.ledger.planRecord(a.project, id)
+            ? { kind: 'plan', id }
+            : { kind: 'run', id: after },
+        );
+      }
+      const follows = this.ledger
+        .plans(a.project)
+        .filter((item) => item.after === 'plan:' + a.plan || item.after === a.plan);
+      if (a.dryRun)
+        return {
+          status: 'converted',
+          dryRun: true,
+          plan: a.plan,
+          idea: ideaId,
+          requeued: follows.map((item) => item.id),
+        };
+      const saved = this.ledger.ideaSave({
+        project: a.project,
+        id: ideaId,
+        title: a.title ?? plan.name,
+        hypothesis: plan.hypothesis ?? '',
+        evidence: a.evidence ?? '',
+        prerequisites: a.prerequisites ?? '',
+        waits_on: a.waits_on ?? waits,
+        priority: a.priority ?? 'medium',
+        status: plan.status === 'cancelled' ? 'dropped' : 'open',
+        draft,
+        source: plan.source ?? null,
+        by: a.by,
+      });
+      for (const item of follows)
+        this.ledger.planWrite(
+          a.project,
+          item.id,
+          { ...this.ledger.planRecord(a.project, item.id)!, after },
+          a.by || 'randl',
+        );
+      this.ledger.planDelete(a.project, a.plan);
+      return {
+        status: 'converted',
+        idea: saved.idea,
+        plan: a.plan,
+        requeued: follows.map((item) => item.id),
+      };
     })();
   }
   /**
@@ -2793,27 +3103,50 @@ export class Store {
       runs.push(run);
       if (due()) yield;
     }
-    // A plan is carried out by the run logging its id as lineage.plan, else the one named like it.
-    const ledger = this.syncPlans(project).plans as Plan[],
+    // A plan is carried out by the run logging its id as lineage.plan, else the one named like
+    // it; a plan resuming a run shares its name, so only a run logging its id carries it out.
+    const ledger = this.syncPlans(project).plans as Row[],
       byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan!, run])),
       byName = new Map(runs.map((run) => [run.name, run]));
     for (const plan of ledger) {
-      const run = byPlan.get(plan.id) ?? byName.get(plan.name);
-      if (run && !run.compute && plan.host)
-        run.placement = { host: plan.host, slot: plan.slot, gpus: plan.gpus ?? null };
+      const run = byPlan.get(plan.id) ?? (plan.resume_run ? undefined : byName.get(plan.name)),
+        allocation = plan.allocation && !plan.allocation.released ? plan.allocation : null;
+      if (run && !run.compute && (allocation || plan.host))
+        run.placement = allocation
+          ? { host: allocation.host, slot: '', gpus: allocation.gpus }
+          : { host: plan.host, slot: plan.slot, gpus: plan.gpus ?? null };
     }
-    // Waiting plans, and claimed ones whose run has not appeared yet.
-    const plans = ledger.filter(
-      (plan) =>
-        (plan.status === 'planned' || (plan.status === 'started' && !plan.run)) &&
-        !carried.has(plan.id) &&
-        !carried.has(plan.name),
+    // Waiting plans in queue order, and claimed ones whose run has not appeared yet.
+    const order = new Map(
+      (queueOrder(ledger.filter((plan) => plan.status === 'planned') as Plan[]) as Row[]).map(
+        (plan, index) => [plan.id, index + 1],
+      ),
     );
+    const plans = ledger
+      .filter(
+        (plan) =>
+          (plan.status === 'planned' || (plan.status === 'started' && !plan.run)) &&
+          !carried.has(plan.id) &&
+          (!!plan.resume_run || !carried.has(plan.name)),
+      )
+      .map((plan) => ({
+        ...plan,
+        request: Store.requestOf(plan),
+        since: Store.waitingSince(plan),
+        allocation:
+          plan.status === 'started' && plan.allocation && !plan.allocation.released
+            ? plan.allocation
+            : null,
+        position: order.get(plan.id),
+      })) as OccupancyPlan[];
     return {
-      ...occupancy(runs, plans, Date.now() / 1000, {
-        budget: settings.budgetKey,
-        start: settings.startKey,
-      }),
+      ...occupancy(
+        runs,
+        plans,
+        Date.now() / 1000,
+        { budget: settings.budgetKey, start: settings.startKey },
+        this.ledger.gpus(project),
+      ),
       // What a running run's `audit` is: the lineage metric, shown times its scale.
       metric: settings.metric,
       scale: settings.scale,

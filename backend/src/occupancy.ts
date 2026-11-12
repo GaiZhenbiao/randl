@@ -2,7 +2,8 @@
 // which hold them now and until when, and when the planned runs queued on them should start.
 // Built from runs' `lineage.compute` segments and the ledger's planned runs.
 import type { Compute, ComputeSegment } from './lineage.js';
-import type { Plan } from './ledger.js';
+import type { GpuRequest, Plan } from './ledger.js';
+import { project, type Busy, type Gpu } from './plan-queue.js';
 
 /** A run as the occupancy timeline reads it. Times are seconds since the epoch. */
 export type OccupancyRun = {
@@ -32,10 +33,27 @@ export type OccupancyRun = {
 export type OccupancyPlan = Pick<
   Plan,
   'id' | 'name' | 'host' | 'slot' | 'queue' | 'after' | 'created' | 'parentUpdate' | 'config'
-> & { gpus?: number[] | null; updates?: number | null };
+> & {
+  gpus?: number[] | null;
+  updates?: number | null;
+  /** The GPUs it asks for. */
+  request: GpuRequest;
+  /** Since when it has waited, for the head's hold. */
+  since: number;
+  /** Claimed: the GPUs a host agent was given for it, its run not logged yet. */
+  allocation?: { host: string; gpus: number[] } | null;
+  /** Its place in the queue, from 1; claimed plans have none. */
+  position?: number;
+};
 /** A timeline row: one GPU, or a host's GPUs that were not logged. */
 export type OccupancyRow = { key: string; gpu: number | null };
-export type OccupancyHost = { host: string; model: string; rows: OccupancyRow[] };
+export type OccupancyHost = {
+  host: string;
+  model: string;
+  rows: OccupancyRow[];
+  /** GPUs listed in the inventory but kept out of allocation. */
+  reserved?: number[];
+};
 export type OccupancyBar = {
   /** Unique within the response: the run and segment, or `plan:` and the plan's id. */
   id: string;
@@ -48,6 +66,10 @@ export type OccupancyBar = {
   count: number | null;
   start: number;
   end: number;
+  /** A projected plan: the runs (by id) or plans (`plan:` id) whose GPUs it takes next. */
+  follows?: string[];
+  /** A plan claimed for these GPUs, its run not started yet. */
+  claimed?: boolean;
   /**
    * past: a finished segment; running: up to now; remaining: from now to the estimated end;
    * planned: a queued plan at its estimated time.
@@ -79,6 +101,8 @@ export type Occupancy = {
   bars: OccupancyBar[];
   /** Running runs that log no compute block, so their GPUs are unknown. */
   unplaced: { id: string; name: string }[];
+  /** Waiting plans no host can run now or later, and why (plan-queue.ts `unfitReason`). */
+  unfit: { id: string; name: string; reason: string }[];
 };
 
 /** How long a plan with no known budget or rate is drawn. */
@@ -153,6 +177,7 @@ export function occupancy(
   plans: OccupancyPlan[],
   now = Date.now() / 1000,
   keys: { budget: string; start: string } = { budget: '', start: '' },
+  inventory: Gpu[] = [],
 ): Occupancy {
   const bars: OccupancyBar[] = [],
     unplaced: Occupancy['unplaced'] = [],
@@ -239,9 +264,11 @@ export function occupancy(
           from !== null && to !== null && to > from && segment.end > segment.start
             ? (segment.end - segment.start) / (to - from)
             : null;
+      const count = segment.gpu_ids?.length || segment.gpu_count || 0;
       if (rate !== null) {
-        note(rates, host + '\u0000' + slot, { rate, at: segment.end });
+        note(rates, host + '#' + count, { rate, at: segment.end });
         note(rates, host, { rate, at: segment.end });
+        note(rates, '', { rate, at: segment.end });
       }
       const base = {
         run: run.id,
@@ -306,104 +333,130 @@ export function occupancy(
     // How far runs here usually go, for plans that state no budget.
     const last = segments.at(-1)!,
       host = last.host ?? run.compute?.host ?? '';
-    if (run.budget !== null && run.from !== null && run.budget > run.from && host)
-      note(lengths, host + '\u0000' + (last.slot ?? ''), {
-        length: run.budget - run.from,
-        at: run.start,
-      });
+    if (run.budget !== null && run.from !== null && run.budget > run.from && host) {
+      const count = last.gpu_ids?.length || last.gpu_count || 0;
+      note(lengths, host + '#' + count, { length: run.budget - run.from, at: run.start });
+      note(lengths, host, { length: run.budget - run.from, at: run.start });
+    }
   }
 
-  // When each GPU (host and index) and each slot is next free.
-  const free = new Map<string, number>(),
-    freeAt = (key: string) => free.get(key) ?? now,
-    hold = (key: string, until: number) => free.set(key, Math.max(freeAt(key), until));
-  for (const bar of bars)
-    if (bar.kind === 'running' || bar.kind === 'remaining') {
-      for (const gpu of bar.gpus ?? []) hold(bar.host + '/' + gpu, bar.end);
-      hold(bar.host + '\u0000' + bar.slot, bar.end);
-    }
+  // The queue run forward (plan-queue.ts `project`): GPUs held by running runs to their
+  // estimated end and by claimed plans, then each waiting plan where the allocator would put
+  // it, with the runs or plans whose GPUs it takes next.
   const recent = <T extends { at: number }>(list: T[] | undefined, count = 5) =>
     (list ?? []).sort((a, b) => b.at - a.at).slice(0, count);
-  const order = [...plans].sort(
+  const lengthOn = (plan: OccupancyPlan, host: string) => {
+    const count = Math.max(1, plan.request.gpus),
+      budget = finite(configValue(plan.config, keys.budget)),
+      from = finite(configValue(plan.config, keys.start)) ?? plan.parentUpdate,
+      stated =
+        plan.updates ?? (budget !== null && from !== null && budget > from ? budget - from : null),
+      updates =
+        stated ??
+        median(recent(lengths.get(host + '#' + count)).map((entry) => entry.length)) ??
+        median(recent(lengths.get(host)).map((entry) => entry.length)),
+      rate =
+        median(recent(rates.get(host + '#' + count)).map((entry) => entry.rate)) ??
+        median(recent(rates.get(host)).map((entry) => entry.rate)) ??
+        median(recent(rates.get(''), 10).map((entry) => entry.rate));
+    return { updates, rate, length: updates !== null && rate !== null ? updates * rate : null };
+  };
+  for (const gpu of inventory) remember(gpu.host, gpu.model || null, [gpu.gpu], -Infinity);
+  const busy: Busy[] = [];
+  for (const bar of bars)
+    if (bar.kind === 'running' || bar.kind === 'remaining')
+      for (const gpu of bar.gpus ?? [])
+        busy.push({
+          host: bar.host,
+          gpu,
+          until: bar.kind === 'running' ? (runEnds.get(bar.run!) ?? bar.end) : bar.end,
+          by: bar.run!,
+        });
+  const planBar = (
+    plan: OccupancyPlan,
+    host: string,
+    gpus: number[],
+    start: number,
+    end: number,
+    extra: Partial<OccupancyBar>,
+  ): OccupancyBar => {
+    const { updates, rate } = lengthOn(plan, host);
+    return {
+      id: 'plan:' + plan.id,
+      run: null,
+      plan: plan.id,
+      name: plan.name,
+      host,
+      slot: '',
+      gpus,
+      count: gpus.length,
+      start,
+      end,
+      kind: 'planned',
+      state: 'planned',
+      verdict: null,
+      estimated: true,
+      unknownLength: false,
+      rows: [],
+      budget: updates,
+      rate,
+      ...extra,
+    };
+  };
+  // Claimed plans hold their allocated GPUs from now for their length.
+  for (const plan of plans.filter((item) => item.allocation)) {
+    const { host, gpus } = plan.allocation!,
+      { length } = lengthOn(plan, host),
+      end = now + (length ?? placeholderLength);
+    remember(host, null, gpus, now);
+    bars.push(
+      planBar(plan, host, gpus, now, end, { claimed: true, unknownLength: length === null }),
+    );
+    for (const gpu of gpus) busy.push({ host, gpu, until: end, by: 'plan:' + plan.id });
+  }
+  const waitingPlans = plans.filter((item) => !item.allocation),
+    planIds = new Set(plans.map((plan) => plan.id)),
+    waitingIds = new Set(waitingPlans.map((plan) => plan.id));
+  const readyAt = (plan: OccupancyPlan, ends: Map<string, number>) => {
+    if (!plan.after) return now;
+    const id = plan.after.replace(/^plan:/, '');
+    if (plan.after.startsWith('plan:') || (planIds.has(id) && !runEnds.has(plan.after))) {
+      if (ends.has('plan:' + id)) return ends.get('plan:' + id)!;
+      return waitingIds.has(id) ? null : now;
+    }
+    return runEnds.get(plan.after) ?? now;
+  };
+  const order = [...waitingPlans].sort(
     (a, b) =>
+      (a.position ?? Infinity) - (b.position ?? Infinity) ||
       (a.queue ?? Infinity) - (b.queue ?? Infinity) ||
       a.created - b.created ||
       a.id.localeCompare(b.id),
   );
-  const planIds = new Set(order.map((plan) => plan.id)),
-    planEnds = new Map<string, number>();
-  const afterEnd = (after: string | null) => {
-    if (!after) return { ready: true, at: now };
-    const id = after.replace(/^plan:/, '');
-    if (after.startsWith('plan:') || (planIds.has(id) && !runEnds.has(after)))
-      return planEnds.has(id)
-        ? { ready: true, at: planEnds.get(id)! }
-        : { ready: !planIds.has(id), at: now };
-    return { ready: true, at: runEnds.get(after) ?? now };
-  };
-  let waiting = order;
-  // Plans queued after a later plan wait for it; a cycle is placed as it stands.
-  for (let pass = 0; waiting.length && pass <= order.length; pass++) {
-    const next: OccupancyPlan[] = [];
-    for (const plan of waiting) {
-      const after = afterEnd(plan.after);
-      if (!after.ready && pass < order.length) {
-        next.push(plan);
-        continue;
-      }
-      const host = plan.host,
-        slotKey = host + '\u0000' + plan.slot,
-        gpus = plan.gpus?.length ? plan.gpus : (slotGpus.get(slotKey)?.gpus ?? null);
-      if (host) remember(host, null, gpus, now);
-      const start = Math.max(
-          now,
-          after.at,
-          freeAt(slotKey),
-          ...(gpus ?? []).map((gpu) => freeAt(host + '/' + gpu)),
-        ),
-        // A stated length, else the plan's config budget less where it starts.
-        budget = finite(configValue(plan.config, keys.budget)),
-        from = finite(configValue(plan.config, keys.start)) ?? plan.parentUpdate,
-        stated =
-          plan.updates ??
-          (budget !== null && from !== null && budget > from ? budget - from : null),
-        updates =
-          stated ??
-          median(recent(lengths.get(slotKey)).map((entry) => entry.length)) ??
-          median(recent(lengths.get(host)).map((entry) => entry.length)),
-        rate =
-          median(recent(rates.get(slotKey)).map((entry) => entry.rate)) ??
-          median(recent(rates.get(host)).map((entry) => entry.rate)),
-        length = updates !== null && rate !== null ? updates * rate : null,
-        end = start + (length ?? placeholderLength);
-      planEnds.set(plan.id, end);
-      if (host) {
-        for (const gpu of gpus ?? []) hold(host + '/' + gpu, end);
-        hold(slotKey, end);
-      }
-      bars.push({
-        id: 'plan:' + plan.id,
-        run: null,
-        plan: plan.id,
-        name: plan.name,
-        host,
-        slot: plan.slot,
-        gpus,
-        count: gpus?.length ?? null,
-        start,
-        end,
-        kind: 'planned',
-        state: 'planned',
-        verdict: null,
-        estimated: true,
-        unknownLength: length === null,
-        rows: [],
-        budget: updates,
-        rate,
-      });
-    }
-    waiting = next;
+  const projection = project({
+    now,
+    inventory,
+    busy,
+    queue: order,
+    readyAt,
+    length: (plan, host) => lengthOn(plan, host).length,
+    placeholder: placeholderLength,
+  });
+  const byPlan = new Map(order.map((plan) => [plan.id, plan]));
+  for (const placed of projection.placed) {
+    const plan = byPlan.get(placed.id)!;
+    remember(placed.host, null, placed.gpus, now);
+    bars.push(
+      planBar(plan, placed.host, placed.gpus, placed.start, placed.end, {
+        follows: placed.after,
+        unknownLength: placed.unknownLength,
+      }),
+    );
   }
+  const unfit = projection.unfit.map((item) => ({
+    ...item,
+    name: byPlan.get(item.id)?.name ?? item.id,
+  }));
 
   // Rows: GPU indices first, then packed rows for bars whose GPUs were not logged.
   const latest = new Map<string, number>();
@@ -419,11 +472,20 @@ export function occupancy(
     )
     .map((host) => {
       const ids = [...(gpuSets.get(host) ?? [])],
-        highest = ids.length ? Math.max(...ids) : -1;
+        highest = ids.length ? Math.max(...ids) : -1,
+        // A host in the inventory shows the GPUs it has (and any a run logged beside them);
+        // others show indices 0 to the highest seen.
+        listed = inventory.some((gpu) => gpu.host === host)
+          ? [...new Set(ids)].sort((a, b) => a - b)
+          : Array.from({ length: highest + 1 }, (_, gpu) => gpu);
+      const reserved = inventory
+        .filter((gpu) => gpu.host === host && !gpu.allowed)
+        .map((gpu) => gpu.gpu);
       return {
         host,
         model: models.get(host)?.model ?? '',
-        rows: Array.from({ length: highest + 1 }, (_, gpu) => ({ key: host + '/' + gpu, gpu })),
+        rows: listed.map((gpu) => ({ key: host + '/' + gpu, gpu })),
+        ...(reserved.length ? { reserved } : {}),
       };
     });
   const byHost = new Map(hosts.map((host) => [host.host, host]));
@@ -487,5 +549,5 @@ export function occupancy(
     groupLanes.set(key, Math.max(groupLanes.get(key) ?? 1, (bar.lane ?? 0) + 1));
   }
   for (const bar of placedBars) bar.lanes = groupLanes.get(root(owner(bar))) ?? 1;
-  return { now, hosts, bars, unplaced };
+  return { now, hosts, bars, unplaced, unfit };
 }

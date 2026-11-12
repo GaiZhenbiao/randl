@@ -113,7 +113,9 @@ try {
 
   await page.goto(`${origin}/test/names/plans`);
   await oneLine(page.locator('.recipe-tile'), 'Plans recipe');
-  await oneLine(page.locator('.plan-lanes'), 'Plans lane baseline');
+  // A queued plan's baseline, in its details.
+  await page.locator('.plan-row .queue-name', { hasText: 'v702_next' }).click();
+  await oneLine(page.locator('.queue-details'), 'Plans queue baseline');
   checks.push('Plans: the recipe and a plan’s baseline do too');
 
   await page.goto(`${origin}/test/names/findings?finding=long-holds`);

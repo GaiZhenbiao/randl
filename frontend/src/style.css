@@ -6844,70 +6844,14 @@ th.findings-col-citations .findings-sort {
   overflow-wrap: anywhere;
   color: var(--cds-text-02);
 }
+/* The Plans page's timeline grows to fit its rows; it scrolls only sideways, in time. */
+.plans-occupancy .occupancy-scroll {
+  overflow-y: hidden;
+}
 .plans-occupancy-help {
   margin-top: 8px;
   font-size: 12px;
   color: var(--cds-text-02);
-}
-/* Lanes: one per host slot, its running run first and its queue after it, left to right. */
-.plan-lanes {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--cds-ui-03);
-  border: 1px solid var(--cds-ui-03);
-}
-.plan-lane {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  background: var(--cds-ui-background);
-}
-.plan-lane-head {
-  padding: 16px;
-  background: var(--cds-ui-01);
-  font-size: 14px;
-}
-.plan-lane-head h3 {
-  font-size: 16px;
-  font-weight: 600;
-}
-.plan-lane-slot {
-  margin: 2px 0 8px;
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 13px;
-}
-.plan-lane-head > p + p {
-  margin-top: 4px;
-}
-.plan-lane-cards {
-  display: flex;
-  align-items: flex-start;
-  gap: 24px;
-  padding: 16px;
-  overflow-x: auto;
-}
-.plan-lane-cards > .plan-card {
-  position: relative;
-  flex: none;
-  width: 320px;
-  margin: 0;
-}
-/* An arrow from each card to the next in the lane. */
-.plan-lane-cards > .plan-card + .plan-card::before {
-  position: absolute;
-  top: 24px;
-  left: -20px;
-  width: 16px;
-  border-top: 1px solid var(--cds-text-02);
-  content: '';
-}
-.plan-lane-cards > .plan-card + .plan-card::after {
-  position: absolute;
-  top: 21px;
-  left: -10px;
-  border: 3px solid transparent;
-  border-left: 6px solid var(--cds-text-02);
-  content: '';
 }
 .plan-card-header {
   display: flex;
@@ -6973,12 +6917,6 @@ th.findings-col-citations .findings-sort {
     animation: none;
   }
 }
-.plan-idle {
-  display: flex;
-  align-items: center;
-  border-style: dashed;
-  background: transparent;
-}
 .plan-when {
   margin-bottom: 8px;
   font-size: 14px;
@@ -7023,22 +6961,12 @@ th.findings-col-citations .findings-sort {
   font-size: 12px;
 }
 @media (max-width: 800px) {
-  .recipe-layout,
-  .plan-lane {
+  .recipe-layout {
     grid-template-columns: minmax(0, 1fr);
   }
   .recipe-timeline li {
     grid-template-columns: minmax(0, 1fr);
   }
-  .plan-lane-cards > .plan-card {
-    width: min(320px, calc(100vw - 96px));
-  }
-}
-.plan-form-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  align-items: end;
-  gap: 8px;
 }
 @media (max-width: 672px) {
   .finding-citation-row,
@@ -7246,6 +7174,37 @@ th.findings-col-citations .findings-sort {
 .occupancy-row.unlogged {
   background: color-mix(in srgb, var(--cds-ui-03) 18%, transparent);
 }
+/* GPUs the inventory keeps out of plans. */
+.occupancy-row.reserved {
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--cds-ui-04) 22%, transparent) 0 4px,
+    transparent 4px 9px
+  );
+}
+.occupancy-row-label.reserved {
+  color: var(--cds-text-02);
+  text-decoration: line-through;
+}
+/* The projected order: lines from what holds GPUs to the plan that takes them next. */
+.occupancy-links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
+  overflow: visible;
+  pointer-events: none;
+}
+.occupancy-link,
+.occupancy-link-head {
+  fill: none;
+  stroke: #8a3ffc;
+  stroke-width: 1.5;
+}
+.occupancy-bar.kind-planned.claimed {
+  border-style: solid;
+  background: color-mix(in srgb, #8a3ffc 28%, var(--cds-ui-01));
+}
 .occupancy-day {
   position: absolute;
   top: 0;
@@ -7322,7 +7281,14 @@ th.findings-col-citations .findings-sort {
   color: var(--cds-text-01);
   border: 1px dashed var(--cds-text-02);
   border-left: 3px solid #8a3ffc;
-  background: color-mix(in srgb, #8a3ffc 12%, var(--cds-ui-01));
+  /* Projected: hatched over its tint. */
+  background:
+    repeating-linear-gradient(
+      -45deg,
+      color-mix(in srgb, #8a3ffc 16%, transparent) 0 4px,
+      transparent 4px 8px
+    ),
+    color-mix(in srgb, #8a3ffc 8%, var(--cds-ui-01));
 }
 .occupancy-bar.kind-planned.unknown-length {
   background: linear-gradient(
@@ -7507,28 +7473,601 @@ th.findings-col-citations .findings-sort {
   display: none;
 }
 
-/* Plan queues: waiting plans drag within and between lanes; a line marks where one lands. */
-.plan-lane-cards > .plan-card.status-planned {
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+/* The queue: one table for every host, its runs, claimed plans and waiting plans in groups,
+   each row with its GPU request and where and when the projection starts it. Above it, each
+   host's GPUs now. Waiting plans drag up and down; a line marks where one lands. */
+.gpu-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.gpu-host {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 180px;
+  padding: 10px 12px;
+  border: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.gpu-host.reserved {
+  opacity: 0.7;
+}
+.gpu-host-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+}
+.gpu-host-meta,
+.gpu-host-model {
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.gpu-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.gpu-cell {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 22px;
+  border: 1px solid var(--cds-ui-04);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--cds-text-01);
+}
+.gpu-cell.state-free {
+  border-color: #24a148;
+  background: color-mix(in srgb, #24a148 12%, transparent);
+}
+.gpu-cell.state-running {
+  border-color: var(--cds-interactive-04);
+  color: #fff;
+  background: var(--cds-interactive-04);
+}
+.gpu-cell.state-claimed {
+  border-color: #8a3ffc;
+  background: color-mix(in srgb, #8a3ffc 30%, transparent);
+}
+.gpu-cell.state-reserved {
+  color: var(--cds-text-02);
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--cds-ui-04) 35%, transparent) 0 3px,
+    transparent 3px 6px
+  );
+}
+.queue-group-head > th {
+  padding: 12px 12px 6px 16px;
+  border-top: 1px solid var(--cds-ui-03);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: none;
+  color: var(--cds-text-02);
+  background: var(--cds-ui-background);
+}
+.queue-table > tbody:first-of-type > .queue-group-head > th {
+  border-top: 0;
+}
+.plan-queue {
+  border: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.queue-gpus {
+  display: block;
+  font-size: 13px;
+}
+.queue-unfit {
+  display: block;
+  font-size: 13px;
+  color: var(--cds-text-error);
+}
+.queue-alongside {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+col.queue-col-pos {
+  width: 48px;
+}
+col.queue-col-run {
+  width: 24%;
+}
+col.queue-col-gpus {
+  width: 168px;
+}
+col.queue-col-when {
+  width: 232px;
+}
+col.queue-col-state {
+  width: 112px;
+}
+col.queue-col-actions {
+  width: 120px;
+}
+col.idea-col-priority {
+  width: 96px;
+}
+col.idea-col-waits {
+  width: 34%;
+}
+col.idea-col-actions {
+  width: 200px;
+}
+.queue-table th {
+  overflow: hidden;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cds-ui-03);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cds-text-02);
+}
+.queue-table td {
+  padding: 10px 12px;
+  border-top: 1px solid var(--cds-ui-03);
+  vertical-align: top;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.queue-table tbody > tr:first-child > td {
+  border-top: 0;
+}
+.queue-table th.queue-col-pos,
+.queue-table td.queue-col-pos {
+  padding-right: 0;
+  padding-left: 16px;
+}
+td.queue-col-pos .plan-live {
+  display: inline-block;
+  margin-top: 6px;
+}
+td.queue-col-pos .plan-position {
+  width: 22px;
+  height: 22px;
+  font-size: 12px;
+}
+.queue-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--cds-text-02);
+}
+.queue-run-name {
+  display: block;
+  min-width: 0;
+}
+.queue-progress {
+  display: block;
+  margin-top: 6px;
+}
+.queue-progress .bx--progress-bar__track {
+  min-width: 0;
+}
+.queue-purpose,
+.idea-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.queue-name {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: left;
+  color: var(--cds-text-01);
+  background: none;
+  cursor: pointer;
+}
+.queue-name > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.queue-name:hover > span {
+  text-decoration: underline;
+}
+.queue-name:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: 2px;
+}
+.queue-chevron {
+  flex: none;
+  margin-top: 2px;
+  fill: currentColor;
+  transition: transform 110ms;
+}
+.queue-name[aria-expanded='true'] .queue-chevron {
+  transform: rotate(90deg);
+}
+
+td.queue-col-when > span:first-child {
+  font-variant-numeric: tabular-nums;
+}
+td.queue-col-state .bx--tag {
+  margin: 0;
+}
+td.queue-col-actions,
+td.idea-col-actions {
+  padding: 4px 8px;
+  text-align: right;
+  white-space: nowrap;
+}
+.queue-running > td {
+  background: color-mix(in srgb, var(--cds-interactive-04) 6%, transparent);
+}
+.queue-running > td:first-child {
+  box-shadow: inset 3px 0 0 var(--cds-interactive-04);
+}
+.plan-row.status-started > td:first-child {
+  box-shadow: inset 3px 0 0 #8a3ffc;
+}
+.plan-row.status-planned {
   cursor: grab;
 }
-.plan-lane-cards > .plan-card.dragging {
+.plan-row.dragging {
   opacity: 0.4;
 }
-.plan-lane-cards > .plan-card.drop-before {
-  box-shadow: -4px 0 0 var(--cds-interactive-04);
+.plan-row.drop-before > td {
+  box-shadow: inset 0 2px 0 var(--cds-interactive-04);
 }
-.plan-lane-cards > .plan-card.drop-after {
-  box-shadow: 4px 0 0 var(--cds-interactive-04);
+.plan-row.drop-after > td {
+  box-shadow: inset 0 -2px 0 var(--cds-interactive-04);
 }
-.plan-lane-cards.drop-end {
-  box-shadow: inset 0 0 0 2px var(--cds-interactive-04);
+.queue-table tbody.drop-end {
+  outline: 2px solid var(--cds-interactive-04);
+  outline-offset: -2px;
 }
-.plan-lane-cards > .plan-card.status-started:not(.plan-running-card) {
-  border-left: 4px solid #8a3ffc;
+.queue-details-row > td {
+  padding-top: 0;
+  border-top: 0;
 }
-.plan-move {
-  display: inline-flex;
+.queue-details {
+  padding: 4px 0 8px;
+}
+.queue-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px 24px;
+}
+.queue-facts dt {
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.queue-facts dd {
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+.queue-details-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+/* Ideas: the backlog, by priority, with what each waits on and whether it is in. */
+.plan-ideas .plans-heading {
+  flex-wrap: wrap;
+}
+.plan-ideas .plans-heading > h2 {
+  margin-bottom: 0;
+}
+.plan-ideas .plans-heading > .bx--btn {
   margin-left: auto;
+}
+.plan-ideas > .queue-table {
+  border: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.idea-priority {
+  display: inline-block;
+  padding: 0 8px;
+  border: 1px solid var(--cds-ui-04);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+.idea-priority.priority-high {
+  border-color: #da1e28;
+  background: color-mix(in srgb, #da1e28 14%, transparent);
+}
+.idea-priority.priority-medium {
+  border-color: #ff832b;
+  background: color-mix(in srgb, #ff832b 14%, transparent);
+}
+.idea-links {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.idea-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 13px;
+}
+.idea-link-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.idea-link-state {
+  flex: none;
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.idea-link-icon {
+  flex: none;
+  fill: var(--cds-text-02);
+}
+.idea-link.met .idea-link-icon {
+  fill: var(--cds-support-02);
+}
+.idea-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.idea-link-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.idea-link-list li > .idea-link {
+  flex: 1;
+}
+/* Plan and idea editors: grouped sections on a 12-column grid, labels above inputs. */
+.plan-form {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.plan-form-section {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.plan-form-section > legend {
+  width: 100%;
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--cds-ui-03);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--cds-text-01);
+}
+.plan-form-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+.plan-form-grid > * {
+  min-width: 0;
+}
+.plan-form-grid > .span-2 {
+  grid-column: span 2;
+}
+.plan-form-grid > .span-3 {
+  grid-column: span 3;
+}
+.plan-form-grid > .span-4 {
+  grid-column: span 4;
+}
+.plan-form-grid > .span-5 {
+  grid-column: span 5;
+}
+.plan-form-grid > .span-6 {
+  grid-column: span 6;
+}
+.plan-form-grid > .span-8 {
+  grid-column: span 8;
+}
+.plan-form-grid > .span-12 {
+  grid-column: 1 / -1;
+}
+/* Run pickers take the same field colour as the text inputs beside them in a modal. */
+.plan-form .bx--list-box {
+  background-color: var(--cds-field-02);
+}
+.plan-form-grid .bx--form-item,
+.plan-form-grid .bx--select,
+.plan-form-grid .bx--list-box__wrapper {
+  width: 100%;
+}
+.plan-form-help {
+  margin-top: -8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--cds-text-02);
+}
+.plan-form-hosts {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.plan-form-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+}
+.plan-form-checks .bx--form-item {
+  flex: none;
+  width: auto;
+}
+.plan-form-help-beside {
+  align-self: end;
+  margin: 0 0 12px;
+}
+.plan-form-status {
+  display: flex;
+  flex-direction: column;
+}
+.plan-form-status > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  min-width: 0;
+}
+.plan-form-status .bx--tag {
+  flex: none;
+  margin: 0;
+}
+.plan-form-id {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cds-text-02);
+}
+.plan-form-note {
+  padding: 8px 12px;
+  border-left: 3px solid var(--cds-interactive-04);
+  font-size: 14px;
+  background: var(--cds-ui-02);
+}
+.plan-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cds-ui-03);
+}
+/* Phones: each queue or idea row stacks its cells; the editor goes to one column. */
+@media (max-width: 800px) {
+  .queue-table,
+  .queue-table > tbody,
+  .queue-table > tbody > tr,
+  .queue-table > tbody > tr > td {
+    display: block;
+  }
+  .queue-table > colgroup,
+  .queue-table > thead {
+    display: none;
+  }
+  .queue-table > tbody > tr.queue-row,
+  .queue-table > tbody > tr.idea-row {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'pos run state'
+      '. purpose purpose'
+      '. slot when'
+      '. actions actions';
+    gap: 4px 8px;
+    padding: 12px 12px 4px;
+    border-top: 1px solid var(--cds-ui-03);
+  }
+  .queue-table > tbody > tr:first-child {
+    border-top: 0;
+  }
+  .queue-table > tbody > tr > td {
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+  .queue-table > tbody > tr.queue-running {
+    background: color-mix(in srgb, var(--cds-interactive-04) 6%, transparent);
+    box-shadow: inset 3px 0 0 var(--cds-interactive-04);
+  }
+  .queue-table > tbody > tr > td.queue-col-pos,
+  .queue-table > tbody > tr > td.idea-col-priority {
+    grid-area: pos;
+    padding: 0;
+    box-shadow: none;
+  }
+  td.queue-col-run,
+  td.idea-col-idea {
+    grid-area: run;
+  }
+  td.queue-col-purpose,
+  td.idea-col-waits {
+    grid-area: purpose;
+  }
+  td.queue-col-gpus {
+    grid-area: slot;
+  }
+  .queue-table > tbody > tr.queue-group-head,
+  .queue-table > tbody > tr.queue-empty-row {
+    display: block;
+  }
+  .queue-table > tbody > tr.queue-group-head > th {
+    display: block;
+  }
+  td.queue-col-when {
+    grid-area: when;
+  }
+  td.queue-col-state {
+    grid-area: state;
+  }
+  .queue-table > tbody > tr > td.queue-col-actions,
+  .queue-table > tbody > tr > td.idea-col-actions {
+    grid-area: actions;
+    margin-left: -8px;
+    padding: 0;
+    text-align: left;
+  }
+  .queue-table > tbody > tr.idea-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'run pos'
+      'purpose purpose'
+      'actions actions';
+  }
+  .queue-table > tbody > tr.queue-details-row {
+    padding: 0 12px 12px 48px;
+  }
+  .queue-table > tbody > tr.queue-details-row > td:first-child {
+    display: none;
+  }
+}
+@media (max-width: 672px) {
+  .plan-form-grid > [class*='span-'] {
+    grid-column: 1 / -1;
+  }
+  .plan-form-grid > .span-2 {
+    grid-column: span 4;
+  }
 }
 /* Plan history: plans that are over, in a modal from the header rail. A searchable list by
    month beside the plan being read; on phones the list and the plan take turns. */

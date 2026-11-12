@@ -42,6 +42,36 @@ export function resultCount(
 export function filterChoice(item: { text?: string; id?: string }, value: string) {
   return [item.text, item.id].some((text) => matchScore(value, text ?? '', false) >= 0);
 }
+/**
+ * Where a plan runs: the host and GPUs it was given, else the GPUs it asks for (such as
+ * 2 GPUs ≥ 48 GB), and its queue position.
+ */
+export function planPlace(
+  plan: {
+    resources?: { gpus: number; min_memory_gb?: number | null; hosts?: string[] | null } | null;
+    allocation?: { host: string; gpus: number[]; released?: number | null } | null;
+    host?: string;
+    slot?: string;
+    queue: number | null;
+  },
+  t: Translator,
+) {
+  const given = plan.allocation && !plan.allocation.released ? plan.allocation : null,
+    request = plan.resources;
+  return [
+    given
+      ? t('plans.gpus.on', { host: given.host, gpus: given.gpus.join(', ') })
+      : request
+        ? t(request.min_memory_gb ? 'plans.gpus.requestMemory' : 'plans.gpus.request', {
+            count: request.gpus,
+            memory: request.min_memory_gb ?? 0,
+          }) + (request.hosts?.length ? ' · ' + request.hosts.join(', ') : '')
+        : [plan.host, plan.slot].filter(Boolean).join(' · '),
+    plan.queue === null ? '' : t('lineage.plan.queue', { position: plan.queue }),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
 export function statusLabel(value: string, t: Translator) {
   const names: Record<string, MessageKey> = {
     running: 'runs.state.running',

@@ -359,9 +359,9 @@ Beside the runs, each project keeps what was learned from them and what comes ne
   since when and why, with every earlier promotion kept. Its card on the Lineage page carries a
   star.
 - **Planned runs** (the **Plans** page): name, parent and update, what it changes, hypothesis,
-  config, baseline, stop or decision rule, its host, slot and queue position, and optionally
-  its GPUs and how many updates it trains. Queues show each slot's running runs and its
-  planned runs in order. Planned runs appear on the Lineage page
+  config, baseline, stop or decision rule, the GPUs it asks for and its queue position, and
+  optionally how many updates it trains. The queue shows the running runs and the planned
+  runs in the order they are taken. Planned runs appear on the Lineage page
   as dashed cards linked from their parent, and give way to the run that logs
   `lineage.plan` equal to the plan's ID (or has its name).
 - **Run journal** (a run's Overview tab and its Lineage panel): dated entries, optionally at an
@@ -388,13 +388,15 @@ randl findings save --project chuanhu/AeroSeeker_Forest --id wide-heads --topic 
   --title "Wider heads hold more boxes" --body-file finding.md --cite RUN@543000
 randl recipe set --project chuanhu/AeroSeeker_Forest --run RUN --reason "Best 5-audit mean"
 randl plans save --project chuanhu/AeroSeeker_Forest --id v660 --name v660_… \
-  --json '{"parent": "RUN", "host": "Sirius", "slot": "sirius_34", "queue": 1}'
+  --json '{"parent": "RUN", "resources": {"gpus": 2, "min_memory_gb": 48}, "queue": 1}'
 randl journal add --run RUN --update 554000 --text "Collisions fell after the LR drop."
 ```
 
 The tools are `finding_save`, `finding_get`, `finding_delete`, `findings_list`, `recipe_set`,
-`recipe_get`, `plan_save`, `plan_delete`, `plans_list`, `journal_add`, `journal_list`,
-`evidence_save`, `runs_compare` and `project_occupancy`. The Assistant is not given the ledger tools.
+`recipe_get`, `plan_save`, `plan_delete`, `plans_list`, `plan_queue`, `plan_claim`,
+`plan_move`, `gpus_save`, `gpus_list`, `gpus_delete`, `idea_save`, `idea_list`, `idea_delete`,
+`idea_promote`, `idea_from_plan`, `journal_add`, `journal_list`, `evidence_save`,
+`runs_compare` and `project_occupancy`. The Assistant is not given the ledger tools.
 
 ### Plans and GPU occupancy
 
@@ -402,62 +404,77 @@ The **Plans** page shows where the project stands and what runs next:
 
 - **Best recipe**: the current one, since when and why, beside every earlier promotion on a
   dated timeline.
-- **GPU occupancy**: one row per GPU, grouped by host (and one for runs that logged no GPU
-  indices), with a bar for each run that held it, running runs drawn up to now and on to their
-  estimated end, and planned runs where they should start. Runs that shared GPUs at the same
-  time split those rows into lanes, and the tooltip names them. It scrolls sideways through time; Ctrl+scroll (or a touchpad pinch) and the buttons
-  zoom, **Go to now** returns, and a bar opens its run or plan.
-- **Queues**: one lane per host slot, its live queue: the run occupying it (progress toward
-  its budget, estimated end and latest audit), any plan a supervisor has claimed, then the
-  waiting plans in order, each with its hypothesis, baseline, stop rule and estimated start.
-  Drag a waiting plan to reorder it or move it to another slot (or use **Move earlier** and
-  **Move later**). Lanes with work come first. **History** in the header lists the plans
-  that are over (done, stopped and cancelled) by month, to search, filter by status or slot,
-  and read with each plan's timeline.
+- **GPU occupancy**: one row per GPU, grouped by host (the GPUs the inventory lists, and
+  rows for runs that logged no GPU indices), with a bar for each run that held it, running
+  runs drawn up to now and on to their estimated end, plans claimed for GPUs, and the waiting
+  plans where the allocator would start them, hatched, with a line from the run or plan whose
+  GPUs each takes next. Reserved GPUs are struck through. Runs that shared GPUs at the same
+  time split those rows into lanes, and the tooltip names them. It scrolls sideways through
+  time; Ctrl+scroll (or a touchpad pinch) and the buttons zoom, **Go to now** returns, and a
+  bar opens its run or plan.
+- **Queue**: one for every host. Above it, each host's GPUs now (free, running, claimed or
+  reserved). Then the runs training now, the plans host agents have claimed GPUs for, and
+  the waiting plans in the order the allocator takes them, each with its GPU request, where
+  and when it is projected to start, how long it runs and what runs alongside it; a plan no
+  host can run says why. A row opens to its hypothesis, baseline, stop rule and starting
+  point. Drag a waiting plan up or down (or use **Move earlier** and **Move later**).
+  **History** in the header lists the plans that are over (done, stopped and cancelled) by
+  month, to search, filter by status, and read with each plan's timeline.
+- **Ideas**: the backlog of experiments not yet planned, by priority: each with its
+  hypothesis, evidence, prerequisites and the runs, plans and findings it waits on (marked
+  once they are in). **Promote** opens the plan editor on a plan made from the idea; the two
+  link to each other.
 
 Runs name their GPUs in their `lineage` block, logged when they start:
 
 ```python
-wandb.config.update({"lineage": {"compute": {"host": "Sirius", "gpu_count": 2, "segments": [
-    {"from_update": 543000, "to_update": None, "host": "Sirius", "gpu_count": 2,
-     "gpu_ids": [3, 4], "gpu_model": "RTX 4090 48GB", "slot": "sirius_34"}]}}})
+wandb.config.update({"lineage": {"plan": "v12", "compute": {"host": "gpu-a", "gpu_count": 2,
+    "segments": [{"from_update": 0, "to_update": None, "host": "gpu-a", "gpu_count": 2,
+                  "gpu_ids": [3, 4], "gpu_model": "RTX 4090 48GB"}]}}})
 ```
 
 A run that moves between hosts adds a segment per move; randl times each from the run's
 history. Runs that log no GPU indices get rows of their own under their host, and a running
-run that logs no compute block sits on the host and slot of the plan it carries out. Progress
-is the summary's `update` (**progressKey** in the lineage settings), counted toward the
-config's `rl.algorithm.total_updates` (**budgetKey**) from `rl.algorithm.start_update`
-(**startKey**), at the run's own pace. A plan starts once every GPU it needs is free and
-whatever it is queued `after` has ended; it uses its `gpus` (else those its slot last used)
-and trains its `updates` (else its config budget, else as long as runs on its slot usually
-do), at the pace of the slot's recent runs. `project_occupancy` returns the timeline.
+run that logs no compute block sits on the GPUs its plan's claim was given. Progress is the
+summary's `update` (**progressKey** in the lineage settings), counted toward the config's
+`rl.algorithm.total_updates` (**budgetKey**) from `rl.algorithm.start_update` (**startKey**),
+at the run's own pace. A plan trains its `updates` (else its config budget, else as long as
+runs on that host and number of GPUs usually do), at their recent pace.
+`project_occupancy` returns the timeline, with the plans that fit no host as `unfit`.
 
 #### Plans as the training queue
 
-Training supervisors take their work from randl. A plan is **planned** while it waits,
-**started** once a supervisor claims it or a run logs `lineage.plan` equal to its ID, **done**
-when that run finishes and **stopped** when it is stopped, crashes or fails; people and agents
-set **cancelled** (or back to planned). randl keeps these statuses itself, with each change
-recorded on the plan. A plan with a `resume_run` binds only to a run logging its ID, never by
-name or by that run's earlier state; the resumed run logs the new plan's ID, and the earlier
-plan keeps how it ended.
+Each project lists its hosts' GPUs (`gpus_save`, `gpus_list`): each GPU's index in PCI order,
+model and memory, and whether plans may use it. A plan asks for GPUs (`resources`): how many,
+on one host, with at least `min_memory_gb` each, of a `model`, on one of `hosts` (else any).
+Host agents take their work from randl: an agent reports the GPUs it sees free, and
+`plan_claim` gives them to the first waiting plan in queue order (queue position, then the
+`after` chain, then creation) whose request fits, with the plan's `config_yaml` exactly as
+saved, any `resume_run`, and the GPU ids to launch on. A later plan may take GPUs the head of
+the queue cannot use yet, unless the head has waited over six hours and the host could run
+it: then the host holds its GPUs for the head. Two agents never take the same plan or GPU.
 
 ```sh
+randl gpus save --project team/navigation --host gpu-a --gpus 0,1,2,3 --model 'RTX 4090' --memory-gb 48
+randl gpus save --project team/navigation --host gpu-b --gpus 0,1 --model H100 --memory-gb 80 --reserved
 randl plans save --project team/navigation --id v12 --name v12_wider_floor \
-  --json '{"host": "gpu-a", "slot": "gpu-a_01", "queue": 1, "updates": 25000}' \
+  --json '{"resources": {"gpus": 2, "min_memory_gb": 48}, "queue": 1, "updates": 25000}' \
   --config-yaml-file configs/v12.yaml
-randl plans queue --project team/navigation --slot gpu-a_01 --host gpu-a
-randl plans claim --project team/navigation --slot gpu-a_01 --by gpu-a-supervisor --host gpu-a
+randl plans claim --project team/navigation --host gpu-a --free-gpus 0,1,2,3 --by gpu-a-agent
 randl plans move --project team/navigation --id v12 --before v11
+randl ideas from-plan --project team/navigation --plan v14 --priority high
+randl ideas promote --project team/navigation --id v14 --json '{"resources": {"gpus": 1}}'
 ```
 
-`plan_claim` takes the head of the slot's queue (queue position, then the `after` chain, then
-creation) and returns the plan to launch, with its `config_yaml` exactly as saved and any
-`resume_run`; the launched run logs `lineage.plan` with the plan's ID. Two supervisors never
-take the same plan; while a claim waits for its run, the same supervisor gets it again and
-others are refused, and a claim whose run has not logged within 30 minutes returns the plan to
-the queue. `plan_move` reorders a waiting plan or moves it to another slot.
+A plan is **planned** while it waits, **started** once an agent claims it or a run logs
+`lineage.plan` equal to its ID, **done** when that run finishes and **stopped** when it is
+stopped, crashes or fails; people and agents set **cancelled** (or back to planned). Its GPUs
+are released when its run ends, when a claim's run has not logged within 30 minutes (the plan
+waits again), or when it is set back to planned. While a claim waits for its run, the same
+agent reporting those GPUs free gets it again. A plan with a `resume_run` binds only to a run
+logging its ID, never by name or by that run's earlier state; the resumed run logs the new
+plan's ID, and the earlier plan keeps how it ended. Plans saved with a host and slot before
+GPU requests ask for as many GPUs as that slot last ran on, on that host.
 
 ### Project overview and server status
 

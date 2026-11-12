@@ -43,8 +43,13 @@ const plan = (id, fields) => ({
   created: 0,
   parentUpdate: null,
   config: null,
+  since: 0,
+  request: { gpus: 1, ...fields.request },
   ...fields,
 });
+// The GPUs a host has, in the inventory.
+const gpus = (host, ids, memory = 24, allowed = true) =>
+  ids.map((gpu) => ({ host, gpu, model: 'GPU', memory_gb: memory, allowed }));
 
 test('finished, running and planned bars sit on the GPUs they use', () => {
   const runs = [
@@ -80,11 +85,11 @@ test('finished, running and planned bars sit on the GPUs they use', () => {
     run('lost', { state: 'running', start: 99 * hour }),
   ];
   const plans = [
-    plan('next', { host: 'alpha', slot: 'a', queue: 1, updates: 200 }),
-    plan('then', { host: 'alpha', slot: 'a', queue: 2 }),
-    plan('wide', { host: 'alpha', slot: 'b', gpus: [0, 1], queue: 3, updates: 100 }),
+    plan('next', { request: { gpus: 2, hosts: ['alpha'] }, queue: 1, updates: 200 }),
+    plan('then', { request: { gpus: 2 }, queue: 2 }),
+    plan('wide', { request: { gpus: 3 }, queue: 3, updates: 100 }),
   ];
-  const result = occupancy(runs, plans, now);
+  const result = occupancy(runs, plans, now, undefined, gpus('alpha', [0, 1, 2]));
   assert.deepEqual(
     result.hosts.map((host) => [host.host, host.model, host.rows.map((row) => row.gpu)]),
     [['alpha', 'GPU 24GB', [0, 1, 2]]],
@@ -100,18 +105,21 @@ test('finished, running and planned bars sit on the GPUs they use', () => {
   assert.ok(remaining.estimated);
   assert.equal(remaining.end, now + 5 * hour);
   assert.equal(remaining.rate, 36);
-  // The slot's GPUs come from its last run; it starts when the running run ends and runs
-  // 200 updates at the slot's 36 s per update.
-  assert.deepEqual(bar('plan:next').gpus, [1, 2]);
+  // Two GPUs come free when the running run ends; next takes them and runs 200 updates at
+  // the 36 s per update two GPUs on alpha have run at, after the run it follows.
+  assert.deepEqual(bar('plan:next').gpus, [0, 1]);
   assert.equal(bar('plan:next').start, now + 5 * hour);
   assert.equal(bar('plan:next').end, now + 5 * hour + 200 * 36);
-  // No stated length: as long as runs on this slot usually go (1000 updates).
+  assert.deepEqual(bar('plan:next').follows, ['live']);
+  // No stated length: as long as two-GPU runs here usually go (1000 updates).
   assert.equal(bar('plan:then').start, bar('plan:next').end);
   assert.equal(bar('plan:then').end - bar('plan:then').start, 1000 * 36);
   assert.equal(bar('plan:then').unknownLength, false);
-  // Slot b shares GPU 1 with slot a, so it waits for the plans ahead of it there.
+  assert.deepEqual(bar('plan:then').follows, ['plan:next']);
+  // Three GPUs only once all of alpha is free.
   assert.equal(bar('plan:wide').start, bar('plan:then').end);
-  assert.deepEqual(bar('plan:wide').rows, ['alpha/0', 'alpha/1']);
+  assert.deepEqual(bar('plan:wide').rows, ['alpha/0', 'alpha/1', 'alpha/2']);
+  assert.deepEqual(result.unfit, []);
 });
 
 test('plans queued after a run or a later plan wait for it; unknown lengths are placeholders', () => {
@@ -127,10 +135,13 @@ test('plans queued after a run or a later plan wait for it; unknown lengths are 
   ];
   const plans = [
     // Queued after a plan listed later, which is queued after the running run.
-    plan('second', { host: 'gamma', slot: 'x', gpus: [3], after: 'plan:first', queue: 1 }),
-    plan('first', { host: 'gamma', slot: 'y', gpus: [4], after: 'live', queue: 2 }),
+    plan('second', { request: { gpus: 1, hosts: ['gamma'] }, after: 'plan:first', queue: 1 }),
+    plan('first', { request: { gpus: 1, hosts: ['gamma'] }, after: 'live', queue: 2 }),
   ];
-  const result = occupancy(runs, plans, now);
+  const result = occupancy(runs, plans, now, undefined, [
+    ...gpus('beta', [0]),
+    ...gpus('gamma', [3, 4]),
+  ]);
   const bar = (id) => result.bars.find((item) => item.id === id);
   const liveEnd = now + 300 * ((2 * hour) / 100);
   assert.equal(bar('live#0:remaining').end, liveEnd);
@@ -143,7 +154,8 @@ test('plans queued after a run or a later plan wait for it; unknown lengths are 
     result.hosts.map((host) => [host.host, host.rows.length]),
     [
       ['beta', 1],
-      ['gamma', 5],
+      // Its two GPUs in the inventory, not indices 0 to 4.
+      ['gamma', 2],
     ],
   );
 });
@@ -167,7 +179,13 @@ test('a running run without a compute block sits where its plan put it, or still
     // No compute and no plan: unplaced, but it ends in 2 h (100 of 200 updates in 2 h).
     run('loose', { state: 'running', start: 98 * hour, progress: 100, budget: 200, from: 0 }),
   ];
-  const result = occupancy(runs, [plan('behind', { host: 'k', gpus: [0], after: 'loose' })], now);
+  const result = occupancy(
+    runs,
+    [plan('behind', { request: { gpus: 1, hosts: ['k'] }, after: 'loose' })],
+    now,
+    undefined,
+    gpus('k', [0]),
+  );
   const bar = (id) => result.bars.find((item) => item.id === id);
   assert.deepEqual(bar('placed#0').rows, ['h/3', 'h/4']);
   assert.ok(bar('placed#0').inferred);
@@ -337,6 +355,7 @@ test('project_occupancy reads compute blocks, settings, history times and open p
     state: 'finished',
     config: { lineage: { value: { plan: 'p-done' } } },
   });
+  await call('gpus_save', { project: 'e/p', host: 'k', gpus: [2, 3], memory_gb: 24 });
   await call('plan_save', { project: 'e/p', id: 'p-open', name: 'v3', host: 'k', slot: 't' });
   await call('plan_save', { project: 'e/p', id: 'p-done', name: 'v2-plan', host: 'k', slot: 't' });
   await call('plan_save', { project: 'e/p', id: 'p-off', host: 'k', status: 'cancelled' });

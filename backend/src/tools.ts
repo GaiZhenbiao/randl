@@ -56,6 +56,52 @@ const source = schema(
   ['document'],
 );
 const dryRun = { type: 'boolean' };
+/** A plan's GPU request: how many GPUs on one host, and of what kind. */
+const gpuRequest = schema(
+  {
+    gpus: { type: 'integer', minimum: 1, maximum: 64 },
+    min_memory_gb: orNull({ type: 'number', minimum: 0 }),
+    model: orNull({ type: 'string', maxLength: 200 }),
+    hosts: orNull({ type: 'array', items: { type: 'string', minLength: 1, maxLength: 200 }, maxItems: 64 }),
+    same_host: { type: 'boolean', enum: [true] },
+  },
+  ['gpus'],
+);
+/** A planned run's fields, as plan_save and idea_promote take them. */
+const planFields = {
+  name: { type: 'string', minLength: 1, maxLength: 256 },
+  parent: orNull({ type: 'string' }),
+  parentUpdate: orNull({ type: 'number' }),
+  hypothesis: { type: 'string', maxLength: 20000 },
+  change: { type: 'string', maxLength: 2000 },
+  config: orNull({ type: 'object' }),
+  baseline: orNull({ type: 'string' }),
+  rule: { type: 'string', maxLength: 5000 },
+  host: { type: 'string', maxLength: 200 },
+  slot: { type: 'string', maxLength: 200 },
+  queue: orNull({ type: 'integer' }),
+  after: orNull({ type: 'string', maxLength: 512 }),
+  config_yaml: orNull({ type: 'string', maxLength: 1000000 }),
+  resume_run: orNull({ type: 'string', maxLength: 512 }),
+  gpus: orNull({
+    type: 'array',
+    items: { type: 'integer', minimum: 0, maximum: 1023 },
+    maxItems: 64,
+    uniqueItems: true,
+  }),
+  updates: orNull({ type: 'number', exclusiveMinimum: 0 }),
+  resources: orNull(gpuRequest),
+};
+/** The runs, plans and findings an idea waits on. */
+const ideaLinks = {
+  type: 'array',
+  maxItems: 100,
+  items: schema(
+    { kind: { type: 'string', enum: ['run', 'plan', 'finding'] }, id: { type: 'string', minLength: 1, maxLength: 512 } },
+    ['kind', 'id'],
+  ),
+};
+const ideaPriority = { type: 'string', enum: ['high', 'medium', 'low'] };
 /** Seconds since the epoch or an ISO date. */
 const when = { anyOf: [{ type: 'number' }, { type: 'string', maxLength: 64 }] };
 /** A metric key a rename may use; `_` keys belong to the SDK. */
@@ -523,27 +569,7 @@ export const toolCatalog = [
       {
         project: string,
         id: ledgerId,
-        name: { type: 'string', minLength: 1, maxLength: 256 },
-        parent: orNull({ type: 'string' }),
-        parentUpdate: orNull({ type: 'number' }),
-        hypothesis: { type: 'string', maxLength: 20000 },
-        change: { type: 'string', maxLength: 2000 },
-        config: orNull({ type: 'object' }),
-        baseline: orNull({ type: 'string' }),
-        rule: { type: 'string', maxLength: 5000 },
-        host: { type: 'string', maxLength: 200 },
-        slot: { type: 'string', maxLength: 200 },
-        queue: orNull({ type: 'integer' }),
-        after: orNull({ type: 'string', maxLength: 512 }),
-        config_yaml: orNull({ type: 'string', maxLength: 1000000 }),
-        resume_run: orNull({ type: 'string', maxLength: 512 }),
-        gpus: orNull({
-          type: 'array',
-          items: { type: 'integer', minimum: 0, maximum: 1023 },
-          maxItems: 64,
-          uniqueItems: true,
-        }),
-        updates: orNull({ type: 'number', exclusiveMinimum: 0 }),
+        ...planFields,
         status: { type: 'string', enum: ['planned', 'cancelled'] },
         source,
         dryRun,
@@ -555,37 +581,158 @@ export const toolCatalog = [
   {
     name: 'plan_queue',
     description:
-      "A slot's waiting plans in the order supervisors take them: queue position, then the after chain, then creation. host narrows to one host's slot of that name.",
+      "The project's waiting plans in the order host agents take them, one queue for every host: queue position, then the after chain, then creation. Each plan carries its position and resources (its GPU request). Returns {project, plans}.",
     agent: false,
-    parameters: schema({ project: string, slot: string, host: string }, ['project', 'slot']),
+    parameters: schema({ project: string }, ['project']),
   },
   {
     name: 'plan_claim',
     description:
-      "Take the head of a slot's queue for a training supervisor (with host, only that host's plans and plans naming no host): marks the plan started with the claim (by, host, time) and returns {status: 'claimed', plan: {id, name, config_yaml, config, resume_run, updates, gpus, parent, parentUpdate, host, slot}, claim}, or {status: 'empty', plan: null}. The launched run should log lineage.plan = plan.id; a claim whose run has not logged after 30 minutes returns the plan to the queue. While a claim waits for its run, the same by and host get it again (repeat: true) and others are refused (PLAN_CLAIM_PENDING).",
+      "A host agent's request for work: given the host and the GPU ids (PCI order) it sees free, randl picks the first waiting plan in queue order whose GPU request fits those GPUs (count, minimum memory, model, hosts from gpus_save's inventory; reserved GPUs never), allocates specific GPUs and marks the plan started. A later plan may take GPUs the head cannot use yet, unless the head has waited over six hours and this host could run it (status 'held'). Returns {status: 'claimed', plan: {id, name, config_yaml, config, resume_run, updates, parent, parentUpdate, resources, host, gpu_ids}, gpu_ids, host, allocation: {host, gpus, at, by}, claim}, {status: 'empty', plan: null, waiting, free_gpus} or {status: 'held', plan: null, head, free_gpus}. Launch with those GPUs and log lineage.plan = plan.id; the GPUs are released when the run ends, when the claim lapses after 30 minutes without the run logging, or when plan_save sets the plan back to planned. The same agent asking again while its claim waits for its run, with those GPUs still free, gets the same claim (repeat: true).",
     agent: false,
     parameters: schema(
-      { project: string, slot: string, by: author, host: string, dryRun },
-      ['project', 'slot', 'by'],
+      {
+        project: string,
+        host: { type: 'string', minLength: 1, maxLength: 200 },
+        free_gpus: {
+          type: 'array',
+          items: { type: 'integer', minimum: 0, maximum: 1023 },
+          maxItems: 64,
+          uniqueItems: true,
+        },
+        by: author,
+        dryRun,
+      },
+      ['project', 'host', 'free_gpus', 'by'],
     ),
   },
   {
     name: 'plan_move',
     description:
-      "Move a waiting plan within its slot's queue or to another slot (slot, and host when that slot is on another host), before or after another waiting plan of that slot, else to its end; both queues are renumbered 1, 2, …",
+      'Move a waiting plan in the queue: before or after another waiting plan, else to its end; the queue is renumbered 1, 2, …',
+    agent: false,
+    parameters: schema(
+      { project: string, id: ledgerId, before: ledgerId, after: ledgerId, by: author, dryRun },
+      ['project', 'id'],
+    ),
+  },
+  {
+    name: 'gpus_list',
+    description:
+      "The project's GPU inventory by host: each GPU's id (PCI order), model, memory_gb, allowed (false: kept out of allocation) and note, with its holder now (the plan claimed for it, and its run once running).",
+    agent: false,
+    parameters: schema({ project: string }, ['project']),
+  },
+  {
+    name: 'gpus_save',
+    description:
+      "Add or update GPUs of one host in the project's inventory: gpus lists their ids (PCI order) and the rest applies to each. allowed false keeps them out of allocation (listed, but never given to a plan). With replace, the host's other GPUs are removed. Omitted fields keep their value.",
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        host: { type: 'string', minLength: 1, maxLength: 200 },
+        gpus: {
+          type: 'array',
+          items: { type: 'integer', minimum: 0, maximum: 1023 },
+          minItems: 1,
+          maxItems: 64,
+          uniqueItems: true,
+        },
+        model: { type: 'string', maxLength: 200 },
+        memory_gb: orNull({ type: 'number', minimum: 0 }),
+        allowed: { type: 'boolean' },
+        note: { type: 'string', maxLength: 500 },
+        replace: { type: 'boolean' },
+        by: author,
+        dryRun,
+      },
+      ['project', 'host', 'gpus'],
+    ),
+  },
+  {
+    name: 'gpus_delete',
+    description: "Remove GPUs of a host from the inventory (all of the host's when gpus is omitted).",
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        host: { type: 'string', minLength: 1, maxLength: 200 },
+        gpus: { type: 'array', items: { type: 'integer', minimum: 0, maximum: 1023 }, maxItems: 64 },
+        by: author,
+      },
+      ['project', 'host'],
+    ),
+  },
+  {
+    name: 'idea_list',
+    description:
+      "A project's ideas, the backlog of experiments not yet planned: open first, then by priority (high, medium, low), then latest changed. Each has title, hypothesis, evidence (why it is worth running), prerequisites (in words), waits_on (runs, plans and findings it waits on), priority, status (open, promoted, dropped), plan (the plan made from it) and draft (plan fields kept for its plan). status narrows the list.",
+    agent: false,
+    parameters: schema(
+      { project: string, status: { type: 'string', enum: ['open', 'promoted', 'dropped'] } },
+      ['project'],
+    ),
+  },
+  {
+    name: 'idea_save',
+    description:
+      'Create or update an idea by its id. Callers set status open or dropped; idea_promote makes it promoted. draft holds plan fields to use when it is promoted. Omitted fields keep their value.',
     agent: false,
     parameters: schema(
       {
         project: string,
         id: ledgerId,
-        slot: string,
-        host: string,
-        before: ledgerId,
-        after: ledgerId,
-        by: author,
+        title: { type: 'string', minLength: 1, maxLength: 500 },
+        hypothesis: { type: 'string', maxLength: 20000 },
+        evidence: { type: 'string', maxLength: 20000 },
+        prerequisites: { type: 'string', maxLength: 5000 },
+        waits_on: ideaLinks,
+        priority: ideaPriority,
+        status: { type: 'string', enum: ['open', 'dropped'] },
+        draft: orNull({ type: 'object' }),
+        source,
         dryRun,
+        by: author,
       },
       ['project', 'id'],
+    ),
+  },
+  {
+    name: 'idea_delete',
+    description: 'Delete an idea.',
+    agent: false,
+    parameters: schema({ project: string, id: ledgerId, by: author }, ['project', 'id']),
+  },
+  {
+    name: 'idea_promote',
+    description:
+      "Make a planned run from an idea: its draft's plan fields, then its hypothesis and source, then the plan fields given here (host, slot or pool, queue, name, change, rule, config_yaml, …). plan is the new plan's id (default: the plan the idea was made from, else the idea's id). The plan links to the idea (plan.idea) and the idea becomes promoted with plan set. Promoting again to the same plan changes nothing; IDEA_PLAN_EXISTS when that plan id is taken.",
+    agent: false,
+    parameters: schema(
+      { project: string, id: ledgerId, plan: ledgerId, ...planFields, dryRun, by: author },
+      ['project', 'id'],
+    ),
+  },
+  {
+    name: 'idea_from_plan',
+    description:
+      "Turn a waiting or cancelled plan into an idea and remove the plan, in one step. The idea (id, default the plan's id) takes the plan's name as title (or title), its hypothesis and source, what it was queued after as waits_on, and keeps the plan's fields as draft, so idea_promote restores them. A cancelled plan becomes a dropped idea. Plans queued after it are queued after what it was queued after. Repeating it after the plan is gone changes nothing.",
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        plan: ledgerId,
+        id: ledgerId,
+        title: { type: 'string', minLength: 1, maxLength: 500 },
+        evidence: { type: 'string', maxLength: 20000 },
+        prerequisites: { type: 'string', maxLength: 5000 },
+        waits_on: ideaLinks,
+        priority: ideaPriority,
+        dryRun,
+        by: author,
+      },
+      ['project', 'plan'],
     ),
   },
   {
@@ -939,12 +1086,37 @@ export class Tools {
       case 'plan_queue':
         await this.db.call('projectGet', a.project);
         return this.db.call('planQueue', a);
+      case 'gpus_list':
+      case 'idea_list':
+        await this.db.call('projectGet', a.project);
+        return this.db.call(name === 'gpus_list' ? 'gpusList' : 'ideaList', a);
+      case 'gpus_save':
+      case 'gpus_delete':
+      case 'idea_save':
+      case 'idea_delete':
+      case 'idea_promote':
+      case 'idea_from_plan':
+        await this.db.call('projectGet', a.project);
+        result = await this.db.call(
+          {
+            gpus_save: 'gpusSave',
+            gpus_delete: 'gpusDelete',
+            idea_save: 'ideaSave',
+            idea_delete: 'ideaDelete',
+            idea_promote: 'ideaPromote',
+            idea_from_plan: 'ideaFromPlan',
+          }[name]!,
+          a,
+        );
+        // A dry run or a repeat changes nothing, so it is not audited.
+        if (a.dryRun || result.status === 'unchanged') return result;
+        break;
       case 'plan_claim':
       case 'plan_move':
         await this.db.call('projectGet', a.project);
         result = await this.db.call(name === 'plan_claim' ? 'planClaim' : 'planMove', a);
-        // A dry run, an empty queue or a repeated claim changes nothing.
-        if (a.dryRun || result.status === 'empty' || result.repeat) return result;
+        // A dry run, an empty queue, a hold or a repeated claim changes nothing.
+        if (a.dryRun || ['empty', 'held'].includes(result.status) || result.repeat) return result;
         break;
       case 'project_occupancy':
         await this.db.call('projectGet', a.project);

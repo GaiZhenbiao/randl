@@ -1,11 +1,13 @@
 <script lang="ts">
-  // A project's current state (README "Experiment ledger"): the best recipe and how it got
-  // there, the GPUs of each host over time (the `gpu-occupancy` panel), and one lane per host
-  // slot with the run occupying it and the planned runs queued behind it.
+  // A project's current state (README "Plans and GPU occupancy"): the best recipe and how it
+  // got there, the GPUs of each host over time with the queue's projected future (the
+  // `gpu-occupancy` panel), the queue every host takes plans from, and the ideas not yet
+  // planned (PlanIdeas.svelte).
   import RunName from './RunName.svelte';
   import { onMount, tick } from 'svelte';
   import {
     Button,
+    Checkbox,
     InlineNotification,
     Modal,
     ProgressBar,
@@ -19,7 +21,10 @@
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Edit from 'carbon-icons-svelte/lib/Edit.svelte';
   import ArrowLeft from 'carbon-icons-svelte/lib/ArrowLeft.svelte';
-  import ArrowRight from 'carbon-icons-svelte/lib/ArrowRight.svelte';
+  import ArrowUp from 'carbon-icons-svelte/lib/ArrowUp.svelte';
+  import ArrowDown from 'carbon-icons-svelte/lib/ArrowDown.svelte';
+  import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
+  import PlanIdeas from './PlanIdeas.svelte';
   import StarFilled from 'carbon-icons-svelte/lib/StarFilled.svelte';
   import RecentlyViewed from 'carbon-icons-svelte/lib/RecentlyViewed.svelte';
   import Choice from './Choice.svelte';
@@ -32,7 +37,7 @@
   import { t, number, date, locale, type Message, type MessageKey } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL } from './ui';
   import type { OpenTarget, Plugin, Run } from './types';
-  import type { Plan, RecipeEvent } from './lineage-graph';
+  import type { GpuRequest, Idea, InventoryGpu, Plan, RecipeEvent } from './lineage-graph';
   import type { OccupancyData } from './plugins/occupancy';
 
   let {
@@ -62,6 +67,9 @@
     recipe = $state<{ current: RecipeEvent | null; history: RecipeEvent[] } | null>(null),
     occupants = $state<{ id: string; host: string; slot: string; name: string }[]>([]),
     occupancy = $state<Occupancy | null>(null),
+    inventory = $state<{ host: string; gpus: InventoryGpu[] }[]>([]),
+    ideas = $state<Idea[] | null>(null),
+    findings = $state<{ id: string; title: string; status: string }[]>([]),
     error = $state<Message>(''),
     // Reloads the timeline panel after a change here.
     refresh = $state(0);
@@ -69,12 +77,22 @@
 
   async function load() {
     try {
-      const [planned, best, timeline] = await Promise.all([
+      const [planned, best, timeline, backlog, notes, gpus] = await Promise.all([
         tool('plans_list', { project }),
         tool('recipe_get', { project }),
         tool('project_occupancy', { project }),
+        tool('idea_list', { project }),
+        tool('findings_list', { project }),
+        tool('gpus_list', { project }),
       ]);
       plans = planned.plans;
+      inventory = gpus.hosts;
+      ideas = backlog.ideas;
+      findings = notes.findings.map((finding: { id: string; title: string; status: string }) => ({
+        id: finding.id,
+        title: finding.title,
+        status: finding.status,
+      }));
       recipe = best;
       occupants = planned.running;
       occupancy = timeline;
@@ -96,12 +114,47 @@
     return () => clearInterval(timer);
   });
 
-  // The timeline panel: hosts' GPU rows, at least 280 px and at most 640 px tall.
+  // The timeline panel is as tall as its rows (every host's GPUs, overlap lanes and rows for
+  // runs that logged no GPUs), at least 280 px: the page scrolls, the panel only sideways.
+  // An estimate first, then the panel grows by whatever its drawn rows still overflow.
   let occupancyPlugin = $derived(plugins.find((plugin) => plugin.id === 'gpu-occupancy'));
+  let occupancyBox = $state<HTMLElement>(),
+    fittedHeight = $state<number | null>(null);
   let timelineHeight = $derived.by(() => {
+    if (fittedHeight !== null) return fittedHeight;
     const rows = occupancy?.hosts.reduce((sum, host) => sum + host.rows.length, 0) ?? 8,
       hosts = occupancy?.hosts.length ?? 3;
-    return Math.min(640, Math.max(280, 34 + hosts * 30 + rows * 26 + 140));
+    return Math.max(280, 34 + hosts * 30 + rows * 26 + 140);
+  });
+  $effect(() => {
+    const box = occupancyBox;
+    if (!box) return;
+    let watched: Element | null = null;
+    const fit = () => {
+      const panel = box.querySelector<HTMLElement>('[data-panel-id="plans-occupancy"]'),
+        scroller = box.querySelector<HTMLElement>('.occupancy-scroll'),
+        content = box.querySelector<HTMLElement>('.occupancy-content');
+      if (!panel || !scroller || !content) return;
+      const next = Math.max(
+        280,
+        Math.ceil(panel.offsetHeight + content.offsetHeight - scroller.clientHeight),
+      );
+      if (Math.abs(next - panel.offsetHeight) > 1) fittedHeight = next;
+    };
+    const sizes = new ResizeObserver(fit),
+      changes = new MutationObserver(() => {
+        const content = box.querySelector('.occupancy-content');
+        if (content && content !== watched) {
+          watched = content;
+          sizes.observe(content);
+        }
+        fit();
+      });
+    changes.observe(box, { childList: true, subtree: true });
+    return () => {
+      sizes.disconnect();
+      changes.disconnect();
+    };
   });
   function open(target: OpenTarget) {
     if ('run' in target) {
@@ -119,79 +172,40 @@
     edit(plan);
   }
 
-  // Lanes: host, then slot; the run occupying it, then its planned runs by queue position.
+  // The queue: one for every host. The runs training now, the plans host agents have claimed
+  // GPUs for, then the waiting plans in the order the allocator takes them, each with its GPU
+  // request and where and when the projection (the timeline's future) starts it.
   type Running = { id: string; name: string; bar: Bar | null; estimate: Bar | null };
-  type Lane = {
-    host: string;
-    slot: string;
-    gpus: number[] | null;
-    model: string;
-    running: Running[];
-    /** Claimed by a supervisor, its run not logged yet. */
-    claimed: Plan[];
-    /** Waiting, in queue order. */
-    planned: Plan[];
-  };
   const laneKey = (host: string, slot: string) => host + '\u0000' + slot;
-  // The lanes, and the plans that are over (done, stopped, cancelled, and started plans whose
-  // run is not running in a lane), which the history shows.
+  // The queue, and the plans that are over (done, stopped, cancelled, and started plans whose
+  // run is not running), which the history shows.
   let board = $derived.by(() => {
-    const groups = new Map<string, Lane>(),
+    const running: Running[] = [],
+      claimed: Plan[] = [],
+      waiting: Plan[] = [],
       past: Plan[] = [];
-    const group = (host: string, slot: string) => {
-      const key = laneKey(host, slot);
-      let entry = groups.get(key);
-      if (!entry)
-        groups.set(
-          key,
-          (entry = {
-            host,
-            slot,
-            gpus: null,
-            model: occupancy?.hosts.find((item) => item.host === host)?.model ?? '',
-            running: [],
-            claimed: [],
-            planned: [],
-          }),
-        );
-      return entry;
-    };
-    // Running runs where the timeline puts them (their compute block, else their plan's slot).
     const bars = occupancy?.bars ?? [];
     if (occupancy)
-      for (const bar of bars.filter((item) => item.kind === 'running' && item.run)) {
-        const lane = group(bar.host, bar.slot);
-        lane.running.push({
+      for (const bar of bars.filter((item) => item.kind === 'running' && item.run))
+        running.push({
           id: bar.run!,
           name: bar.name,
           bar,
           estimate: bars.find((item) => item.run === bar.run && item.kind === 'remaining') ?? null,
         });
-        lane.gpus ??= bar.gpus;
-      }
-    else
-      for (const run of occupants)
-        group(run.host, run.slot).running.push({ ...run, bar: null, estimate: null });
-    // Running runs that log no compute block share a lane of their own.
+    else for (const run of occupants) running.push({ ...run, bar: null, estimate: null });
+    // Running runs that log no compute block, so their GPUs are unknown.
     for (const run of occupancy?.unplaced ?? [])
-      group('', '').running.push({ id: run.id, name: run.name, bar: null, estimate: null });
+      running.push({ id: run.id, name: run.name, bar: null, estimate: null });
+    const live = new Set(running.map((run) => run.id));
     for (const plan of plans ?? []) {
-      const open = plan.status === 'planned' || (plan.status === 'started' && !plan.run);
-      // A slot keeps its lane while only its past plans name it, so plans can move to it.
-      const lane =
-        open || plan.host
-          ? group(plan.host, plan.slot)
-          : (groups.get(laneKey('', '')) ?? group('', ''));
-      if (plan.status === 'planned') {
-        lane.planned.push(plan);
-        lane.gpus ??= scheduled.get(plan.id)?.gpus ?? null;
-      } else if (plan.status === 'started' && !plan.run) lane.claimed.push(plan);
-      else if (!(plan.status === 'started' && lane.running.some((run) => run.id === plan.run)))
-        past.push(plan);
+      if (plan.status === 'planned') waiting.push(plan);
+      else if (plan.status === 'started' && !plan.run) claimed.push(plan);
+      else if (!(plan.status === 'started' && plan.run && live.has(plan.run))) past.push(plan);
     }
     past.sort((a, b) => ended(b) - ended(a));
-    // A plan's place: its queue position, else just behind what it is queued after (a running
-    // run, or another plan); plans placed neither way go last.
+    // A plan's place: its queue position, else just behind what it is queued after; plans
+    // placed neither way go last. This is the order host agents claim them in.
     const byId = new Map((plans ?? []).map((plan) => [plan.id, plan]));
     const rank = (plan: Plan, seen = new Set<string>()): number => {
       if (plan.queue !== null) return plan.queue;
@@ -200,23 +214,95 @@
       const before = byId.get(plan.after.replace(/^plan:/, ''));
       return before ? rank(before, seen) + 0.5 : 0.5;
     };
-    for (const entry of groups.values())
-      entry.planned.sort((a, b) => rank(a) - rank(b) || a.created - b.created);
-    // Lanes with work first, then lanes without a host last.
-    const busy = (lane: Lane) => lane.running.length + lane.claimed.length + lane.planned.length;
-    const lanes = [...groups.values()]
-      .filter((lane) => lane.host || lane.slot || busy(lane))
+    waiting.sort((a, b) => rank(a) - rank(b) || a.created - b.created || a.id.localeCompare(b.id));
+    running.sort((a, b) => (a.estimate?.end ?? Infinity) - (b.estimate?.end ?? Infinity));
+    return { running, claimed, waiting, past };
+  });
+  /** The plan a running run carries out. */
+  const planOfRun = (id: string) => plans?.find((plan) => plan.run === id) ?? null;
+  // Rows open to their details.
+  let expanded = $state<Set<string>>(new Set());
+  const toggle = (id: string) => {
+    const next = new Set(expanded);
+    if (!next.delete(id)) next.add(id);
+    expanded = next;
+  };
+  let queue = $derived(board),
+    past = $derived(board.past);
+  /** Each GPU of each host now: free, held by a running run or a claimed plan, or reserved. */
+  let inventoryNow = $derived.by(() => {
+    const holders = new Map<string, { kind: 'running' | 'claimed'; name: string }>(),
+      next = new Map<string, { name: string; start: number }>();
+    for (const bar of occupancy?.bars ?? []) {
+      if (bar.kind === 'running')
+        for (const gpu of bar.gpus ?? [])
+          holders.set(bar.host + '/' + gpu, { kind: 'running', name: bar.name });
+      if (bar.kind === 'planned' && bar.claimed)
+        for (const gpu of bar.gpus ?? [])
+          holders.set(bar.host + '/' + gpu, { kind: 'claimed', name: bar.name });
+      if (bar.kind === 'planned' && !bar.claimed)
+        for (const gpu of bar.gpus ?? []) {
+          const key = bar.host + '/' + gpu;
+          if (!next.has(key) || next.get(key)!.start > bar.start)
+            next.set(key, { name: bar.name, start: bar.start });
+        }
+    }
+    return [...inventory]
       .sort(
         (a, b) =>
-          Number(!busy(a)) - Number(!busy(b)) ||
-          Number(!a.host) - Number(!b.host) ||
-          a.host.localeCompare(b.host, undefined, { sensitivity: 'base', numeric: true }) ||
-          a.slot.localeCompare(b.slot, undefined, { numeric: true }),
-      );
-    return { lanes, past };
+          Number(!a.gpus.some((gpu) => gpu.allowed)) - Number(!b.gpus.some((gpu) => gpu.allowed)),
+      )
+      .map((host) => {
+        const gpus = host.gpus.map((gpu) => {
+          const key = host.host + '/' + gpu.gpu,
+            holder = holders.get(key);
+          return {
+            ...gpu,
+            state: !gpu.allowed ? 'reserved' : (holder?.kind ?? 'free'),
+            holder: holder?.name ?? null,
+            next: next.get(key) ?? null,
+          };
+        });
+        const models = [...new Set(host.gpus.map((gpu) => gpu.model).filter(Boolean))],
+          memory = [...new Set(host.gpus.map((gpu) => gpu.memory_gb).filter((value) => value))];
+        return {
+          host: host.host,
+          gpus,
+          summary: [models.join(', '), memory.map((value) => $number(value!) + ' GB').join(', ')]
+            .filter(Boolean)
+            .join(' · '),
+          free: gpus.filter((gpu) => gpu.state === 'free').length,
+          reserved: gpus.every((gpu) => gpu.state === 'reserved'),
+        };
+      });
   });
-  let lanes = $derived(board.lanes),
-    past = $derived(board.past);
+  const gpuStateLabels: Record<string, MessageKey> = {
+    free: 'plans.gpus.state.free',
+    running: 'plans.gpus.state.running',
+    claimed: 'plans.gpus.state.claimed',
+    reserved: 'plans.gpus.state.reserved',
+  };
+  /** Why a plan fits no host (plan-queue.ts `unfitReason`). */
+  const unfitLabels: Record<string, MessageKey> = {
+    'no-inventory': 'plans.gpus.unfit.noInventory',
+    'no-host': 'plans.gpus.unfit.noHost',
+    'too-few': 'plans.gpus.unfit.tooFew',
+    waits: 'plans.gpus.unfit.waits',
+  };
+  /** Plans no host can run, and why. */
+  let unfit = $derived(new Map((occupancy?.unfit ?? []).map((item) => [item.id, item.reason])));
+  /** What else is running or projected to run while a plan starts: its company. */
+  const alongside = (bar: Bar) =>
+    (occupancy?.bars ?? [])
+      .filter(
+        (other) =>
+          other !== bar &&
+          (other.kind === 'remaining' || other.kind === 'planned') &&
+          other.start <= bar.start + 60 &&
+          other.end > bar.start + 60 &&
+          (other.run ?? other.plan) !== bar.plan,
+      )
+      .map((other) => other.name);
   /** When a plan ended: when its run last reported, else its last change of status. */
   const ended = (plan: Plan) => {
     const run = plan.run ? runById.get(plan.run) : undefined;
@@ -377,44 +463,45 @@
         : plan.status === 'stopped'
           ? 'magenta'
           : 'gray';
-  // Reordering: drag a waiting plan before or after another, or to the end of a lane; the
+  // Reordering: drag a waiting plan above or below another, or to the end of the queue; the
   // Earlier and Later buttons do the same from the keyboard.
   let dragging = $state(''),
-    dropAt = $state<{ id: string; side: 'before' | 'after' } | { lane: string } | null>(null);
-  async function move(id: string, lane: Lane, place: { before?: string; after?: string } = {}) {
+    dropAt = $state<{ id: string; side: 'before' | 'after' } | 'end' | null>(null);
+  async function move(id: string, place: { before?: string; after?: string } = {}) {
     try {
-      await tool('plan_move', { project, id, slot: lane.slot, host: lane.host, ...place });
+      await tool('plan_move', { project, id, ...place });
       await changed();
     } catch (reason) {
       error = apiMessage(reason);
     }
   }
-  function dragOver(event: DragEvent, lane: Lane, target?: Plan) {
+  function dragOver(event: DragEvent, target?: Plan) {
     if (!dragging) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     if (!target) {
-      dropAt = { lane: laneKey(lane.host, lane.slot) };
+      dropAt = 'end';
       return;
     }
     const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    dropAt = { id: target.id, side: event.clientX < box.left + box.width / 2 ? 'before' : 'after' };
+    dropAt = { id: target.id, side: event.clientY < box.top + box.height / 2 ? 'before' : 'after' };
   }
-  function drop(event: DragEvent, lane: Lane) {
+  function drop(event: DragEvent) {
     event.preventDefault();
     const id = dragging,
       at = dropAt;
     dragging = '';
     dropAt = null;
     if (!id || !at) return;
-    if ('id' in at) {
-      if (at.id !== id) void move(id, lane, { [at.side]: at.id });
-    } else void move(id, lane);
+    if (at !== 'end') {
+      if (at.id !== id) void move(id, { [at.side]: at.id });
+    } else void move(id);
   }
-  const shift = (lane: Lane, plan: Plan, step: number) => {
-    const at = lane.planned.indexOf(plan),
-      other = lane.planned[at + step];
-    if (other) void move(plan.id, lane, step < 0 ? { before: other.id } : { after: other.id });
+  const shift = (plan: Plan, step: number) => {
+    const list = queue.waiting,
+      at = list.indexOf(plan),
+      other = list[at + step];
+    if (other) void move(plan.id, step < 0 ? { before: other.id } : { after: other.id });
   };
   let now = $derived(occupancy?.now ?? Date.now() / 1000);
   const audit = (value: number) =>
@@ -424,6 +511,14 @@
       weekday: 'short',
       month: 'short',
       day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(seconds * 1000));
+  /** A time in a queue row: weekday and clock within the week, else the date too. */
+  const clock = (seconds: number) =>
+    new Intl.DateTimeFormat($locale, {
+      weekday: 'short',
+      ...(Math.abs(seconds - now) > 6 * 86400 ? { month: 'short', day: 'numeric' } : {}),
       hour: '2-digit',
       minute: '2-digit',
     }).format(new Date(seconds * 1000));
@@ -469,7 +564,7 @@
     shouldFilterItem: filterChoice,
   };
 
-  // Editing one plan.
+  // Editing one plan, or a new one, or one promoted from an idea.
   type Draft = {
     id: string;
     name: string;
@@ -479,82 +574,100 @@
     change: string;
     baseline: string;
     rule: string;
-    host: string;
-    slot: string;
+    /** The GPU request: how many, at least how much memory, which model, on which hosts. */
+    gpuCount: string;
+    minMemory: string;
+    model: string;
+    hosts: string[];
     queue: string;
-    gpus: string;
     updates: string;
     config_yaml: string;
+    /** The config file as loaded: sent again only when edited, so its bytes stay as they are. */
+    configYamlLoaded: string;
     resume_run: string;
     config: string;
     status: Plan['status'];
-    /** Claimed by a supervisor, its run not logged yet. */
+    /** Claimed by a host agent, its run not logged yet. */
     claimed: boolean;
     created: boolean;
+    /** Promoting this idea: saving makes the plan from it. */
+    fromIdea: string | null;
   };
   let draft = $state<Draft | null>(null),
     editError = $state<Message>(''),
     saving = $state(false);
+  /** The hosts and GPU models the inventory lists, for the request's choices. */
+  let inventoryHosts = $derived(
+    inventory.filter((host) => host.gpus.some((gpu) => gpu.allowed)).map((host) => host.host),
+  );
+  let inventoryModels = $derived([
+    ...new Set(inventory.flatMap((host) => host.gpus.map((gpu) => gpu.model)).filter(Boolean)),
+  ]);
+  const text = (value: unknown) => (value === null || value === undefined ? '' : String(value));
+  /** A draft from a plan, or from the plan fields an idea keeps. */
+  function draftOf(plan: Partial<Plan> & Record<string, unknown>, created: boolean): Draft {
+    const yaml = text(plan.config_yaml),
+      request = (plan.resources as GpuRequest | null | undefined) ?? null;
+    return {
+      id: text(plan.id),
+      name: text(plan.name),
+      parent: text(plan.parent),
+      parentUpdate: text(plan.parentUpdate),
+      hypothesis: text(plan.hypothesis),
+      change: text(plan.change),
+      baseline: text(plan.baseline),
+      rule: text(plan.rule),
+      gpuCount: text(request?.gpus ?? 1),
+      minMemory: text(request?.min_memory_gb),
+      model: text(request?.model),
+      hosts: [...(request?.hosts ?? [])],
+      queue: text(plan.queue),
+      updates: text(plan.updates),
+      config_yaml: yaml,
+      configYamlLoaded: created ? yaml : '',
+      resume_run: text(plan.resume_run),
+      config: plan.config ? JSON.stringify(plan.config, null, 2) : '',
+      status: plan.status ?? 'planned',
+      claimed: !!plan.claim && !plan.run,
+      created,
+      fromIdea: null,
+    };
+  }
   function edit(plan?: Plan) {
     editError = '';
     if (historyOpen) {
       historyOpen = false;
       reopenHistory = true;
     }
-    draft = plan
-      ? {
-          id: plan.id,
-          name: plan.name,
-          parent: plan.parent ?? '',
-          parentUpdate: plan.parentUpdate === null ? '' : String(plan.parentUpdate),
-          hypothesis: plan.hypothesis,
-          change: plan.change,
-          baseline: plan.baseline ?? '',
-          rule: plan.rule,
-          host: plan.host,
-          slot: plan.slot,
-          queue: plan.queue === null ? '' : String(plan.queue),
-          gpus: plan.gpus?.join(', ') ?? '',
-          updates: plan.updates == null ? '' : String(plan.updates),
-          config_yaml: plan.config_yaml ?? '',
-          resume_run: plan.resume_run ?? '',
-          config: plan.config === null ? '' : JSON.stringify(plan.config, null, 2),
-          status: plan.status,
-          claimed: !!plan.claim && !plan.run,
-          created: true,
-        }
-      : {
-          id: '',
-          name: '',
-          parent: '',
-          parentUpdate: '',
-          hypothesis: '',
-          change: '',
-          baseline: '',
-          rule: '',
-          host: '',
-          slot: '',
-          queue: '',
-          gpus: '',
-          updates: '',
-          config_yaml: '',
-          resume_run: '',
-          config: '',
-          status: 'planned',
-          claimed: false,
-          created: false,
-        };
+    draft = draftOf(plan ?? {}, !!plan);
+  }
+  /** Opens the editor on a plan made from an idea; saving promotes the idea. */
+  function promote(idea: Idea) {
+    editError = '';
+    const kept = idea.draft ?? {};
+    draft = {
+      ...draftOf(
+        {
+          ...kept,
+          id: text(kept.from_plan) || idea.id,
+          name: text(kept.name) || idea.id,
+          hypothesis: text(kept.hypothesis) || idea.hypothesis,
+        } as Partial<Plan> & Record<string, unknown>,
+        false,
+      ),
+      fromIdea: idea.id,
+    };
   }
   const numberOrNull = (text: string) => (text.trim() ? Number(text) : null);
-  /** GPU indices typed as a list such as `3, 4`. */
-  const gpuList = (text: string) =>
-    text
-      .split(/[\s,]+/)
-      .filter(Boolean)
-      .map(Number);
-  let gpusValid = $derived(
-    !draft?.gpus.trim() ||
-      gpuList(draft.gpus).every((gpu) => Number.isInteger(gpu) && gpu >= 0 && gpu <= 1023),
+  let countValid = $derived(
+    !!draft &&
+      Number.isInteger(Number(draft.gpuCount)) &&
+      Number(draft.gpuCount) >= 1 &&
+      Number(draft.gpuCount) <= 64,
+  );
+  let memoryValid = $derived(
+    !draft?.minMemory.trim() ||
+      (Number.isFinite(Number(draft.minMemory)) && Number(draft.minMemory) >= 0),
   );
   let updatesValid = $derived(
     !draft?.updates.trim() || (Number.isFinite(Number(draft.updates)) && Number(draft.updates) > 0),
@@ -575,17 +688,28 @@
       [draft.parentUpdate, draft.queue].every(
         (text) => !text.trim() || Number.isFinite(Number(text)),
       ) &&
-      gpusValid &&
+      countValid &&
+      memoryValid &&
       updatesValid,
   );
+  /** Where a run or plan is: a host and its GPUs, such as gpu-a · GPUs 3, 4. */
+  const gpuText = (host: string, gpus: number[] | null | undefined) =>
+    gpus?.length ? $t('plans.gpus.on', { host, gpus: gpus.join(', ') }) : host;
+  /** The request as the editor shows it: the GPUs a plan needs, such as 2 × ≥ 48 GB. */
+  function requestText(request: GpuRequest | null | undefined) {
+    const value = request ?? { gpus: 1 };
+    return $t(value.min_memory_gb ? 'plans.gpus.requestMemory' : 'plans.gpus.request', {
+      count: value.gpus,
+      memory: $number(value.min_memory_gb ?? 0),
+      model: value.model ?? '',
+    });
+  }
   async function save(status?: Plan['status']) {
     if (!draft) return;
     saving = true;
     editError = '';
-    try {
-      await tool('plan_save', {
-        project,
-        id: draft.id.trim() || draft.name.trim(),
+    const id = draft.id.trim() || draft.name.trim(),
+      fields = {
         name: draft.name.trim() || draft.id.trim(),
         parent: draft.parent || null,
         parentUpdate: numberOrNull(draft.parentUpdate),
@@ -593,22 +717,36 @@
         change: draft.change,
         baseline: draft.baseline || null,
         rule: draft.rule,
-        host: draft.host.trim(),
-        slot: draft.slot.trim(),
+        resources: {
+          gpus: Number(draft.gpuCount),
+          ...(draft.minMemory.trim() ? { min_memory_gb: Number(draft.minMemory) } : {}),
+          ...(draft.model.trim() ? { model: draft.model.trim() } : {}),
+          ...(draft.hosts.length ? { hosts: draft.hosts } : {}),
+        },
         queue: numberOrNull(draft.queue),
-        gpus: draft.gpus.trim() ? [...new Set(gpuList(draft.gpus))] : null,
         updates: numberOrNull(draft.updates),
-        // Sent as typed: the supervisor writes it byte for byte.
-        config_yaml: draft.config_yaml ? draft.config_yaml : null,
+        // Sent only when edited, as typed: the supervisor writes it byte for byte.
+        ...(draft.config_yaml !== draft.configYamlLoaded
+          ? { config_yaml: draft.config_yaml ? draft.config_yaml : null }
+          : {}),
         resume_run: draft.resume_run || null,
         config: draft.config.trim() ? JSON.parse(draft.config) : null,
-        // Callers set planned or cancelled; the server keeps started, done and stopped.
-        ...(status
-          ? { status }
-          : draft.status === 'planned' || draft.status === 'cancelled'
-            ? { status: draft.status }
-            : {}),
-      });
+      };
+    try {
+      if (draft.fromIdea)
+        await tool('idea_promote', { project, id: draft.fromIdea, plan: id, ...fields });
+      else
+        await tool('plan_save', {
+          project,
+          id,
+          ...fields,
+          // Callers set planned or cancelled; the server keeps started, done and stopped.
+          ...(status
+            ? { status }
+            : draft.status === 'planned' || draft.status === 'cancelled'
+              ? { status: draft.status }
+              : {}),
+        });
       draft = null;
       await changed();
     } catch (reason) {
@@ -639,40 +777,9 @@
       onclick={(event) => interceptLink(event, () => onRun(run))}
     />{:else}<RunName {id} name={id} />{/if}{/snippet}
 
-{#snippet planCard(plan: Plan, position: number | null, lane?: Lane)}{@const at = scheduled.get(
-    plan.id,
-  )}{@const movable = !!lane && plan.status === 'planned'}
-  <li
-    class="plan-card status-{plan.status}"
-    class:dragging={dragging === plan.id}
-    class:drop-before={dropAt &&
-      'id' in dropAt &&
-      dropAt.id === plan.id &&
-      dropAt.side === 'before'}
-    class:drop-after={dropAt && 'id' in dropAt && dropAt.id === plan.id && dropAt.side === 'after'}
-    id={'plan-' + plan.id}
-    draggable={movable ? 'true' : undefined}
-    ondragstart={movable
-      ? (event) => {
-          dragging = plan.id;
-          event.dataTransfer?.setData('text/plain', plan.id);
-          if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
-        }
-      : undefined}
-    ondragend={() => {
-      dragging = '';
-      dropAt = null;
-    }}
-    ondragover={lane && plan.status === 'planned'
-      ? (event) => dragOver(event, lane, plan)
-      : undefined}
-    ondrop={lane ? (event) => drop(event, lane) : undefined}
-  >
+{#snippet planCard(plan: Plan)}
+  <li class="plan-card status-{plan.status}" id={'plan-' + plan.id}>
     <header class="plan-card-header">
-      {#if position !== null}<span
-          class="plan-position"
-          title={$t('plans.lane.position', { position })}>{position}</span
-        >{/if}
       <h4>{plan.name}</h4>
       {#if plan.status !== 'planned'}<Tag size="sm" type={statusTag(plan)}
           >{$t(
@@ -692,16 +799,6 @@
         /></span
       >
     </header>
-    {#if at && plan.status === 'planned'}<p class="plan-when">
-        {at.start <= now + 60
-          ? $t('plans.lane.startsNow')
-          : $t('plans.lane.starts', { when: when(at.start), wait: span(at.start - now) })}
-        <span class="lineage-muted"
-          >· {at.unknownLength
-            ? $t('plans.lane.lengthUnknown')
-            : $t('plans.lane.length', { length: span(at.end - at.start) })}</span
-        >
-      </p>{/if}
     {#if plan.claim && !plan.run}<p class="plan-when">
         {$t('plans.lane.claimedBy', {
           by: plan.claim.by || '–',
@@ -749,25 +846,6 @@
     </dl>
     <footer class="plan-card-footer">
       <LedgerSource source={plan.source} />
-      {#if movable && lane}<span class="plan-move"
-          ><Button
-            kind="ghost"
-            size="small"
-            icon={ArrowLeft}
-            iconDescription={$t('plans.move.earlier')}
-            tooltipPosition="top"
-            disabled={lane.planned[0] === plan}
-            on:click={() => shift(lane, plan, -1)}
-          /><Button
-            kind="ghost"
-            size="small"
-            icon={ArrowRight}
-            iconDescription={$t('plans.move.later')}
-            tooltipPosition="top"
-            disabled={lane.planned.at(-1) === plan}
-            on:click={() => shift(lane, plan, 1)}
-          /></span
-        >{/if}
       <button
         type="button"
         class="lineage-link"
@@ -778,57 +856,270 @@
   </li>
 {/snippet}
 
-{#snippet runningCard(item: Running)}{@const bar = item.bar}{@const estimate =
-    item.estimate}{@const total =
-    bar?.budget != null && bar.progress != null ? Math.max(1, bar.budget - (bar.from ?? 0)) : null}
-  <li class="plan-card plan-running-card">
-    <header class="plan-card-header">
-      <span class="plan-live" aria-hidden="true"></span>
-      <Tag size="sm" type="blue">{$t('plans.lane.running')}</Tag>
-    </header>
-    <h4 class="plan-run-name">{@render runLink(item.id)}</h4>
-    {#if bar && total !== null}<ProgressBar
-        size="sm"
-        labelText={$t('plans.lane.progress')}
-        value={Math.min(total, Math.max(0, bar.progress! - (bar.from ?? 0)))}
-        max={total}
-        helperText={$t('plans.lane.progressOf', {
-          progress: $number(bar.progress!),
-          budget: $number(bar.budget!),
-          percent: Math.round((100 * (bar.progress! - (bar.from ?? 0))) / total),
-        })}
-      />{:else if bar?.progress != null}<p class="lineage-muted">
-        {$t('plans.lane.progressOnly', { progress: $number(bar.progress) })}
-      </p>{/if}
-    <dl class="plan-facts">
-      {#if estimate}<div>
-          <dt>{$t('plans.lane.eta')}</dt>
+{#snippet planDetails(plan: Plan)}<div class="queue-details">
+    <dl class="queue-facts">
+      {#if plan.change}<div>
+          <dt>{$t('plans.edit.change')}</dt>
+          <dd>{plan.change}</dd>
+        </div>{/if}
+      {#if plan.hypothesis}<div>
+          <dt>{$t('lineage.panel.hypothesis')}</dt>
+          <dd>{plan.hypothesis}</dd>
+        </div>{/if}
+      {#if plan.rule}<div>
+          <dt>{$t('lineage.plan.rule')}</dt>
+          <dd>{plan.rule}</dd>
+        </div>{/if}
+      {#if plan.baseline}<div>
+          <dt>{$t('lineage.plan.baseline')}</dt>
+          <dd>{@render runLink(plan.baseline)}</dd>
+        </div>{/if}
+      {#if plan.parent}<div>
+          <dt>{$t('lineage.plan.parent')}</dt>
           <dd>
-            {$t('plans.lane.endsAt', { when: when(estimate.end), wait: span(estimate.end - now) })}
+            {@render runLink(plan.parent)}{plan.parentUpdate === null
+              ? ''
+              : ' @' + $number(plan.parentUpdate)}
           </dd>
-        </div>{:else if bar}<div>
-          <dt>{$t('plans.lane.eta')}</dt>
-          <dd class="lineage-muted">{$t('plans.lane.noEstimate')}</dd>
         </div>{/if}
-      {#if bar?.audit != null && occupancy?.metric}<div>
-          <dt>{$t('plans.lane.audit')}</dt>
+      {#if plan.resume_run}<div>
+          <dt>{$t('plans.edit.resumeRun')}</dt>
+          <dd>{@render runLink(plan.resume_run)}</dd>
+        </div>{/if}
+      {#if plan.after}<div>
+          <dt>{$t('lineage.plan.after')}</dt>
           <dd>
-            <strong>{audit(bar.audit)}</strong>
-            <span class="plan-metric" title={occupancy.metric}>{occupancy.metric}</span>
+            {plan.after.startsWith('plan:')
+              ? (plans?.find((item) => item.id === plan.after!.slice(5))?.name ??
+                plan.after.slice(5))
+              : ''}{#if !plan.after.startsWith('plan:')}{@render runLink(plan.after)}{/if}
           </dd>
         </div>{/if}
-      {#if bar}<div>
-          <dt>{$t('plans.lane.started')}</dt>
-          <dd>{when(bar.start)}</dd>
-        </div>{/if}
-      {#if !bar || bar.inferred}<div>
-          <dt>{$t('plans.lane.gpus')}</dt>
-          <dd class="lineage-muted">
-            {bar ? $t('plans.lane.fromPlan') : $t('plans.lane.noCompute')}
+      {#if plan.claim && !plan.run}<div>
+          <dt>{$t('plans.status.claimed')}</dt>
+          <dd>
+            {$t('plans.lane.claimedBy', {
+              by: plan.claim.by || '–',
+              host: [plan.claim.host, plan.claim.slot].filter(Boolean).join(' · ') || '–',
+              when: when(plan.claim.at),
+            })}
           </dd>
         </div>{/if}
+      {#if plan.idea}<div>
+          <dt>{$t('plans.lane.idea')}</dt>
+          <dd>{ideas?.find((idea) => idea.id === plan.idea)?.title ?? plan.idea}</dd>
+        </div>{/if}
+      <div>
+        <dt>{$t('plans.lane.configFile')}</dt>
+        <dd>
+          {plan.config_yaml
+            ? $t('plans.lane.configLines', { count: plan.config_yaml.split('\n').length })
+            : $t('plans.lane.configNone')}
+        </dd>
+      </div>
     </dl>
-  </li>
+    <footer class="queue-details-footer">
+      <LedgerSource source={plan.source} />
+      <button
+        type="button"
+        class="lineage-link"
+        onclick={() => onPage('lineage', { run: 'plan:' + plan.id })}
+        >{$t('plans.showInLineage')}</button
+      >
+    </footer>
+  </div>{/snippet}
+
+{#snippet runningRow(item: Running)}{@const bar = item.bar}{@const estimate =
+    item.estimate}{@const total =
+    bar?.budget != null && bar.progress != null
+      ? Math.max(1, bar.budget - (bar.from ?? 0))
+      : null}{@const plan = planOfRun(item.id)}
+  <tr class="queue-row queue-running" data-run={item.id}>
+    <td class="queue-col-pos"><span class="plan-live" aria-hidden="true"></span></td>
+    <td class="queue-col-run">
+      <span class="queue-run-name">{@render runLink(item.id)}</span>
+      {#if bar && total !== null}<span class="queue-progress"
+          ><ProgressBar
+            size="sm"
+            hideLabel
+            labelText={$t('plans.lane.progress')}
+            value={Math.min(total, Math.max(0, bar.progress! - (bar.from ?? 0)))}
+            max={total}
+          /></span
+        ><span class="queue-sub"
+          >{$t('plans.lane.progressOf', {
+            progress: $number(bar.progress!),
+            budget: $number(bar.budget!),
+            percent: Math.round((100 * (bar.progress! - (bar.from ?? 0))) / total),
+          })}</span
+        >{:else if bar?.progress != null}<span class="queue-sub"
+          >{$t('plans.lane.progressOnly', { progress: $number(bar.progress) })}</span
+        >{/if}
+    </td>
+    <td class="queue-col-purpose">
+      {#if plan?.change}<span class="queue-purpose">{plan.change}</span>{/if}
+      {#if bar?.audit != null && occupancy?.metric}<span class="queue-sub" title={occupancy.metric}
+          >{$t('plans.lane.audit')}: <strong>{audit(bar.audit)}</strong></span
+        >{/if}
+    </td>
+    <td class="queue-col-gpus">
+      {#if bar}<span class="queue-gpus">{gpuText(bar.host, bar.gpus)}</span>{:else}<span
+          class="queue-sub">{$t('plans.lane.noCompute')}</span
+        >{/if}
+      {#if plan?.resources}<span class="queue-sub">{requestText(plan.resources)}</span>{/if}
+    </td>
+    <td class="queue-col-when">
+      {#if bar}<span>{clock(bar.start)} → {estimate ? clock(estimate.end) : '?'}</span>
+        <span class="queue-sub"
+          >{estimate
+            ? $t('plans.lane.endsIn', { wait: span(estimate.end - now) })
+            : $t('plans.lane.noEstimate')}</span
+        >{/if}
+      {#if bar?.inferred}<span class="queue-sub">{$t('plans.lane.fromPlan')}</span>{/if}
+    </td>
+    <td class="queue-col-state"><Tag size="sm" type="blue">{$t('plans.lane.running')}</Tag></td>
+    <td class="queue-col-actions">
+      {#if plan}<Button
+          kind="ghost"
+          size="small"
+          icon={Edit}
+          iconDescription={$t('plans.edit.open')}
+          tooltipAlignment="end"
+          on:click={() => edit(plan)}
+        />{/if}
+    </td>
+  </tr>
+{/snippet}
+
+{#snippet planRow(plan: Plan, position: number | null)}{@const at = scheduled.get(
+    plan.id,
+  )}{@const movable = plan.status === 'planned'}{@const open = expanded.has(plan.id)}
+  <tr
+    id={'plan-' + plan.id}
+    class="queue-row plan-row status-{plan.status}"
+    class:open
+    class:dragging={dragging === plan.id}
+    class:drop-before={typeof dropAt === 'object' &&
+      dropAt?.id === plan.id &&
+      dropAt.side === 'before'}
+    class:drop-after={typeof dropAt === 'object' &&
+      dropAt?.id === plan.id &&
+      dropAt.side === 'after'}
+    draggable={movable ? 'true' : undefined}
+    ondragstart={movable
+      ? (event) => {
+          dragging = plan.id;
+          event.dataTransfer?.setData('text/plain', plan.id);
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+        }
+      : undefined}
+    ondragend={() => {
+      dragging = '';
+      dropAt = null;
+    }}
+    ondragover={movable ? (event) => dragOver(event, plan) : undefined}
+    ondrop={(event) => drop(event)}
+  >
+    <td class="queue-col-pos">
+      {#if position !== null}<span
+          class="plan-position"
+          title={$t('plans.lane.position', { position })}>{position}</span
+        >{/if}
+    </td>
+    <td class="queue-col-run">
+      <button
+        type="button"
+        class="queue-name"
+        aria-expanded={open}
+        aria-controls={'plan-details-' + plan.id}
+        onclick={() => toggle(plan.id)}
+        ><ChevronRight size={16} class="queue-chevron" /><span>{plan.name}</span></button
+      >
+    </td>
+    <td class="queue-col-purpose">
+      <span class="queue-purpose">{plan.change || plan.hypothesis}</span>
+    </td>
+    <td class="queue-col-gpus">
+      {#if plan.allocation && !plan.allocation.released}<span class="queue-gpus"
+          >{gpuText(plan.allocation.host, plan.allocation.gpus)}</span
+        >{:else if at}<span class="queue-gpus">{gpuText(at.host, at.gpus)}</span>{/if}
+      <span class={plan.allocation || at ? 'queue-sub' : 'queue-gpus'}
+        >{requestText(plan.resources)}{plan.resources?.hosts?.length
+          ? ' · ' + plan.resources.hosts.join(', ')
+          : ''}</span
+      >
+    </td>
+    <td class="queue-col-when">
+      {#if plan.status === 'started' && plan.claim}<span
+          >{$t('plans.lane.claimedAt', { when: clock(plan.claim.at) })}</span
+        >
+        <span class="queue-sub"
+          >{$t('plans.lane.claimedByShort', {
+            by: plan.claim.by || '–',
+            host: plan.claim.host || '–',
+          })}</span
+        >{:else if unfit.has(plan.id)}<span class="queue-unfit"
+          >{$t(unfitLabels[unfit.get(plan.id)!] ?? 'plans.gpus.unfit.tooFew')}</span
+        >{:else if at}<span
+          >{at.start <= now + 60 ? $t('plans.lane.now') : '~' + clock(at.start)} → {at.unknownLength
+            ? '?'
+            : clock(at.end)}</span
+        >
+        <span class="queue-sub"
+          >{at.start <= now + 60
+            ? $t('plans.lane.startsNow')
+            : $t('plans.lane.inWait', { wait: span(at.start - now) })} · {at.unknownLength
+            ? $t('plans.lane.lengthUnknown')
+            : $t('plans.lane.length', { length: span(at.end - at.start) })}</span
+        >
+        {#if alongside(at).length}<span class="queue-sub queue-alongside"
+            >{$t('plans.gpus.alongside', {
+              names: alongside(at)
+                .map((name) => name.split('_')[0])
+                .join(', '),
+            })}</span
+          >{/if}{/if}
+    </td>
+    <td class="queue-col-state">
+      <Tag size="sm" type={plan.status === 'planned' ? 'cool-gray' : statusTag(plan)}
+        >{$t(
+          plan.status === 'started' && !plan.run
+            ? 'plans.status.claimed'
+            : planStatusLabels[plan.status],
+        )}</Tag
+      >
+    </td>
+    <td class="queue-col-actions">
+      {#if movable}<Button
+          kind="ghost"
+          size="small"
+          icon={ArrowUp}
+          iconDescription={$t('plans.move.earlier')}
+          tooltipAlignment="end"
+          disabled={queue.waiting[0] === plan}
+          on:click={() => shift(plan, -1)}
+        /><Button
+          kind="ghost"
+          size="small"
+          icon={ArrowDown}
+          iconDescription={$t('plans.move.later')}
+          tooltipAlignment="end"
+          disabled={queue.waiting.at(-1) === plan}
+          on:click={() => shift(plan, 1)}
+        />{/if}<Button
+        kind="ghost"
+        size="small"
+        icon={Edit}
+        iconDescription={$t('plans.edit.open')}
+        tooltipAlignment="end"
+        on:click={() => edit(plan)}
+      />
+    </td>
+  </tr>
+  {#if open}<tr class="queue-details-row" id={'plan-details-' + plan.id}>
+      <td class="queue-col-pos"></td>
+      <td colspan="6">{@render planDetails(plan)}</td>
+    </tr>{/if}
 {/snippet}
 
 <PageRail target={rail} label={$t('plans.controls')}>
@@ -942,7 +1233,7 @@
   </section>
 
   <section class="plans-section" aria-label={$t('charts.types.gpuOccupancy')}>
-    {#if occupancyPlugin}<div class="plans-occupancy">
+    {#if occupancyPlugin}<div class="plans-occupancy" bind:this={occupancyBox}>
         <PanelCard
           height={timelineHeight}
           panel={{
@@ -974,60 +1265,136 @@
       <h2 id="plans-queues-title">{$t('plans.queues.title')}</h2>
     </div>
     {#if plans === null}<p class="lineage-muted">{$t('common.status.loading')}</p>
-    {:else if !lanes.length}<p class="empty-table">{$t('plans.empty')}</p>
-    {:else}<div class="plan-lanes">
-        {#each lanes as lane (laneKey(lane.host, lane.slot))}<section
-            class="plan-lane"
-            aria-label={lane.host
-              ? [lane.host, lane.slot].filter(Boolean).join(' · ')
-              : $t('plans.queues.unassigned')}
-          >
-            <header class="plan-lane-head">
-              <h3>{lane.host || $t('plans.queues.unassigned')}</h3>
-              {#if lane.slot}<p class="plan-lane-slot">{lane.slot}</p>{/if}
-              <p class="lineage-muted">
-                {[
-                  lane.gpus?.length ? $t('plans.lane.gpuList', { gpus: lane.gpus.join(', ') }) : '',
-                  lane.model,
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-              <p class="lineage-muted">
-                {$t('plans.lane.summary', {
-                  running: lane.running.length,
-                  queued: lane.planned.length,
-                })}
-              </p>
-            </header>
-            <ol
-              class="plan-lane-cards"
-              class:drop-end={dropAt &&
-                'lane' in dropAt &&
-                dropAt.lane === laneKey(lane.host, lane.slot)}
-              ondragover={(event) => {
-                if ((event.target as Element).closest('.plan-card.status-planned')) return;
-                dragOver(event, lane);
-              }}
-              ondrop={(event) => drop(event, lane)}
+    {:else}
+      {#if inventoryNow.length}<ul class="gpu-strip" aria-label={$t('plans.gpus.inventory')}>
+          {#each inventoryNow as host (host.host)}<li
+              class="gpu-host"
+              class:reserved={host.reserved}
             >
-              {#each lane.running as item (item.id)}{@render runningCard(item)}{/each}
-              {#each lane.claimed as plan (plan.id)}{@render planCard(plan, null, lane)}{/each}
-              {#if !lane.running.length && !lane.claimed.length}<li class="plan-card plan-idle">
-                  <p class="lineage-muted">{$t('plans.lane.idle')}</p>
-                </li>{/if}
-              {#each lane.planned as plan, index (plan.id)}{@render planCard(
-                  plan,
-                  index + 1,
-                  lane,
-                )}{/each}
-              {#if !lane.planned.length}<li class="plan-card plan-idle">
-                  <p class="lineage-muted">{$t('plans.queues.nothingQueued')}</p>
-                </li>{/if}
-            </ol>
-          </section>{/each}
-      </div>{/if}
+              <div class="gpu-host-head">
+                <strong>{host.host}</strong>
+                <span class="gpu-host-meta"
+                  >{host.reserved
+                    ? $t('plans.gpus.notForPlans')
+                    : $t('plans.gpus.free', { count: host.free, total: host.gpus.length })}</span
+                >
+              </div>
+              <span class="gpu-host-model">{host.summary}</span>
+              <ol class="gpu-cells">
+                {#each host.gpus as gpu (gpu.gpu)}<li
+                    class="gpu-cell state-{gpu.state}"
+                    title={[
+                      $t('occupancy.gpu', { index: gpu.gpu }),
+                      $t(gpuStateLabels[gpu.state]),
+                      gpu.holder ?? '',
+                      gpu.next
+                        ? $t('plans.gpus.next', {
+                            name: gpu.next.name,
+                            when: clock(gpu.next.start),
+                          })
+                        : '',
+                      gpu.note,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  >
+                    <span class="gpu-cell-id">{gpu.gpu}</span>
+                    <span class="visually-hidden">{$t(gpuStateLabels[gpu.state])}</span>
+                  </li>{/each}
+              </ol>
+            </li>{/each}
+        </ul>{/if}
+      {#if !queue.running.length && !queue.claimed.length && !queue.waiting.length}<p
+          class="empty-table"
+        >
+          {$t('plans.empty')}
+        </p>{:else}<table class="queue-table plan-queue" aria-label={$t('plans.queues.title')}>
+          <colgroup>
+            <col class="queue-col-pos" />
+            <col class="queue-col-run" />
+            <col class="queue-col-purpose" />
+            <col class="queue-col-gpus" />
+            <col class="queue-col-when" />
+            <col class="queue-col-state" />
+            <col class="queue-col-actions" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th scope="col" class="queue-col-pos"
+                ><span class="visually-hidden">{$t('plans.lane.column.position')}</span></th
+              >
+              <th scope="col">{$t('plans.lane.column.run')}</th>
+              <th scope="col">{$t('plans.lane.column.purpose')}</th>
+              <th scope="col">{$t('plans.lane.column.gpus')}</th>
+              <th scope="col">{$t('plans.lane.column.when')}</th>
+              <th scope="col">{$t('plans.lane.column.state')}</th>
+              <th scope="col"
+                ><span class="visually-hidden">{$t('plans.lane.column.actions')}</span></th
+              >
+            </tr>
+          </thead>
+          {#if queue.running.length}<tbody
+              class="queue-group"
+              aria-label={$t('plans.queues.running')}
+            >
+              <tr class="queue-group-head">
+                <th colspan="7" scope="rowgroup">
+                  {$t('plans.queues.runningCount', { count: queue.running.length })}
+                </th>
+              </tr>
+              {#each queue.running as item (item.id)}{@render runningRow(item)}{/each}
+            </tbody>{/if}
+          {#if queue.claimed.length}<tbody
+              class="queue-group"
+              aria-label={$t('plans.queues.claimed')}
+            >
+              <tr class="queue-group-head">
+                <th colspan="7" scope="rowgroup">
+                  {$t('plans.queues.claimedCount', { count: queue.claimed.length })}
+                </th>
+              </tr>
+              {#each queue.claimed as plan (plan.id)}{@render planRow(plan, null)}{/each}
+            </tbody>{/if}
+          <tbody
+            class="queue-group queue-waiting"
+            aria-label={$t('plans.queues.waiting')}
+            class:drop-end={dropAt === 'end'}
+            ondragover={(event) => {
+              if ((event.target as Element).closest('.plan-row.status-planned')) return;
+              dragOver(event);
+            }}
+            ondrop={(event) => drop(event)}
+          >
+            <tr class="queue-group-head">
+              <th colspan="7" scope="rowgroup">
+                {$t('plans.queues.waitingCount', { count: queue.waiting.length })}
+              </th>
+            </tr>
+            {#each queue.waiting as plan, index (plan.id)}{@render planRow(plan, index + 1)}{/each}
+            {#if !queue.waiting.length}<tr class="queue-empty-row">
+                <td></td>
+                <td colspan="6" class="lineage-muted">{$t('plans.queues.nothingWaiting')}</td>
+              </tr>{/if}
+          </tbody>
+        </table>{/if}
+    {/if}
   </section>
+
+  <PlanIdeas
+    {project}
+    {ideas}
+    plans={plans ?? []}
+    {runs}
+    {findings}
+    {narrow}
+    onchanged={changed}
+    onpromote={promote}
+    onplan={(id) => {
+      const plan = plans?.find((item) => item.id === id);
+      if (plan) open({ plan: plan.id });
+    }}
+    {onRun}
+  />
 </div>
 
 {#if historyOpen}<Modal
@@ -1137,7 +1504,7 @@
                 onclick={() => (historyPick = '')}
                 ><ArrowLeft size={16} />{$t('plans.history.back')}</button
               >{/if}
-            <ul class="plan-history-card">{@render planCard(picked, null)}</ul>
+            <ul class="plan-history-card">{@render planCard(picked)}</ul>
             {#if picked.events?.length}<section class="plan-history-events">
                 <h4>{$t('plans.history.timeline')}</h4>
                 <ol>
@@ -1168,15 +1535,24 @@
     size="lg"
     hasScrollingContent
     iconDescription={$t('common.action.close')}
-    modalHeading={draft.created ? $t('plans.edit.title') : $t('plans.edit.new')}
-    primaryButtonText={saving ? $t('common.status.saving') : $t('plans.edit.save')}
+    class="plan-editor"
+    modalHeading={draft.fromIdea
+      ? $t('plans.edit.promoteTitle')
+      : draft.created
+        ? $t('plans.edit.title')
+        : $t('plans.edit.new')}
+    primaryButtonText={saving
+      ? $t('common.status.saving')
+      : draft.fromIdea
+        ? $t('plans.edit.promote')
+        : $t('plans.edit.save')}
     primaryButtonDisabled={saving || !validDraft}
     secondaryButtonText={$t('common.action.cancel')}
     on:click:button--secondary={() => (draft = null)}
     on:close={() => (draft = null)}
     on:submit={() => save()}
   >
-    <div class="form-stack plan-form">
+    <div class="plan-form">
       {#if editError}<InlineNotification
           lowContrast
           hideCloseButton
@@ -1184,100 +1560,202 @@
           title={$t('plans.errors.failed')}
           subtitle={$t(editError)}
         />{/if}
-      <TextInput labelText={$t('plans.edit.name')} bind:value={draft.name} />
-      {#if !draft.created}<TextInput
-          labelText={$t('plans.edit.id')}
-          helperText={$t('plans.edit.idHelp')}
-          bind:value={draft.id}
-        />{/if}
-      <div class="plan-form-row">
-        <Choice
-          {...choice}
-          labelText={$t('lineage.plan.parent')}
-          selectionClearedText={$t('common.combobox.selectionCleared')}
-          filterResultsText={(count) => resultCount(count, $t)}
-          translateWithId={(id) =>
-            $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
-          items={runItems}
-          selectedId={draft.parent || undefined}
-          on:select={(event) => (draft!.parent = String(event.detail.selectedId))}
-          on:clear={() => (draft!.parent = '')}
-        />
-        <TextInput
-          labelText={$t('plans.edit.parentUpdate')}
-          inputmode="numeric"
-          bind:value={draft.parentUpdate}
-        />
-      </div>
-      <TextInput labelText={$t('plans.edit.change')} bind:value={draft.change} />
-      <TextArea labelText={$t('lineage.panel.hypothesis')} rows={3} bind:value={draft.hypothesis} />
-      <Choice
-        {...choice}
-        labelText={$t('lineage.plan.baseline')}
-        selectionClearedText={$t('common.combobox.selectionCleared')}
-        filterResultsText={(count) => resultCount(count, $t)}
-        translateWithId={(id) =>
-          $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
-        items={runItems}
-        selectedId={draft.baseline || undefined}
-        on:select={(event) => (draft!.baseline = String(event.detail.selectedId))}
-        on:clear={() => (draft!.baseline = '')}
-      />
-      <TextArea labelText={$t('lineage.plan.rule')} rows={2} bind:value={draft.rule} />
-      <div class="plan-form-row">
-        <TextInput labelText={$t('plans.edit.host')} bind:value={draft.host} />
-        <TextInput labelText={$t('plans.edit.slot')} bind:value={draft.slot} />
-        <TextInput
-          labelText={$t('plans.edit.queue')}
-          inputmode="numeric"
-          bind:value={draft.queue}
-        />
-      </div>
-      <div class="plan-form-row">
-        <TextInput
-          labelText={$t('plans.edit.gpus')}
-          helperText={$t('plans.edit.gpusHelp')}
-          invalid={!gpusValid}
-          invalidText={$t('plans.edit.gpusInvalid')}
-          bind:value={draft.gpus}
-        />
-        <TextInput
-          labelText={$t('plans.edit.updates')}
-          helperText={$t('plans.edit.updatesHelp')}
-          inputmode="numeric"
-          invalid={!updatesValid}
-          bind:value={draft.updates}
-        />
-      </div>
-      <TextArea
-        labelText={$t('lineage.plan.config')}
-        helperText={$t('plans.edit.configHelp')}
-        rows={6}
-        invalid={configError}
-        invalidText={$t('plans.edit.configInvalid')}
-        bind:value={draft.config}
-      />
-      <TextArea
-        labelText={$t('plans.edit.configYaml')}
-        helperText={$t('plans.edit.configYamlHelp')}
-        rows={8}
-        class="plan-config-yaml"
-        bind:value={draft.config_yaml}
-      />
-      <Choice
-        {...choice}
-        labelText={$t('plans.edit.resumeRun')}
-        helperText={$t('plans.edit.resumeRunHelp')}
-        selectionClearedText={$t('common.combobox.selectionCleared')}
-        filterResultsText={(count) => resultCount(count, $t)}
-        translateWithId={(id) =>
-          $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
-        items={runItems}
-        selectedId={draft.resume_run || undefined}
-        on:select={(event) => (draft!.resume_run = String(event.detail.selectedId))}
-        on:clear={() => (draft!.resume_run = '')}
-      />
-      {#if draft.created}<div class="lineage-actions">
+      {#if draft.fromIdea}<p class="plan-form-note">
+          {$t('plans.edit.fromIdea', {
+            idea: ideas?.find((idea) => idea.id === draft!.fromIdea)?.title ?? draft.fromIdea,
+          })}
+        </p>{/if}
+      <fieldset class="plan-form-section">
+        <legend>{$t('plans.edit.section.run')}</legend>
+        <div class="plan-form-grid">
+          <div class="span-8">
+            <TextInput labelText={$t('plans.edit.name')} bind:value={draft.name} />
+          </div>
+          {#if !draft.created}<div class="span-4">
+              <TextInput
+                labelText={$t('plans.edit.id')}
+                helperText={$t('plans.edit.idHelp')}
+                bind:value={draft.id}
+              />
+            </div>{:else}<div class="span-4 plan-form-status">
+              <span class="bx--label">{$t('plans.edit.status')}</span>
+              <span
+                ><Tag size="sm" type={draft.status === 'planned' ? 'cool-gray' : 'gray'}
+                  >{$t(
+                    draft.status === 'started' && draft.claimed
+                      ? 'plans.status.claimed'
+                      : planStatusLabels[draft.status],
+                  )}</Tag
+                ><code class="plan-form-id">{draft.id}</code></span
+              >
+            </div>{/if}
+        </div>
+      </fieldset>
+      <fieldset class="plan-form-section">
+        <legend>{$t('plans.edit.section.gpus')}</legend>
+        <div class="plan-form-grid">
+          <div class="span-3">
+            <TextInput
+              labelText={$t('plans.edit.gpuCount')}
+              inputmode="numeric"
+              invalid={!countValid}
+              invalidText={$t('plans.edit.gpuCountInvalid')}
+              bind:value={draft.gpuCount}
+            />
+          </div>
+          <div class="span-3">
+            <TextInput
+              labelText={$t('plans.edit.minMemory')}
+              inputmode="decimal"
+              placeholder={$t('plans.edit.any')}
+              invalid={!memoryValid}
+              bind:value={draft.minMemory}
+            />
+          </div>
+          <div class="span-3">
+            <Select labelText={$t('plans.edit.model')} bind:selected={draft.model}
+              ><SelectItem
+                value=""
+                text={$t('plans.edit.anyModel')}
+              />{#each inventoryModels as model (model)}<SelectItem
+                  value={model}
+                  text={model}
+                />{/each}{#if draft.model && !inventoryModels.includes(draft.model)}<SelectItem
+                  value={draft.model}
+                  text={draft.model}
+                />{/if}</Select
+            >
+          </div>
+          <div class="span-3">
+            <TextInput
+              labelText={$t('plans.edit.queue')}
+              inputmode="numeric"
+              bind:value={draft.queue}
+            />
+          </div>
+          <fieldset class="span-12 plan-form-hosts">
+            <legend class="bx--label">{$t('plans.edit.hosts')}</legend>
+            <div class="plan-form-checks">
+              {#each [...new Set([...inventoryHosts, ...draft.hosts])] as host (host)}<Checkbox
+                  labelText={host}
+                  checked={draft.hosts.includes(host)}
+                  on:check={(event) =>
+                    (draft!.hosts = event.detail
+                      ? [...draft!.hosts, host]
+                      : draft!.hosts.filter((item) => item !== host))}
+                />{/each}
+            </div>
+            <p class="plan-form-help">{$t('plans.edit.hostsHelp')}</p>
+          </fieldset>
+          <div class="span-4">
+            <TextInput
+              labelText={$t('plans.edit.updates')}
+              inputmode="numeric"
+              invalid={!updatesValid}
+              bind:value={draft.updates}
+            />
+          </div>
+          <p class="span-8 plan-form-help plan-form-help-beside">{$t('plans.edit.updatesHelp')}</p>
+        </div>
+      </fieldset>
+      <fieldset class="plan-form-section">
+        <legend>{$t('plans.edit.section.test')}</legend>
+        <div class="plan-form-grid">
+          <div class="span-12">
+            <TextInput labelText={$t('plans.edit.change')} bind:value={draft.change} />
+          </div>
+          <div class="span-12">
+            <TextArea
+              labelText={$t('lineage.panel.hypothesis')}
+              rows={3}
+              bind:value={draft.hypothesis}
+            />
+          </div>
+          <div class="span-6">
+            <Choice
+              {...choice}
+              labelText={$t('lineage.plan.baseline')}
+              selectionClearedText={$t('common.combobox.selectionCleared')}
+              filterResultsText={(count) => resultCount(count, $t)}
+              translateWithId={(id) =>
+                $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+              items={runItems}
+              selectedId={draft.baseline || undefined}
+              on:select={(event) => (draft!.baseline = String(event.detail.selectedId))}
+              on:clear={() => (draft!.baseline = '')}
+            />
+          </div>
+          <div class="span-6">
+            <TextArea labelText={$t('lineage.plan.rule')} rows={2} bind:value={draft.rule} />
+          </div>
+        </div>
+      </fieldset>
+      <fieldset class="plan-form-section">
+        <legend>{$t('plans.edit.section.start')}</legend>
+        <div class="plan-form-grid">
+          <div class="span-8">
+            <Choice
+              {...choice}
+              labelText={$t('lineage.plan.parent')}
+              selectionClearedText={$t('common.combobox.selectionCleared')}
+              filterResultsText={(count) => resultCount(count, $t)}
+              translateWithId={(id) =>
+                $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+              items={runItems}
+              selectedId={draft.parent || undefined}
+              on:select={(event) => (draft!.parent = String(event.detail.selectedId))}
+              on:clear={() => (draft!.parent = '')}
+            />
+          </div>
+          <div class="span-4">
+            <TextInput
+              labelText={$t('plans.edit.parentUpdate')}
+              inputmode="numeric"
+              bind:value={draft.parentUpdate}
+            />
+          </div>
+          <div class="span-12">
+            <Choice
+              {...choice}
+              labelText={$t('plans.edit.resumeRun')}
+              helperText={$t('plans.edit.resumeRunHelp')}
+              selectionClearedText={$t('common.combobox.selectionCleared')}
+              filterResultsText={(count) => resultCount(count, $t)}
+              translateWithId={(id) =>
+                $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+              items={runItems}
+              selectedId={draft.resume_run || undefined}
+              on:select={(event) => (draft!.resume_run = String(event.detail.selectedId))}
+              on:clear={() => (draft!.resume_run = '')}
+            />
+          </div>
+        </div>
+      </fieldset>
+      <fieldset class="plan-form-section">
+        <legend>{$t('plans.edit.section.config')}</legend>
+        <div class="plan-form-grid">
+          <div class="span-12">
+            <TextArea
+              labelText={$t('plans.edit.configYaml')}
+              helperText={$t('plans.edit.configYamlHelp')}
+              rows={8}
+              class="plan-config-yaml"
+              bind:value={draft.config_yaml}
+            />
+          </div>
+          <div class="span-12">
+            <TextArea
+              labelText={$t('lineage.plan.config')}
+              helperText={$t('plans.edit.configHelp')}
+              rows={4}
+              invalid={configError}
+              invalidText={$t('plans.edit.configInvalid')}
+              bind:value={draft.config}
+            />
+          </div>
+        </div>
+      </fieldset>
+      {#if draft.created}<div class="plan-form-actions">
           {#if draft.status === 'planned'}<Button
               kind="ghost"
               size="small"

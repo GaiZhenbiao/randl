@@ -99,8 +99,17 @@ export type Plan = {
   config_yaml?: string | null;
   /** The run this plan continues. */
   resume_run?: string | null;
-  /** The supervisor that took it from its slot's queue, while its run has not appeared. */
-  claim?: { by: string; host: string; at: number } | null;
+  /**
+   * The supervisor that took it from its slot's queue, while its run has not appeared, and
+   * the slot it claimed from (for a pool's plan, the member it runs on).
+   */
+  claim?: { by: string; host: string; at: number; slot?: string } | null;
+  /** The idea it was promoted from. */
+  idea?: string | null;
+  /** The GPUs it asks for. */
+  resources?: GpuRequest | null;
+  /** The host and GPUs given to it by a claim, until its run ends. */
+  allocation?: { host: string; gpus: number[]; at: number; by: string; released?: number | null } | null;
   events?: { at: number; status: string; by?: string; run?: string; note?: string }[];
   /** The run that carried the plan out, if any. */
   run: string | null;
@@ -676,3 +685,40 @@ export function linkStatus(
   if (!node) return null;
   return linkStatuses.find((status) => chosen.includes(status) && hasStatus(node, status)) ?? null;
 }
+
+/** What a plan needs: GPUs on one host, with at least some memory, of a model, on hosts. */
+export type GpuRequest = {
+  gpus: number;
+  min_memory_gb?: number | null;
+  model?: string | null;
+  hosts?: string[] | null;
+  same_host?: boolean;
+};
+/** One GPU of the project's inventory (gpus_list); `allowed` false keeps it out of plans. */
+export type InventoryGpu = {
+  host: string;
+  gpu: number;
+  model: string;
+  memory_gb: number | null;
+  allowed: boolean;
+  note: string;
+};
+/** What an idea waits on before it can be planned. */
+export type IdeaLink = { kind: 'run' | 'plan' | 'finding'; id: string };
+/** A backlog entry: an experiment worth running once what it waits on is in. */
+export type Idea = {
+  id: string;
+  title: string;
+  hypothesis: string;
+  evidence: string;
+  prerequisites: string;
+  waits_on: IdeaLink[];
+  priority: 'high' | 'medium' | 'low';
+  status: 'open' | 'promoted' | 'dropped';
+  plan: string | null;
+  draft: Record<string, Json> | null;
+  source: Source | null;
+  created: number;
+  updated: number;
+  by: string;
+};
