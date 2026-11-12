@@ -45,12 +45,38 @@ export type Plan = {
   gpus?: number[] | null;
   /** How much progress (updates) it will train, for its estimated length. */
   updates?: number | null;
-  status: 'planned' | 'cancelled';
+  /**
+   * planned: waiting in its slot's queue; started: claimed by a supervisor or carried out by
+   * a running run; done: its run finished; stopped: its run was stopped, crashed or failed;
+   * cancelled: set aside by a person or agent. Only planned and cancelled are set by callers;
+   * the server sets the rest (Store.syncPlans).
+   */
+  status: PlanStatus;
+  /** The exact config file text the run is launched with, stored and returned verbatim. */
+  config_yaml?: string | null;
+  /** The run this plan continues in its own directory, when it resumes one. */
+  resume_run?: string | null;
+  /** The run carrying it out, once one logs `lineage.plan` equal to its id. */
+  run?: string | null;
+  /** The supervisor that took it from its slot's queue (plan_claim). */
+  claim?: { by: string; host: string; at: number } | null;
+  /** Status changes, oldest first. */
+  events?: PlanEvent[];
   source: Source | null;
   created: number;
   updated: number;
   by: string;
 };
+export type PlanStatus = 'planned' | 'started' | 'done' | 'stopped' | 'cancelled';
+export type PlanEvent = {
+  at: number;
+  status: PlanStatus | 'claimed' | 'claim_expired' | 'moved';
+  by?: string;
+  run?: string;
+  note?: string;
+};
+/** A claim whose run has not logged after this long returns its plan to the queue. */
+export const claimTimeout = 30 * 60;
 
 /** Seconds since the epoch from seconds or an ISO date, else now. */
 export function seconds(value: number | string | undefined, now = Date.now() / 1000) {
@@ -250,7 +276,25 @@ export class Ledger {
       // Left out while unset, so records saved before these fields existed stay unchanged.
       ...optional('gpus', field('gpus', null)),
       ...optional('updates', field('updates', null)),
+      ...optional('config_yaml', field('config_yaml', null)),
+      ...optional('resume_run', field('resume_run', null)),
+      // Kept by the server, never set by a save.
+      ...optional('run', previous?.run ?? null),
+      ...optional('claim', previous?.claim ?? null),
+      ...optional('events', previous?.events?.length ? previous.events : null),
     };
+    // A caller may set planned or cancelled; setting planned releases a pending claim.
+    if (args.status === 'planned' && previous?.claim && !previous.run) {
+      delete (record as Row).claim;
+      (record as Row).events = [
+        ...(previous.events ?? []),
+        { at: now, status: 'planned', by: args.by ?? '', note: 'claim released' },
+      ];
+    } else if (args.status !== undefined && args.status !== previous?.status)
+      (record as Row).events = [
+        ...(previous?.events ?? []),
+        { at: now, status: args.status, by: args.by ?? '' },
+      ];
     if (old && JSON.stringify(record) === old.record)
       return { status: 'unchanged', plan: this.plan(old) };
     if (args.dryRun) return { status: old ? 'updated' : 'created', dryRun: true };
@@ -277,6 +321,19 @@ export class Ledger {
       updated: row.updated,
       by: row.by,
     };
+  }
+  /** Replaces a plan's record as the server keeps it (status, run, claim, queue, events). */
+  planWrite(project: string, id: string, record: Row, by = 'randl') {
+    this.db
+      .prepare('UPDATE planned_runs SET record=?,updated=?,by=? WHERE project=? AND id=?')
+      .run(JSON.stringify(record), Date.now() / 1000, by, project, id);
+  }
+  /** A plan's stored record, without the row fields. */
+  planRecord(project: string, id: string) {
+    const row = this.db
+      .prepare('SELECT record FROM planned_runs WHERE project=? AND id=?')
+      .get(project, id) as Row | undefined;
+    return row ? (JSON.parse(row.record) as Row) : undefined;
   }
   planDelete(project: string, id: string) {
     const changes = this.db

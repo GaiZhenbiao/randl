@@ -171,7 +171,10 @@
       if (id !== project) return;
       graph = withPlans({
         ...result,
-        plans: planned.plans.filter((plan: Plan) => plan.status === 'planned' && !plan.run),
+        // Waiting plans, and claimed ones whose run has not logged yet.
+        plans: planned.plans.filter(
+          (plan: Plan) => (plan.status === 'planned' || plan.status === 'started') && !plan.run,
+        ),
         recipe: recipe.current,
       });
       error = '';

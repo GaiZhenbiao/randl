@@ -407,9 +407,13 @@ The **Plans** page shows where the project stands and what runs next:
   estimated end, and planned runs where they should start. Runs that shared GPUs at the same
   time split those rows into lanes, and the tooltip names them. It scrolls sideways through time; Ctrl+scroll (or a touchpad pinch) and the buttons
   zoom, **Go to now** returns, and a bar opens its run or plan.
-- **Queues**: one lane per host slot, with the run occupying it (progress toward its budget,
-  estimated end and latest audit) followed by its planned runs in order, each with its
-  hypothesis, baseline, stop rule and estimated start.
+- **Queues**: one lane per host slot, its live queue: the run occupying it (progress toward
+  its budget, estimated end and latest audit), any plan a supervisor has claimed, then the
+  waiting plans in order, each with its hypothesis, baseline, stop rule and estimated start.
+  Drag a waiting plan to reorder it or move it to another slot (or use **Move earlier** and
+  **Move later**). Lanes with work come first. **History** in the header lists the plans
+  that are over (done, stopped and cancelled) by month, to search, filter by status or slot,
+  and read with each plan's timeline.
 
 Runs name their GPUs in their `lineage` block, logged when they start:
 
@@ -428,6 +432,31 @@ config's `rl.algorithm.total_updates` (**budgetKey**) from `rl.algorithm.start_u
 whatever it is queued `after` has ended; it uses its `gpus` (else those its slot last used)
 and trains its `updates` (else its config budget, else as long as runs on its slot usually
 do), at the pace of the slot's recent runs. `project_occupancy` returns the timeline.
+
+#### Plans as the training queue
+
+Training supervisors take their work from randl. A plan is **planned** while it waits,
+**started** once a supervisor claims it or a run logs `lineage.plan` equal to its ID, **done**
+when that run finishes and **stopped** when it is stopped, crashes or fails; people and agents
+set **cancelled** (or back to planned). randl keeps these statuses itself, with each change
+recorded on the plan. A run resuming another plan's run logs the new plan's ID; the earlier
+plan keeps how it ended.
+
+```sh
+randl plans save --project team/navigation --id v12 --name v12_wider_floor \
+  --json '{"host": "gpu-a", "slot": "gpu-a_01", "queue": 1, "updates": 25000}' \
+  --config-yaml-file configs/v12.yaml
+randl plans queue --project team/navigation --slot gpu-a_01 --host gpu-a
+randl plans claim --project team/navigation --slot gpu-a_01 --by gpu-a-supervisor --host gpu-a
+randl plans move --project team/navigation --id v12 --before v11
+```
+
+`plan_claim` takes the head of the slot's queue (queue position, then the `after` chain, then
+creation) and returns the plan to launch, with its `config_yaml` exactly as saved and any
+`resume_run`; the launched run logs `lineage.plan` with the plan's ID. Two supervisors never
+take the same plan; while a claim waits for its run, the same supervisor gets it again and
+others are refused, and a claim whose run has not logged within 30 minutes returns the plan to
+the queue. `plan_move` reorders a waiting plan or moves it to another slot.
 
 ### Project overview and server status
 

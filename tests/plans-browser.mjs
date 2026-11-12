@@ -231,6 +231,87 @@ try {
   await expect(page).toHaveURL(/\/test\/plans\/runs\/p1_done/);
   checks.push('Bars open their run or plan; a plan given GPUs moves to those rows');
 
+  // The lane is the slot's live queue: drag a waiting plan before another, move it with the
+  // Earlier button, see a supervisor's claim, and find finished plans under its history.
+  for (const [id, queue] of [
+    ['q4', 2],
+    ['q5', 3],
+  ])
+    await call('plan_save', {
+      project: 'test/plans',
+      id,
+      name: id + '_next',
+      host: 'hostA',
+      slot: 'a12',
+      queue,
+    });
+  await page.goto(`${origin}/test/plans/plans`);
+  const queueLane = page.getByRole('region', { name: 'hostA · a12' });
+  const order = async () =>
+    (await call('plan_queue', { project: 'test/plans', slot: 'a12' })).plans.map((plan) => plan.id);
+  await expect(queueLane.locator('#plan-q5')).toBeVisible();
+  assert.deepEqual(await order(), ['p3', 'q4', 'q5']);
+  const target = await queueLane.locator('#plan-p3').boundingBox();
+  await queueLane
+    .locator('#plan-q5')
+    .dragTo(queueLane.locator('#plan-p3'), { targetPosition: { x: 10, y: target.height / 2 } });
+  await expect.poll(order).toEqual(['q5', 'p3', 'q4']);
+  await expect(queueLane.locator('.plan-position')).toHaveText(['1', '2', '3']);
+  await queueLane
+    .locator('#plan-q4')
+    .getByRole('button', { name: 'Move earlier in the queue' })
+    .click();
+  await expect.poll(order).toEqual(['q5', 'q4', 'p3']);
+  // A supervisor claims the head: it shows as claimed, waiting for its run.
+  await call('plan_claim', {
+    project: 'test/plans',
+    slot: 'a12',
+    by: 'supervisor-a',
+    host: 'hostA',
+  });
+  await page.reload();
+  const claimedCard = queueLane.locator('#plan-q5');
+  await expect(claimedCard).toContainText('Claimed');
+  await expect(claimedCard).toContainText('Claimed by supervisor-a on hostA');
+  // A cancelled plan leaves the lane for the history, opened from the header rail: plans that
+  // are over, filtered by status and searched, each read beside the list with its timeline.
+  await call('plan_save', { project: 'test/plans', id: 'p3', status: 'cancelled' });
+  await page.reload();
+  await expect(queueLane.locator('#plan-q4')).toBeVisible();
+  await expect(queueLane.locator('#plan-p3')).toHaveCount(0);
+  const over = (await call('plans_list', { project: 'test/plans' })).plans.filter((plan) =>
+    ['done', 'stopped', 'cancelled'].includes(plan.status),
+  ).length;
+  const historyButton = page
+    .locator('.page-rail-controls')
+    .getByRole('button', { name: /History/ });
+  await expect(historyButton).toContainText(String(over));
+  await historyButton.click();
+  const history = page.getByRole('dialog', { name: 'Plan history' });
+  await expect(history).toBeVisible();
+  const rows = history.locator('.plan-history-row');
+  await expect(rows).toHaveCount(over);
+  await history.getByRole('button', { name: /^Cancelled/ }).click();
+  await expect(rows).toHaveCount(1);
+  await rows.first().click();
+  const reader = history.locator('.plan-history-reader');
+  await expect(reader.locator('#plan-p3')).toContainText('Cancelled');
+  await expect(reader.locator('.plan-history-events')).toContainText('Cancelled');
+  await history.getByRole('button', { name: /^All/ }).click();
+  await history.getByRole('searchbox').fill('no such plan');
+  await expect(history.locator('.empty-table')).toHaveText('No plans match.');
+  await history.getByRole('searchbox').fill('p3');
+  await expect(rows).toHaveCount(1);
+  // Editing a plan from the history comes back to the history.
+  await reader.getByRole('button', { name: 'Edit plan' }).click();
+  const editor = page.getByRole('dialog', { name: 'Edit plan' });
+  await expect(editor).toBeVisible();
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(history).toBeVisible();
+  checks.push(
+    'Lanes are live queues: drag or move plans, see claims; past plans open from the rail',
+  );
+
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks }, null, 2));
 } finally {

@@ -5,7 +5,7 @@ import { promises as fs, openAsBlob, createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { contained } from './plugins.js';
-const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--summary JSON] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them; --summary sets summary keys. State, history and files are untouched.\nrandl runs set-state --id entity/project/run --state stopped|finished|failed|crashed [--reason TEXT] [--by NAME] [--dry-run]\n  Marks a run that has ended as stopped on purpose (or back); a running run is refused.\nrandl runs rename-metrics --id entity/project/run --rename old=new[,old2=new2] [--combine] [--dry-run] [--by NAME]\nrandl runs rename-metrics --undo ID\n  Renames metric keys in history, summary and the metric index; --combine merges into existing keys. Prints undo IDs.\nrandl runs write-history --id entity/project/run --rows JSON | --rows-file PATH|- [--replace] [--dry-run] [--by NAME]\n  Rows are [{\"match\": {\"update\": 473000}, \"values\": {\"metric\": 0.7}}] or use \"step\"; each merges into one history record.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl findings list|get|save|delete --project entity/project [--id ID] [--run RUN] [--topic T] [--title T] [--status finding|ruled_out] [--body TEXT | --body-file PATH|-] [--cite RUN[@UPDATE],…] [--by NAME]\nrandl recipe get|set --project entity/project [--run RUN --reason TEXT [--since DATE]] [--by NAME]\nrandl plans list|save|delete --project entity/project [--id ID] [--name NAME] [--json '{\"host\":\"…\",\"slot\":\"…\",\"queue\":1}'] [--by NAME]\nrandl journal list|add [--run RUN | --project entity/project] [--text TEXT] [--update N] [--step N] [--time DATE] [--key KEY] [--by NAME]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
+const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--summary JSON] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them; --summary sets summary keys. State, history and files are untouched.\nrandl runs set-state --id entity/project/run --state stopped|finished|failed|crashed [--reason TEXT] [--by NAME] [--dry-run]\n  Marks a run that has ended as stopped on purpose (or back); a running run is refused.\nrandl runs rename-metrics --id entity/project/run --rename old=new[,old2=new2] [--combine] [--dry-run] [--by NAME]\nrandl runs rename-metrics --undo ID\n  Renames metric keys in history, summary and the metric index; --combine merges into existing keys. Prints undo IDs.\nrandl runs write-history --id entity/project/run --rows JSON | --rows-file PATH|- [--replace] [--dry-run] [--by NAME]\n  Rows are [{\"match\": {\"update\": 473000}, \"values\": {\"metric\": 0.7}}] or use \"step\"; each merges into one history record.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl findings list|get|save|delete --project entity/project [--id ID] [--run RUN] [--topic T] [--title T] [--status finding|ruled_out] [--body TEXT | --body-file PATH|-] [--cite RUN[@UPDATE],…] [--by NAME]\nrandl recipe get|set --project entity/project [--run RUN --reason TEXT [--since DATE]] [--by NAME]\nrandl plans list|save|delete --project entity/project [--id ID] [--name NAME] [--json '{\"host\":\"…\",\"slot\":\"…\",\"queue\":1,\"resume_run\":\"…\"}'] [--config-yaml-file PATH|-] [--by NAME]\nrandl plans queue|claim --project entity/project --slot SLOT [--host HOST] [--by SUPERVISOR] [--dry-run]\n  claim takes the head of the slot's queue and prints the plan to launch (config_yaml verbatim), or plan null.\nrandl plans move --project entity/project --id ID [--slot SLOT] [--host HOST] [--before ID | --after ID] [--by NAME]\nrandl journal list|add [--run RUN | --project entity/project] [--text TEXT] [--update N] [--step N] [--time DATE] [--key KEY] [--by NAME]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
 export async function main(argv = process.argv.slice(2)) {
   const { values: v, positionals: p } = parseArgs({
     args: argv,
@@ -49,6 +49,10 @@ export async function main(argv = process.argv.slice(2)) {
       run: { type: 'string' },
       reason: { type: 'string' },
       state: { type: 'string' },
+      slot: { type: 'string' },
+      'config-yaml-file': { type: 'string' },
+      before: { type: 'string' },
+      after: { type: 'string' },
       since: { type: 'string' },
       text: { type: 'string' },
       time: { type: 'string' },
@@ -287,16 +291,55 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (command === 'plans') {
     const project = required('project');
-    if (action === 'save')
+    if (action === 'save') {
+      // The exact config file, stored and handed to the supervisor byte for byte.
+      const file = v['config-yaml-file'],
+        yaml =
+          file === undefined
+            ? undefined
+            : file === '-'
+              ? await (async () => {
+                  let text = '';
+                  for await (const chunk of process.stdin) text += chunk.toString();
+                  return text;
+                })()
+              : await fs.readFile(file, 'utf8');
       return output(
         await tool('plan_save', {
           ...extra(),
-          ...defined({ project, id: required('id'), name: v.name }),
+          ...defined({ project, id: required('id'), name: v.name, config_yaml: yaml }),
           ...by,
         }),
       );
+    }
     if (action === 'delete')
       return output(await tool('plan_delete', { project, id: required('id'), ...by }));
+    if (action === 'queue')
+      return output(
+        await tool('plan_queue', defined({ project, slot: required('slot'), host: v.host })),
+      );
+    if (action === 'claim')
+      return output(
+        await tool('plan_claim', {
+          ...defined({ project, slot: required('slot'), by: required('by'), host: v.host }),
+          ...(v['dry-run'] ? { dryRun: true } : {}),
+        }),
+      );
+    if (action === 'move')
+      return output(
+        await tool('plan_move', {
+          ...defined({
+            project,
+            id: required('id'),
+            slot: v.slot,
+            host: v.host,
+            before: v.before,
+            after: v.after,
+          }),
+          ...by,
+          ...(v['dry-run'] ? { dryRun: true } : {}),
+        }),
+      );
     return output(await tool('plans_list', { project }));
   }
   if (command === 'journal') {

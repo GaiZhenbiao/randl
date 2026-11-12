@@ -517,7 +517,7 @@ export const toolCatalog = [
   {
     name: 'plan_save',
     description:
-      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name). gpus names the GPU indices it will use on its host (else those its slot last used); updates is how far it will train, for its estimated end (else its config budget less its start). Omitted fields keep their value; status cancelled keeps it for the record.',
+      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name). Callers set status planned or cancelled (planned also releases a claim waiting for its run); the server sets started, done and stopped from the claim and the run. config_yaml is the exact config file text, returned verbatim by plan_claim; resume_run names a run the plan continues in its own directory. gpus names the GPU indices it will use on its host (else those its slot last used); updates is how far it will train, for its estimated end (else its config budget less its start). Omitted fields keep their value; status cancelled keeps it for the record.',
     agent: false,
     parameters: schema(
       {
@@ -535,6 +535,8 @@ export const toolCatalog = [
         slot: { type: 'string', maxLength: 200 },
         queue: orNull({ type: 'integer' }),
         after: orNull({ type: 'string', maxLength: 512 }),
+        config_yaml: orNull({ type: 'string', maxLength: 1000000 }),
+        resume_run: orNull({ type: 'string', maxLength: 512 }),
         gpus: orNull({
           type: 'array',
           items: { type: 'integer', minimum: 0, maximum: 1023 },
@@ -546,6 +548,42 @@ export const toolCatalog = [
         source,
         dryRun,
         by: author,
+      },
+      ['project', 'id'],
+    ),
+  },
+  {
+    name: 'plan_queue',
+    description:
+      "A slot's waiting plans in the order supervisors take them: queue position, then the after chain, then creation. host narrows to one host's slot of that name.",
+    agent: false,
+    parameters: schema({ project: string, slot: string, host: string }, ['project', 'slot']),
+  },
+  {
+    name: 'plan_claim',
+    description:
+      "Take the head of a slot's queue for a training supervisor (with host, only that host's plans and plans naming no host): marks the plan started with the claim (by, host, time) and returns {status: 'claimed', plan: {id, name, config_yaml, config, resume_run, updates, gpus, parent, parentUpdate, host, slot}, claim}, or {status: 'empty', plan: null}. The launched run should log lineage.plan = plan.id; a claim whose run has not logged after 30 minutes returns the plan to the queue. While a claim waits for its run, the same by and host get it again (repeat: true) and others are refused (PLAN_CLAIM_PENDING).",
+    agent: false,
+    parameters: schema(
+      { project: string, slot: string, by: author, host: string, dryRun },
+      ['project', 'slot', 'by'],
+    ),
+  },
+  {
+    name: 'plan_move',
+    description:
+      "Move a waiting plan within its slot's queue or to another slot (slot, and host when that slot is on another host), before or after another waiting plan of that slot, else to its end; both queues are renumbered 1, 2, …",
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        id: ledgerId,
+        slot: string,
+        host: string,
+        before: ledgerId,
+        after: ledgerId,
+        by: author,
+        dryRun,
       },
       ['project', 'id'],
     ),
@@ -898,6 +936,16 @@ export class Tools {
       case 'plans_list':
         await this.db.call('projectGet', a.project);
         return this.db.call('plans', a);
+      case 'plan_queue':
+        await this.db.call('projectGet', a.project);
+        return this.db.call('planQueue', a);
+      case 'plan_claim':
+      case 'plan_move':
+        await this.db.call('projectGet', a.project);
+        result = await this.db.call(name === 'plan_claim' ? 'planClaim' : 'planMove', a);
+        // A dry run, an empty queue or a repeated claim changes nothing.
+        if (a.dryRun || result.status === 'empty' || result.repeat) return result;
+        break;
       case 'project_occupancy':
         await this.db.call('projectGet', a.project);
         return this.db.call('occupancy', a.project, await lineageSettings(this.db, a.project));

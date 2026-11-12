@@ -3,19 +3,25 @@
   // there, the GPUs of each host over time (the `gpu-occupancy` panel), and one lane per host
   // slot with the run occupying it and the planned runs queued behind it.
   import RunName from './RunName.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import {
     Button,
     InlineNotification,
     Modal,
     ProgressBar,
+    Search,
+    Select,
+    SelectItem,
     Tag,
     TextArea,
     TextInput,
   } from 'carbon-components-svelte';
   import Add from 'carbon-icons-svelte/lib/Add.svelte';
   import Edit from 'carbon-icons-svelte/lib/Edit.svelte';
+  import ArrowLeft from 'carbon-icons-svelte/lib/ArrowLeft.svelte';
+  import ArrowRight from 'carbon-icons-svelte/lib/ArrowRight.svelte';
   import StarFilled from 'carbon-icons-svelte/lib/StarFilled.svelte';
+  import RecentlyViewed from 'carbon-icons-svelte/lib/RecentlyViewed.svelte';
   import Choice from './Choice.svelte';
   import LedgerSource from './LedgerSource.svelte';
   import PanelCard from './Panel.svelte';
@@ -23,7 +29,7 @@
   import { runColors } from './run-name';
 
   import { tool, apiMessage } from './api';
-  import { t, number, date, locale, type Message } from './i18n';
+  import { t, number, date, locale, type Message, type MessageKey } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL } from './ui';
   import type { OpenTarget, Plugin, Run } from './types';
   import type { Plan, RecipeEvent } from './lineage-graph';
@@ -68,8 +74,7 @@
         tool('recipe_get', { project }),
         tool('project_occupancy', { project }),
       ]);
-      // Plans a run has carried out leave the queues.
-      plans = planned.plans.filter((plan: Plan) => !plan.run);
+      plans = planned.plans;
       recipe = best;
       occupants = planned.running;
       occupancy = timeline;
@@ -106,6 +111,10 @@
     }
     const plan = plans?.find((item) => item.id === target.plan);
     if (!plan) return;
+    if (past.includes(plan)) {
+      showHistory(plan.id);
+      return;
+    }
     document.getElementById('plan-' + plan.id)?.scrollIntoView({ block: 'center' });
     edit(plan);
   }
@@ -118,11 +127,17 @@
     gpus: number[] | null;
     model: string;
     running: Running[];
+    /** Claimed by a supervisor, its run not logged yet. */
+    claimed: Plan[];
+    /** Waiting, in queue order. */
     planned: Plan[];
   };
   const laneKey = (host: string, slot: string) => host + '\u0000' + slot;
-  let lanes = $derived.by(() => {
-    const groups = new Map<string, Lane>();
+  // The lanes, and the plans that are over (done, stopped, cancelled, and started plans whose
+  // run is not running in a lane), which the history shows.
+  let board = $derived.by(() => {
+    const groups = new Map<string, Lane>(),
+      past: Plan[] = [];
     const group = (host: string, slot: string) => {
       const key = laneKey(host, slot);
       let entry = groups.get(key);
@@ -135,6 +150,7 @@
             gpus: null,
             model: occupancy?.hosts.find((item) => item.host === host)?.model ?? '',
             running: [],
+            claimed: [],
             planned: [],
           }),
         );
@@ -159,12 +175,21 @@
     // Running runs that log no compute block share a lane of their own.
     for (const run of occupancy?.unplaced ?? [])
       group('', '').running.push({ id: run.id, name: run.name, bar: null, estimate: null });
-    for (const plan of plans ?? [])
+    for (const plan of plans ?? []) {
+      const open = plan.status === 'planned' || (plan.status === 'started' && !plan.run);
+      // A slot keeps its lane while only its past plans name it, so plans can move to it.
+      const lane =
+        open || plan.host
+          ? group(plan.host, plan.slot)
+          : (groups.get(laneKey('', '')) ?? group('', ''));
       if (plan.status === 'planned') {
-        const lane = group(plan.host, plan.slot);
         lane.planned.push(plan);
         lane.gpus ??= scheduled.get(plan.id)?.gpus ?? null;
-      }
+      } else if (plan.status === 'started' && !plan.run) lane.claimed.push(plan);
+      else if (!(plan.status === 'started' && lane.running.some((run) => run.id === plan.run)))
+        past.push(plan);
+    }
+    past.sort((a, b) => ended(b) - ended(a));
     // A plan's place: its queue position, else just behind what it is queued after (a running
     // run, or another plan); plans placed neither way go last.
     const byId = new Map((plans ?? []).map((plan) => [plan.id, plan]));
@@ -177,14 +202,156 @@
     };
     for (const entry of groups.values())
       entry.planned.sort((a, b) => rank(a) - rank(b) || a.created - b.created);
-    // Lanes without a host go last.
-    return [...groups.values()].sort(
-      (a, b) =>
-        Number(!a.host) - Number(!b.host) ||
-        a.host.localeCompare(b.host, undefined, { sensitivity: 'base', numeric: true }) ||
-        a.slot.localeCompare(b.slot, undefined, { numeric: true }),
-    );
+    // Lanes with work first, then lanes without a host last.
+    const busy = (lane: Lane) => lane.running.length + lane.claimed.length + lane.planned.length;
+    const lanes = [...groups.values()]
+      .filter((lane) => lane.host || lane.slot || busy(lane))
+      .sort(
+        (a, b) =>
+          Number(!busy(a)) - Number(!busy(b)) ||
+          Number(!a.host) - Number(!b.host) ||
+          a.host.localeCompare(b.host, undefined, { sensitivity: 'base', numeric: true }) ||
+          a.slot.localeCompare(b.slot, undefined, { numeric: true }),
+      );
+    return { lanes, past };
   });
+  let lanes = $derived(board.lanes),
+    past = $derived(board.past);
+  /** When a plan ended: when its run last reported, else its last change of status. */
+  const ended = (plan: Plan) => {
+    const run = plan.run ? runById.get(plan.run) : undefined;
+    return (
+      run?.finished ??
+      run?.heartbeat ??
+      [...(plan.events ?? [])].reverse().find((event) => event.status === plan.status)?.at ??
+      plan.updated
+    );
+  };
+
+  // History: the plans that are over, searched and filtered, in a list beside the one read.
+  type PastStatus = 'all' | 'done' | 'stopped' | 'cancelled' | 'started';
+  let historyOpen = $state(false),
+    historyStatus = $state<PastStatus>('all'),
+    historyLane = $state(''),
+    historySearch = $state(''),
+    historyPick = $state(''),
+    historyLimit = $state(100),
+    // Editing a plan from the history comes back to it.
+    reopenHistory = $state(false);
+  function showHistory(id = '') {
+    historyStatus = 'all';
+    historyLane = '';
+    historySearch = '';
+    historyLimit = 100;
+    historyPick = id;
+    historyOpen = true;
+    if (id) {
+      const at = past.findIndex((plan) => plan.id === id);
+      historyLimit = Math.max(100, at + 1);
+    }
+  }
+  $effect(() => {
+    if (!draft && reopenHistory) {
+      reopenHistory = false;
+      historyOpen = true;
+    }
+  });
+  const pastLanes = $derived.by(() => {
+    const counts = new Map<string, { host: string; slot: string; count: number }>();
+    for (const plan of past) {
+      const key = laneKey(plan.host, plan.slot),
+        entry = counts.get(key) ?? { host: plan.host, slot: plan.slot, count: 0 };
+      entry.count++;
+      counts.set(key, entry);
+    }
+    return [...counts.entries()]
+      .map(([key, entry]) => ({ key, ...entry }))
+      .sort(
+        (a, b) =>
+          a.host.localeCompare(b.host, undefined, { numeric: true }) ||
+          a.slot.localeCompare(b.slot, undefined, { numeric: true }),
+      );
+  });
+  /** The past plans the search and slot match, before the status filter. */
+  const pastMatches = $derived.by(() => {
+    const words = historySearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    return past.filter((plan) => {
+      if (historyLane && laneKey(plan.host, plan.slot) !== historyLane) return false;
+      if (!words.length) return true;
+      const text = [
+        plan.id,
+        plan.name,
+        plan.change,
+        plan.hypothesis,
+        plan.rule,
+        plan.host,
+        plan.slot,
+        plan.run ? (runById.get(plan.run)?.display_name ?? plan.run) : '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return words.every((word) => text.includes(word));
+    });
+  });
+  const pastStatuses = ['done', 'stopped', 'cancelled', 'started'] as const;
+  const pastCounts = $derived(
+    Object.fromEntries(
+      pastStatuses.map((status) => [
+        status,
+        pastMatches.filter((plan) => plan.status === status).length,
+      ]),
+    ) as Record<(typeof pastStatuses)[number], number>,
+  );
+  const pastShown = $derived(
+    historyStatus === 'all'
+      ? pastMatches
+      : pastMatches.filter((plan) => plan.status === historyStatus),
+  );
+  /** The shown plans by month of their end, latest first. */
+  const pastMonths = $derived.by(() => {
+    const format = new Intl.DateTimeFormat($locale, { month: 'long', year: 'numeric' }),
+      months: { label: string; plans: Plan[] }[] = [];
+    for (const plan of pastShown.slice(0, historyLimit)) {
+      const label = format.format(new Date(ended(plan) * 1000));
+      if (months.at(-1)?.label !== label) months.push({ label, plans: [] });
+      months.at(-1)!.plans.push(plan);
+    }
+    return months;
+  });
+  // On wide screens the first plan shown is read until another is chosen.
+  const picked = $derived(
+    pastShown.find((plan) => plan.id === historyPick) ?? (narrow ? null : (pastShown[0] ?? null)),
+  );
+  // Keyboard: arrows move through the list, Home and End to its ends.
+  function historyKey(event: KeyboardEvent) {
+    const list = pastShown.slice(0, historyLimit),
+      at = list.findIndex((plan) => plan.id === picked?.id);
+    let next = -1;
+    if (event.key === 'ArrowDown') next = Math.min(list.length - 1, at + 1);
+    else if (event.key === 'ArrowUp') next = Math.max(0, at - 1);
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = list.length - 1;
+    else return;
+    event.preventDefault();
+    if (next < 0) return;
+    historyPick = list[next].id;
+    void tick().then(() =>
+      document
+        .querySelector<HTMLElement>(`.plan-history-row[data-plan="${CSS.escape(historyPick)}"]`)
+        ?.focus(),
+    );
+  }
+  /** What a plan's timeline calls each of its events. */
+  const eventLabels: Record<string, MessageKey> = {
+    planned: 'plans.status.planned',
+    started: 'plans.status.started',
+    done: 'plans.status.done',
+    stopped: 'plans.status.stopped',
+    cancelled: 'plans.status.cancelled',
+    claimed: 'plans.status.claimed',
+    claim_expired: 'plans.history.event.claimExpired',
+    moved: 'plans.history.event.moved',
+  };
   /** Each open plan's estimated time on the timeline. */
   let scheduled = $derived(
     new Map(
@@ -193,7 +360,62 @@
         .map((bar) => [bar.plan!, bar]),
     ),
   );
-  let cancelled = $derived((plans ?? []).filter((plan) => plan.status === 'cancelled'));
+  const planStatusLabels = {
+    planned: 'plans.status.planned',
+    started: 'plans.status.started',
+    done: 'plans.status.done',
+    stopped: 'plans.status.stopped',
+    cancelled: 'plans.status.cancelled',
+  } as const;
+  const statusTag = (plan: Plan) =>
+    plan.status === 'started'
+      ? plan.run
+        ? 'blue'
+        : 'purple'
+      : plan.status === 'done'
+        ? 'green'
+        : plan.status === 'stopped'
+          ? 'magenta'
+          : 'gray';
+  // Reordering: drag a waiting plan before or after another, or to the end of a lane; the
+  // Earlier and Later buttons do the same from the keyboard.
+  let dragging = $state(''),
+    dropAt = $state<{ id: string; side: 'before' | 'after' } | { lane: string } | null>(null);
+  async function move(id: string, lane: Lane, place: { before?: string; after?: string } = {}) {
+    try {
+      await tool('plan_move', { project, id, slot: lane.slot, host: lane.host, ...place });
+      await changed();
+    } catch (reason) {
+      error = apiMessage(reason);
+    }
+  }
+  function dragOver(event: DragEvent, lane: Lane, target?: Plan) {
+    if (!dragging) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    if (!target) {
+      dropAt = { lane: laneKey(lane.host, lane.slot) };
+      return;
+    }
+    const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    dropAt = { id: target.id, side: event.clientX < box.left + box.width / 2 ? 'before' : 'after' };
+  }
+  function drop(event: DragEvent, lane: Lane) {
+    event.preventDefault();
+    const id = dragging,
+      at = dropAt;
+    dragging = '';
+    dropAt = null;
+    if (!id || !at) return;
+    if ('id' in at) {
+      if (at.id !== id) void move(id, lane, { [at.side]: at.id });
+    } else void move(id, lane);
+  }
+  const shift = (lane: Lane, plan: Plan, step: number) => {
+    const at = lane.planned.indexOf(plan),
+      other = lane.planned[at + step];
+    if (other) void move(plan.id, lane, step < 0 ? { before: other.id } : { after: other.id });
+  };
   let now = $derived(occupancy?.now ?? Date.now() / 1000);
   const audit = (value: number) =>
     $number(value * (occupancy?.scale ?? 1), { maximumFractionDigits: 3 });
@@ -262,8 +484,12 @@
     queue: string;
     gpus: string;
     updates: string;
+    config_yaml: string;
+    resume_run: string;
     config: string;
     status: Plan['status'];
+    /** Claimed by a supervisor, its run not logged yet. */
+    claimed: boolean;
     created: boolean;
   };
   let draft = $state<Draft | null>(null),
@@ -271,6 +497,10 @@
     saving = $state(false);
   function edit(plan?: Plan) {
     editError = '';
+    if (historyOpen) {
+      historyOpen = false;
+      reopenHistory = true;
+    }
     draft = plan
       ? {
           id: plan.id,
@@ -286,8 +516,11 @@
           queue: plan.queue === null ? '' : String(plan.queue),
           gpus: plan.gpus?.join(', ') ?? '',
           updates: plan.updates == null ? '' : String(plan.updates),
+          config_yaml: plan.config_yaml ?? '',
+          resume_run: plan.resume_run ?? '',
           config: plan.config === null ? '' : JSON.stringify(plan.config, null, 2),
           status: plan.status,
+          claimed: !!plan.claim && !plan.run,
           created: true,
         }
       : {
@@ -304,8 +537,11 @@
           queue: '',
           gpus: '',
           updates: '',
+          config_yaml: '',
+          resume_run: '',
           config: '',
           status: 'planned',
+          claimed: false,
           created: false,
         };
   }
@@ -362,8 +598,16 @@
         queue: numberOrNull(draft.queue),
         gpus: draft.gpus.trim() ? [...new Set(gpuList(draft.gpus))] : null,
         updates: numberOrNull(draft.updates),
+        // Sent as typed: the supervisor writes it byte for byte.
+        config_yaml: draft.config_yaml ? draft.config_yaml : null,
+        resume_run: draft.resume_run || null,
         config: draft.config.trim() ? JSON.parse(draft.config) : null,
-        status: status ?? draft.status,
+        // Callers set planned or cancelled; the server keeps started, done and stopped.
+        ...(status
+          ? { status }
+          : draft.status === 'planned' || draft.status === 'cancelled'
+            ? { status: draft.status }
+            : {}),
       });
       draft = null;
       await changed();
@@ -395,16 +639,47 @@
       onclick={(event) => interceptLink(event, () => onRun(run))}
     />{:else}<RunName {id} name={id} />{/if}{/snippet}
 
-{#snippet planCard(plan: Plan, position: number | null)}{@const at = scheduled.get(plan.id)}
-  <li class="plan-card" id={'plan-' + plan.id}>
+{#snippet planCard(plan: Plan, position: number | null, lane?: Lane)}{@const at = scheduled.get(
+    plan.id,
+  )}{@const movable = !!lane && plan.status === 'planned'}
+  <li
+    class="plan-card status-{plan.status}"
+    class:dragging={dragging === plan.id}
+    class:drop-before={dropAt &&
+      'id' in dropAt &&
+      dropAt.id === plan.id &&
+      dropAt.side === 'before'}
+    class:drop-after={dropAt && 'id' in dropAt && dropAt.id === plan.id && dropAt.side === 'after'}
+    id={'plan-' + plan.id}
+    draggable={movable ? 'true' : undefined}
+    ondragstart={movable
+      ? (event) => {
+          dragging = plan.id;
+          event.dataTransfer?.setData('text/plain', plan.id);
+          if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+        }
+      : undefined}
+    ondragend={() => {
+      dragging = '';
+      dropAt = null;
+    }}
+    ondragover={lane && plan.status === 'planned'
+      ? (event) => dragOver(event, lane, plan)
+      : undefined}
+    ondrop={lane ? (event) => drop(event, lane) : undefined}
+  >
     <header class="plan-card-header">
       {#if position !== null}<span
           class="plan-position"
           title={$t('plans.lane.position', { position })}>{position}</span
         >{/if}
       <h4>{plan.name}</h4>
-      {#if plan.status === 'cancelled'}<Tag size="sm" type="gray"
-          >{$t('plans.status.cancelled')}</Tag
+      {#if plan.status !== 'planned'}<Tag size="sm" type={statusTag(plan)}
+          >{$t(
+            plan.status === 'started' && !plan.run
+              ? 'plans.status.claimed'
+              : planStatusLabels[plan.status],
+          )}</Tag
         >{/if}
       <span class="finding-actions"
         ><Button
@@ -426,6 +701,16 @@
             ? $t('plans.lane.lengthUnknown')
             : $t('plans.lane.length', { length: span(at.end - at.start) })}</span
         >
+      </p>{/if}
+    {#if plan.claim && !plan.run}<p class="plan-when">
+        {$t('plans.lane.claimedBy', {
+          by: plan.claim.by || '–',
+          host: plan.claim.host || '–',
+          when: when(plan.claim.at),
+        })}
+      </p>{/if}
+    {#if plan.run && plan.status !== 'planned'}<p class="plan-when">
+        {@render runLink(plan.run)}
       </p>{/if}
     {#if plan.change}<p class="plan-change">{plan.change}</p>{/if}
     <dl class="plan-facts">
@@ -449,6 +734,10 @@
               : ' @' + $number(plan.parentUpdate)}
           </dd>
         </div>{/if}
+      {#if plan.resume_run}<div>
+          <dt>{$t('plans.edit.resumeRun')}</dt>
+          <dd>{@render runLink(plan.resume_run)}</dd>
+        </div>{/if}
       {#if plan.after}<div>
           <dt>{$t('lineage.plan.after')}</dt>
           <dd>
@@ -460,6 +749,25 @@
     </dl>
     <footer class="plan-card-footer">
       <LedgerSource source={plan.source} />
+      {#if movable && lane}<span class="plan-move"
+          ><Button
+            kind="ghost"
+            size="small"
+            icon={ArrowLeft}
+            iconDescription={$t('plans.move.earlier')}
+            tooltipPosition="top"
+            disabled={lane.planned[0] === plan}
+            on:click={() => shift(lane, plan, -1)}
+          /><Button
+            kind="ghost"
+            size="small"
+            icon={ArrowRight}
+            iconDescription={$t('plans.move.later')}
+            tooltipPosition="top"
+            disabled={lane.planned.at(-1) === plan}
+            on:click={() => shift(lane, plan, 1)}
+          /></span
+        >{/if}
       <button
         type="button"
         class="lineage-link"
@@ -526,6 +834,22 @@
 <PageRail target={rail} label={$t('plans.controls')}>
   <span class="page-rail-end"
     >{#if narrow}<Button
+        kind="ghost"
+        size="small"
+        icon={RecentlyViewed}
+        iconDescription={$t('plans.history.openCount', { count: past.length })}
+        tooltipPosition="bottom"
+        aria-haspopup="dialog"
+        on:click={() => showHistory()}
+      />{:else}<Button
+        kind="ghost"
+        size="small"
+        icon={RecentlyViewed}
+        aria-haspopup="dialog"
+        on:click={() => showHistory()}
+        >{$t('plans.history.open')}<span class="plan-history-count">{$number(past.length)}</span
+        ></Button
+      >{/if}{#if narrow}<Button
         size="small"
         icon={Add}
         iconDescription={$t('plans.edit.new')}
@@ -676,14 +1000,26 @@
                 })}
               </p>
             </header>
-            <ol class="plan-lane-cards">
+            <ol
+              class="plan-lane-cards"
+              class:drop-end={dropAt &&
+                'lane' in dropAt &&
+                dropAt.lane === laneKey(lane.host, lane.slot)}
+              ondragover={(event) => {
+                if ((event.target as Element).closest('.plan-card.status-planned')) return;
+                dragOver(event, lane);
+              }}
+              ondrop={(event) => drop(event, lane)}
+            >
               {#each lane.running as item (item.id)}{@render runningCard(item)}{/each}
-              {#if !lane.running.length}<li class="plan-card plan-idle">
+              {#each lane.claimed as plan (plan.id)}{@render planCard(plan, null, lane)}{/each}
+              {#if !lane.running.length && !lane.claimed.length}<li class="plan-card plan-idle">
                   <p class="lineage-muted">{$t('plans.lane.idle')}</p>
                 </li>{/if}
               {#each lane.planned as plan, index (plan.id)}{@render planCard(
                   plan,
                   index + 1,
+                  lane,
                 )}{/each}
               {#if !lane.planned.length}<li class="plan-card plan-idle">
                   <p class="lineage-muted">{$t('plans.queues.nothingQueued')}</p>
@@ -691,14 +1027,141 @@
             </ol>
           </section>{/each}
       </div>{/if}
-    {#if cancelled.length}<details class="recipe-history">
-        <summary>{$t('plans.cancelled', { count: cancelled.length })}</summary>
-        <ol class="plan-list">
-          {#each cancelled as plan (plan.id)}{@render planCard(plan, null)}{/each}
-        </ol>
-      </details>{/if}
   </section>
 </div>
+
+{#if historyOpen}<Modal
+    open
+    passiveModal
+    size="lg"
+    class="plan-history-modal"
+    iconDescription={$t('common.action.close')}
+    modalHeading={$t('plans.history.title')}
+    on:close={() => (historyOpen = false)}
+  >
+    <div class="plan-history-toolbar">
+      <Search
+        size="sm"
+        labelText={$t('plans.history.search')}
+        placeholder={$t('plans.history.search')}
+        closeButtonLabelText={$t('common.search.clear')}
+        bind:value={historySearch}
+      />
+      {#if pastLanes.length > 1}<Select
+          size="sm"
+          inline
+          hideLabel
+          labelText={$t('plans.history.slot')}
+          selected={historyLane}
+          on:change={(event) => (historyLane = (event.target as HTMLSelectElement).value)}
+          ><SelectItem
+            value=""
+            text={$t('plans.history.allSlots')}
+          />{#each pastLanes as lane (lane.key)}<SelectItem
+              value={lane.key}
+              text={[lane.host || $t('plans.queues.unassigned'), lane.slot]
+                .filter(Boolean)
+                .join(' · ') +
+                ' (' +
+                $number(lane.count) +
+                ')'}
+            />{/each}</Select
+        >{/if}
+    </div>
+    <div class="plan-history-filter" role="group" aria-label={$t('plans.history.status')}>
+      {#each ['all', ...pastStatuses] as status (status)}{@const count =
+          status === 'all' ? pastMatches.length : pastCounts[status as keyof typeof pastCounts]}
+        {#if status === 'all' || count}<button
+            type="button"
+            class="plan-history-chip status-{status}"
+            aria-pressed={historyStatus === status}
+            onclick={() => (historyStatus = status as PastStatus)}
+            >{#if status !== 'all'}<span class="plan-history-dot status-{status}"></span>{/if}{$t(
+              status === 'all'
+                ? 'plans.history.all'
+                : planStatusLabels[status as keyof typeof planStatusLabels],
+            )}<span class="plan-history-chip-count">{$number(count)}</span></button
+          >{/if}{/each}
+    </div>
+    {#if !past.length}<p class="empty-table">{$t('plans.history.empty')}</p>
+    {:else if !pastShown.length}<p class="empty-table">{$t('plans.history.noMatches')}</p>
+    {:else}<div class="plan-history-layout" class:reading={!!picked}>
+        {#if !narrow || !picked}<div
+            class="plan-history-list"
+            role="listbox"
+            tabindex="-1"
+            aria-label={$t('plans.history.list')}
+            onkeydown={historyKey}
+          >
+            {#each pastMonths as month (month.label)}<div role="presentation">
+                <p class="plan-history-month" role="presentation">{month.label}</p>
+                {#each month.plans as plan (plan.id)}<button
+                    type="button"
+                    role="option"
+                    class="plan-history-row"
+                    data-plan={plan.id}
+                    aria-selected={plan.id === picked?.id}
+                    tabindex={plan.id === (picked ?? pastShown[0]).id ? 0 : -1}
+                    onclick={() => (historyPick = plan.id)}
+                  >
+                    <span
+                      class="plan-history-dot status-{plan.status}"
+                      title={$t(planStatusLabels[plan.status])}
+                    ></span>
+                    <span class="plan-history-name">{plan.name}</span>
+                    <span class="plan-history-meta"
+                      >{$t(planStatusLabels[plan.status])} · {[plan.host, plan.slot]
+                        .filter(Boolean)
+                        .join(' · ') || $t('plans.queues.unassigned')} · {$date(
+                        ended(plan),
+                        true,
+                      )}</span
+                    >
+                    {#if plan.change}<span class="plan-history-change">{plan.change}</span>{/if}
+                  </button>{/each}
+              </div>{/each}
+            {#if pastShown.length > historyLimit}<Button
+                kind="ghost"
+                size="small"
+                on:click={() => (historyLimit += 100)}
+                >{$t('plans.history.showMore', {
+                  count: Math.min(100, pastShown.length - historyLimit),
+                  total: pastShown.length - historyLimit,
+                })}</Button
+              >{/if}
+          </div>{/if}
+        {#if picked}<div class="plan-history-reader">
+            {#if narrow}<button
+                type="button"
+                class="lineage-link plan-history-back"
+                onclick={() => (historyPick = '')}
+                ><ArrowLeft size={16} />{$t('plans.history.back')}</button
+              >{/if}
+            <ul class="plan-history-card">{@render planCard(picked, null)}</ul>
+            {#if picked.events?.length}<section class="plan-history-events">
+                <h4>{$t('plans.history.timeline')}</h4>
+                <ol>
+                  {#each [...picked.events].reverse() as event, index (index)}<li>
+                      <span class="plan-history-dot status-{event.status}"></span>
+                      <span class="plan-history-event-what"
+                        >{$t(eventLabels[event.status] ?? 'plans.history.event.changed')}{event.note
+                          ? ' · ' + event.note
+                          : ''}</span
+                      >
+                      <span class="lineage-muted"
+                        >{$date(event.at)}{event.by ? ' · ' + event.by : ''}</span
+                      >
+                      {#if event.run}<span class="plan-history-event-run"
+                          >{@render runLink(event.run)}</span
+                        >{/if}
+                    </li>{/each}
+                </ol>
+              </section>{/if}
+          </div>{:else if !narrow}<p class="plan-history-reader lineage-muted">
+            {$t('plans.history.pick')}
+          </p>{/if}
+      </div>{/if}
+  </Modal>{/if}
 
 {#if draft}<Modal
     open
@@ -794,13 +1257,39 @@
         invalidText={$t('plans.edit.configInvalid')}
         bind:value={draft.config}
       />
+      <TextArea
+        labelText={$t('plans.edit.configYaml')}
+        helperText={$t('plans.edit.configYamlHelp')}
+        rows={8}
+        class="plan-config-yaml"
+        bind:value={draft.config_yaml}
+      />
+      <Choice
+        {...choice}
+        labelText={$t('plans.edit.resumeRun')}
+        helperText={$t('plans.edit.resumeRunHelp')}
+        selectionClearedText={$t('common.combobox.selectionCleared')}
+        filterResultsText={(count) => resultCount(count, $t)}
+        translateWithId={(id) =>
+          $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+        items={runItems}
+        selectedId={draft.resume_run || undefined}
+        on:select={(event) => (draft!.resume_run = String(event.detail.selectedId))}
+        on:clear={() => (draft!.resume_run = '')}
+      />
       {#if draft.created}<div class="lineage-actions">
           {#if draft.status === 'planned'}<Button
               kind="ghost"
               size="small"
               on:click={() => save('cancelled')}>{$t('plans.edit.cancelPlan')}</Button
-            >{:else}<Button kind="ghost" size="small" on:click={() => save('planned')}
-              >{$t('plans.edit.restorePlan')}</Button
+            >{:else if draft.status === 'cancelled'}<Button
+              kind="ghost"
+              size="small"
+              on:click={() => save('planned')}>{$t('plans.edit.restorePlan')}</Button
+            >{:else if draft.status === 'started' && draft.claimed}<Button
+              kind="ghost"
+              size="small"
+              on:click={() => save('planned')}>{$t('plans.edit.releaseClaim')}</Button
             >{/if}
           <Button kind="danger-ghost" size="small" on:click={remove}
             >{$t('plans.edit.delete')}</Button

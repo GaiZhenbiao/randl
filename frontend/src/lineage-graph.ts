@@ -93,7 +93,15 @@ export type Plan = {
   /** How far it will train (updates), for its estimated length. */
   updates?: number | null;
   source: Source | null;
-  status: 'planned' | 'cancelled';
+  /** planned → started (claimed or running) → done | stopped; or cancelled. */
+  status: 'planned' | 'started' | 'done' | 'stopped' | 'cancelled';
+  /** The exact config file text. */
+  config_yaml?: string | null;
+  /** The run this plan continues. */
+  resume_run?: string | null;
+  /** The supervisor that took it from its slot's queue, while its run has not appeared. */
+  claim?: { by: string; host: string; at: number } | null;
+  events?: { at: number; status: string; by?: string; run?: string; note?: string }[];
   /** The run that carried the plan out, if any. */
   run: string | null;
   created: number;

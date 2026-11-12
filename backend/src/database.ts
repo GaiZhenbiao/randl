@@ -20,7 +20,8 @@ import { metricDefinitions, definitionFor, environmentMetadata } from './run-met
 import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runtime.js';
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
-import { Ledger, seconds } from './ledger.js';
+import { Ledger, seconds, claimTimeout, type Plan } from './ledger.js';
+import { moveWithin, queueOrder, statusFromRun } from './plan-queue.js';
 import { ensureTables } from './schema.js';
 import { occupancy, type OccupancyRun } from './occupancy.js';
 import {
@@ -2478,18 +2479,78 @@ export class Store {
    * `lineage.plan` = its id, else one with its name), and the running runs with the host and
    * slot their `lineage.compute` names, for the queues.
    */
-  plans(a: Row) {
-    const [entity, name] = String(a.project).split('/');
+  /**
+   * Brings each plan's status up to date (plan-queue.ts): a plan carried out by a run (one
+   * logging `lineage.plan` equal to its id, else one with its name) is started while the run
+   * runs, done once it finishes and stopped once it is stopped, crashes or fails; a claim
+   * whose run has not appeared after `claimTimeout` returns its plan to the queue. Changes
+   * are stored with an event, so the first read also brings older plans up to date.
+   */
+  syncPlans(project: string, now = Date.now() / 1000) {
+    const [entity, name] = String(project).split('/');
     const runs = this.db
       .prepare(
         "SELECT id,display_name,state,json_extract(config,'$.lineage.value.plan') plan,json_extract(config,'$.lineage.value.compute') compute FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL",
       )
       .all(entity, name) as Row[];
-    const byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan, run.id])),
-      byName = new Map(runs.map((run) => [run.display_name, run.id]));
-    const plans = this.ledger
-      .plans(a.project)
-      .map((plan) => ({ ...plan, run: byPlan.get(plan.id) ?? byName.get(plan.name) ?? null }));
+    const byId = new Map(runs.map((run) => [run.id, run])),
+      byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan, run])),
+      byName = new Map(runs.map((run) => [run.display_name, run]));
+    const plans = this.ledger.plans(project).map((plan) => {
+      // A run logging another plan's id carries that plan out, not this one: a resumed run
+      // that once carried this plan leaves it as it ended.
+      const mine = (run: Row | undefined) =>
+        run && (!run.plan || run.plan === plan.id) ? run : undefined;
+      const record = this.ledger.planRecord(project, plan.id)!,
+        bound =
+          byPlan.get(plan.id) ??
+          mine(plan.run ? byId.get(plan.run) : undefined) ??
+          mine(byName.get(plan.name)),
+        ended = !bound && ['done', 'stopped'].includes(plan.status) && plan.run,
+        run = ended ? undefined : bound,
+        events = [...((record.events as Row[]) ?? [])];
+      if (ended) return { ...plan } as Row;
+      let status = plan.status as string,
+        claim = record.claim ?? null,
+        expired = false;
+      if (run) status = statusFromRun(run.state);
+      else if (status === 'started' && claim && now - claim.at >= claimTimeout) {
+        status = 'planned';
+        events.push({ at: now, status: 'claim_expired', by: claim.by, note: claim.host });
+        claim = null;
+        expired = true;
+      } else if (status === 'started' && !claim) status = 'planned';
+      const changed =
+        status !== plan.status || (run?.id ?? null) !== (plan.run ?? null) || claim !== (record.claim ?? null);
+      if (changed) {
+        if (status !== plan.status && !expired)
+          events.push({ at: now, status, ...(run ? { run: run.id } : {}) });
+        const next: Row = { ...record, status, events };
+        if (run) next.run = run.id;
+        else delete next.run;
+        if (claim) next.claim = claim;
+        else delete next.claim;
+        this.ledger.planWrite(project, plan.id, next);
+        return {
+          project: plan.project,
+          id: plan.id,
+          created: plan.created,
+          updated: now,
+          by: 'randl',
+          ...next,
+          run: run?.id ?? null,
+        } as Row;
+      }
+      return { ...plan, run: run?.id ?? null } as Row;
+    });
+    return { plans, runs };
+  }
+  /**
+   * A project's plans with their status and the run that carried each out, and the running
+   * runs with the host and slot their `lineage.compute` names, for the queues.
+   */
+  plans(a: Row) {
+    const { plans, runs } = this.syncPlans(a.project);
     const running = runs
       .filter((run) => run.state === 'running' && run.compute)
       .map((run) => {
@@ -2502,6 +2563,148 @@ export class Store {
         };
       });
     return { plans, running };
+  }
+  /** A slot's waiting plans in queue order (plan_queue). */
+  planQueue(a: Row) {
+    const { plans } = this.syncPlans(a.project);
+    return {
+      project: a.project,
+      slot: a.slot,
+      plans: queueOrder(
+        plans.filter(
+          (plan) =>
+            plan.status === 'planned' &&
+            plan.slot === a.slot &&
+            (!a.host || !plan.host || plan.host === a.host),
+        ) as Plan[],
+      ),
+    };
+  }
+  /**
+   * Takes the head of a slot's queue for a supervisor (plan_claim): marks it started with the
+   * claim and returns what the supervisor launches. The worker runs one call at a time, so
+   * two supervisors cannot take the same plan. While a claim waits for its run, the same
+   * claimant gets it again and any other is refused.
+   */
+  planClaim(a: Row) {
+    return this.db.transaction(() => {
+      const now = Date.now() / 1000,
+        { plans } = this.syncPlans(a.project, now);
+      // With a host, only that host's plans (or plans naming no host) are in the slot.
+      const inSlot = (plan: Row) =>
+          plan.slot === a.slot && (!a.host || !plan.host || plan.host === a.host),
+        pending = plans.find(
+          (plan) => inSlot(plan) && plan.status === 'started' && plan.claim && !plan.run,
+        );
+      const launch = (plan: Row) => ({
+        id: plan.id,
+        name: plan.name,
+        config_yaml: plan.config_yaml ?? null,
+        config: plan.config ?? null,
+        resume_run: plan.resume_run ?? null,
+        updates: plan.updates ?? null,
+        gpus: plan.gpus ?? null,
+        parent: plan.parent ?? null,
+        parentUpdate: plan.parentUpdate ?? null,
+        host: plan.host,
+        slot: plan.slot,
+      });
+      if (pending) {
+        if (pending.claim.by === (a.by ?? '') && pending.claim.host === (a.host ?? ''))
+          return { status: 'claimed', repeat: true, plan: launch(pending), claim: pending.claim };
+        throw managementError(
+          'PLAN_CLAIM_PENDING',
+          `Slot ${a.slot} has a claimed plan waiting for its run: ${pending.id}`,
+          { slot: a.slot, plan: pending.id, by: pending.claim.by },
+          409,
+        );
+      }
+      const head = queueOrder(
+        plans.filter((plan) => plan.status === 'planned' && inSlot(plan)) as Plan[],
+      )[0] as Row | undefined;
+      if (!head) return { status: 'empty', plan: null };
+      if (a.dryRun) return { status: 'claimed', dryRun: true, plan: launch(head) };
+      const record = this.ledger.planRecord(a.project, head.id)!,
+        claim = { by: a.by ?? '', host: a.host ?? '', at: now };
+      this.ledger.planWrite(
+        a.project,
+        head.id,
+        {
+          ...record,
+          status: 'started',
+          claim,
+          events: [...(record.events ?? []), { at: now, status: 'claimed', by: claim.by, note: claim.host }],
+        },
+        claim.by || 'randl',
+      );
+      return { status: 'claimed', plan: launch(head), claim };
+    })();
+  }
+  /**
+   * Moves a waiting plan within its slot's queue or to another slot (plan_move), before or
+   * after another waiting plan or to the end, and numbers both queues 1, 2, … in order.
+   */
+  planMove(a: Row) {
+    return this.db.transaction(() => {
+      const now = Date.now() / 1000,
+        { plans } = this.syncPlans(a.project, now),
+        plan = plans.find((item) => item.id === a.id);
+      if (!plan) throw managementError('LEDGER_NOT_FOUND', `Plan not found: ${a.id}`, { id: a.id }, 404);
+      if (plan.status !== 'planned')
+        throw managementError(
+          'PLAN_NOT_WAITING',
+          `Only a waiting plan moves; ${a.id} is ${plan.status}`,
+          { id: a.id, status: plan.status },
+          409,
+        );
+      const slot = a.slot ?? plan.slot,
+        host =
+          a.host ??
+          (slot === plan.slot
+            ? plan.host
+            : (plans.find((item) => item.slot === slot && item.host)?.host ?? plan.host)),
+        // A slot is its name on its host: two hosts' slots of the same name are two queues.
+        waiting = (name: string, on: string) =>
+          queueOrder(
+            plans.filter(
+              (item) =>
+                item.status === 'planned' &&
+                item.slot === name &&
+                (!on || !item.host || item.host === on),
+            ) as Plan[],
+          );
+      const target = moveWithin(waiting(slot, host), plan as Plan, {
+        before: a.before,
+        after: a.after,
+      });
+      const order = new Map<string, Row>();
+      target.forEach((item, index) => order.set(item.id, { queue: index + 1 }));
+      if (slot !== plan.slot || host !== plan.host)
+        waiting(plan.slot, plan.host)
+          .filter((item) => item.id !== plan.id)
+          .forEach((item, index) => order.set(item.id, { queue: index + 1 }));
+      if (a.dryRun) return { status: 'moved', dryRun: true, slot, order: target.map((item) => item.id) };
+      for (const [id, change] of order) {
+        const record = this.ledger.planRecord(a.project, id)!,
+          moved = id === plan.id;
+        const next: Row = {
+          ...record,
+          ...change,
+          ...(moved ? { slot, host, after: null } : {}),
+          ...(moved
+            ? {
+                events: [
+                  ...(record.events ?? []),
+                  { at: now, status: 'moved', by: a.by ?? '', note: slot },
+                ],
+              }
+            : {}),
+        };
+        if (JSON.stringify(next) !== JSON.stringify(record))
+          this.ledger.planWrite(a.project, id, next, a.by || 'randl');
+      }
+      return { status: 'moved', slot, order: target.map((item) => item.id) };
+    })();
   }
   /**
    * GPU occupancy for the Plans page (occupancy.ts): runs by the GPUs their `lineage.compute`
@@ -2571,7 +2774,7 @@ export class Store {
       if (due()) yield;
     }
     // A plan is carried out by the run logging its id as lineage.plan, else the one named like it.
-    const ledger = this.ledger.plans(project),
+    const ledger = this.syncPlans(project).plans as Plan[],
       byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan!, run])),
       byName = new Map(runs.map((run) => [run.name, run]));
     for (const plan of ledger) {
@@ -2579,8 +2782,12 @@ export class Store {
       if (run && !run.compute && plan.host)
         run.placement = { host: plan.host, slot: plan.slot, gpus: plan.gpus ?? null };
     }
+    // Waiting plans, and claimed ones whose run has not appeared yet.
     const plans = ledger.filter(
-      (plan) => plan.status === 'planned' && !carried.has(plan.id) && !carried.has(plan.name),
+      (plan) =>
+        (plan.status === 'planned' || (plan.status === 'started' && !plan.run)) &&
+        !carried.has(plan.id) &&
+        !carried.has(plan.name),
     );
     return {
       ...occupancy(runs, plans, Date.now() / 1000, {
