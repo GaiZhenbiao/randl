@@ -2063,10 +2063,14 @@ aside {
   min-height: 320px;
   overflow: hidden;
   touch-action: none;
-  cursor: grab;
+  cursor: crosshair;
   background: var(--cds-ui-background);
 }
-.lineage-viewport:active {
+/* Holding Shift turns a drag into a pan. */
+.lineage-viewport.pan-ready {
+  cursor: grab;
+}
+.lineage-viewport.panning {
   cursor: grabbing;
 }
 .lineage-empty {

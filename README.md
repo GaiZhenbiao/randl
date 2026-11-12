@@ -208,12 +208,14 @@ the actions for the open or selected runs, as icons; and on the right an **i** b
 counts, **Fit all**, **Focus running runs** and **Lineage settings**.
 
 The page opens at 100% on the running runs (all of them when they fit, else the one that
-reported last). Two-finger touchpad scrolling or the mouse wheel pans; pinching (or Ctrl+wheel)
-zooms around the pointer; on touch screens, one finger pans and two pinch. **Fit all** and
+reported last). Two-finger touchpad scrolling, the mouse wheel or Shift+drag pans (the cursor
+becomes a hand while Shift is held); pinching (or Ctrl+wheel) zooms around the pointer; on touch
+screens, one finger pans and two pinch. **Fit all** and
 **Focus running runs** are in the toolbar. The arrangement, colouring and the two checkboxes are
 remembered per project in this browser.
 
-To compare runs, Shift-click them, Shift-drag a box around them, or use **Select path from
+To compare runs, drag a box around them on the canvas (Ctrl- or ⌘-drag adds to the selection,
+as Shift-, Ctrl- or ⌘-click does), or use **Select path from
 root** or **Select branch** for the open run, then **Compare** (it shows how many): the project's
 workspace view shows exactly those runs as solos (which override visibility until you clear
 them) in its existing panels. The open run and the selection are kept in the URL (`?run=`,

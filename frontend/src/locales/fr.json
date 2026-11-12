@@ -472,7 +472,7 @@
   "lineage.selection.compareCount": "Comparer {count}",
   "lineage.selection.count.one": "{count} exécution sélectionnée",
   "lineage.selection.count.other": "{count} exécutions sélectionnées",
-  "lineage.selection.hint": "Maj+clic sur des exécutions ou Maj+glisser autour pour les comparer dans l’espace de travail.",
+  "lineage.selection.hint": "Faites glisser un cadre autour des exécutions pour les sélectionner ; Ctrl ou ⌘ + glisser, Maj+clic ou Ctrl+clic ajoute à la sélection. Maj+glisser ou défiler à deux doigts déplace la vue ; pincer ou Ctrl+molette zoome.",
   "lineage.selection.label": "Exécutions sélectionnées",
   "lineage.selection.picked": "Sélectionnée",
   "lineage.settings.errors.saveFailed": "Impossible d’enregistrer les paramètres de lignée",

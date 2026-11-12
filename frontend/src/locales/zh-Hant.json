@@ -472,7 +472,7 @@
   "lineage.selection.compareCount": "比較 {count} 個",
   "lineage.selection.count.one": "已選 {count} 個執行",
   "lineage.selection.count.other": "已選 {count} 個執行",
-  "lineage.selection.hint": "按住 Shift 點擊執行或拖曳框選，即可在工作區中比較。",
+  "lineage.selection.hint": "拖曳框選執行；按住 Ctrl 或 ⌘ 拖曳、按住 Shift 或 Ctrl 點擊可加入選擇。按住 Shift 拖曳或雙指捲動可平移；捏合或 Ctrl+滾輪可縮放。",
   "lineage.selection.label": "已選執行",
   "lineage.selection.picked": "已選",
   "lineage.settings.errors.saveFailed": "無法儲存譜系設定",

@@ -472,7 +472,7 @@
   "lineage.selection.compareCount": "Compare {count}",
   "lineage.selection.count.one": "{count} run selected",
   "lineage.selection.count.other": "{count} runs selected",
-  "lineage.selection.hint": "Shift-click runs or Shift-drag around them to compare them in the workspace.",
+  "lineage.selection.hint": "Drag a box around runs to select them; Ctrl- or ⌘-drag, Shift-click or Ctrl-click adds to the selection. Shift-drag or two-finger scroll pans; pinch or Ctrl+wheel zooms.",
   "lineage.selection.label": "Selected runs",
   "lineage.selection.picked": "Selected",
   "lineage.settings.errors.saveFailed": "Unable to save lineage settings",

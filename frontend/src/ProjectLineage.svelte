@@ -307,13 +307,27 @@
       centre(id, scale);
   }
 
-  // Gestures. Two-finger touchpad scrolling pans; a pinch (which browsers send as wheel events
-  // with ctrlKey, or as Safari gesture events) zooms around the fingers; a mouse wheel pans and
-  // Ctrl+wheel zooms. On touch screens one finger pans and two pinch. Shift+drag with a mouse
-  // draws a lasso that adds cards to the selection.
+  // Gestures. A mouse drag on empty canvas draws a selection box (Ctrl or Cmd adds to the
+  // selection); Shift+drag pans. Two-finger touchpad scrolling pans; a pinch (which browsers
+  // send as wheel events with ctrlKey, or as Safari gesture events) zooms around the fingers; a
+  // mouse wheel pans and Ctrl+wheel zooms. On touch screens one finger pans and two pinch.
   const pointers = new Map<number, { x: number; y: number }>();
   let moved = false,
-    lasso = $state<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+    lasso = $state<{ x1: number; y1: number; x2: number; y2: number; add: boolean } | null>(null),
+    shiftHeld = $state(false),
+    panning = $state(false);
+  $effect(() => {
+    const track = (event: KeyboardEvent) => (shiftHeld = event.shiftKey);
+    const release = () => (shiftHeld = false);
+    window.addEventListener('keydown', track);
+    window.addEventListener('keyup', track);
+    window.addEventListener('blur', release);
+    return () => {
+      window.removeEventListener('keydown', track);
+      window.removeEventListener('keyup', track);
+      window.removeEventListener('blur', release);
+    };
+  });
   const local = (event: { clientX: number; clientY: number }) => {
     const box = viewport!.getBoundingClientRect();
     return { x: event.clientX - box.left, y: event.clientY - box.top };
@@ -324,11 +338,12 @@
     const onControl = !!(event.target as Element).closest('button, a');
     if (event.pointerType === 'mouse' && (event.button !== 0 || onControl)) return;
     const at = local(event);
-    if (event.pointerType === 'mouse' && event.shiftKey) {
-      lasso = { x1: at.x, y1: at.y, x2: at.x, y2: at.y };
+    if (event.pointerType === 'mouse' && !event.shiftKey) {
+      lasso = { x1: at.x, y1: at.y, x2: at.x, y2: at.y, add: event.ctrlKey || event.metaKey };
       (event.currentTarget as Element).setPointerCapture(event.pointerId);
       return;
     }
+    if (event.pointerType === 'mouse') panning = true;
     pointers.set(event.pointerId, at);
     // A touch that starts on a card still pans; it becomes a tap if it does not move.
     if (!onControl) (event.currentTarget as Element).setPointerCapture(event.pointerId);
@@ -365,10 +380,13 @@
         a = toCanvas(box.x1, box.y1),
         b = toCanvas(box.x2, box.y2);
       lasso = null;
-      if (Math.abs(box.x2 - box.x1) > 4 || Math.abs(box.y2 - box.y1) > 4)
-        pick([...picked, ...cardsIn(layout.positions, { x1: a.x, y1: a.y, x2: b.x, y2: b.y })]);
+      if (Math.abs(box.x2 - box.x1) > 4 || Math.abs(box.y2 - box.y1) > 4) {
+        const inside = cardsIn(layout.positions, { x1: a.x, y1: a.y, x2: b.x, y2: b.y });
+        pick(box.add ? [...picked, ...inside] : inside);
+      }
       return;
     }
+    panning = false;
     pointers.delete(event.pointerId);
   }
   // A drag that ends over a card is not a click on it.
@@ -660,8 +678,9 @@
 {/snippet}
 
 <div class="lineage-page">
-  {#if rail}<div class="lineage-rail-controls" use:portal={rail}>{@render toolbar()}</div>{:else}{@render
-      toolbar()}{/if}
+  {#if rail}<div class="lineage-rail-controls" use:portal={rail}>
+      {@render toolbar()}
+    </div>{:else}{@render toolbar()}{/if}
   {#if menu && menuAnchor}<ContextPopover
       anchor={menuAnchor}
       title={menu === 'filters'
@@ -773,6 +792,8 @@
   <div class="lineage-body" class:with-details={!!selected && !!index?.nodes.has(selected)}>
     <div
       class="lineage-viewport"
+      class:pan-ready={shiftHeld}
+      class:panning
       bind:this={viewport}
       role="presentation"
       onpointerdown={pointerDown}

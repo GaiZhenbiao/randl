@@ -472,7 +472,7 @@
   "lineage.selection.compareCount": "Comparar {count}",
   "lineage.selection.count.one": "{count} ejecución seleccionada",
   "lineage.selection.count.other": "{count} ejecuciones seleccionadas",
-  "lineage.selection.hint": "Mayús+clic en ejecuciones o Mayús+arrastrar alrededor para compararlas en el espacio de trabajo.",
+  "lineage.selection.hint": "Arrastra un recuadro alrededor de las ejecuciones para seleccionarlas; Ctrl o ⌘ + arrastrar, Mayús+clic o Ctrl+clic añade a la selección. Mayús+arrastrar o desplazar con dos dedos mueve la vista; pellizcar o Ctrl+rueda hace zoom.",
   "lineage.selection.label": "Ejecuciones seleccionadas",
   "lineage.selection.picked": "Seleccionada",
   "lineage.settings.errors.saveFailed": "No se pudo guardar la configuración del linaje",

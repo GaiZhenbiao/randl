@@ -472,7 +472,7 @@
   "lineage.selection.compareCount": "{count} 件を比較",
   "lineage.selection.count.one": "{count} 件の実行を選択",
   "lineage.selection.count.other": "{count} 件の実行を選択",
-  "lineage.selection.hint": "Shift キーを押しながら実行をクリックまたはドラッグで囲むと、ワークスペースで比較できます。",
+  "lineage.selection.hint": "ドラッグで囲んで実行を選択します。Ctrl/⌘ を押しながらドラッグ、または Shift/Ctrl を押しながらクリックで選択に追加します。Shift を押しながらドラッグ、または 2 本指スクロールでパン、ピンチまたは Ctrl+ホイールでズームします。",
   "lineage.selection.label": "選択した実行",
   "lineage.selection.picked": "選択済み",
   "lineage.settings.errors.saveFailed": "系譜の設定を保存できません",

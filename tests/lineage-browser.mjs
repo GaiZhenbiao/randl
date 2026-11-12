@@ -341,23 +341,56 @@ try {
   await expect(details.locator('h2')).toHaveText('v102_head');
   checks.push('Show in lineage from the runs table and a run page selects those runs');
 
-  // Lasso: Shift+drag around cards adds them to the selection.
+  // A drag on empty canvas draws a selection box; Ctrl adds to the selection; Shift pans.
   await page.getByRole('button', { name: 'Clear selection' }).click();
   const box = async (name) => card(name).boundingBox();
-  const a = await box('v101'),
-    b = await box('v102');
-  await page.mouse.move(Math.min(a.x, b.x) - 10, Math.min(a.y, b.y) - 10);
-  await page.keyboard.down('Shift');
-  await page.mouse.down();
-  await page.mouse.move(
-    Math.max(a.x + a.width, b.x + b.width) + 10,
-    Math.max(a.y + a.height, b.y + b.height) + 10,
-    { steps: 5 },
-  );
-  await page.mouse.up();
-  await page.keyboard.up('Shift');
+  const drag = async (from, to, modifier) => {
+    await page.mouse.move(from.x, from.y);
+    if (modifier) await page.keyboard.down(modifier);
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 5 });
+    await page.mouse.up();
+    if (modifier) await page.keyboard.up(modifier);
+  };
+  const around = async (names) => {
+    const boxes = await Promise.all(names.map(box)),
+      frame = await page.locator('.lineage-viewport').boundingBox(),
+      clamp = (point) => ({
+        x: Math.min(Math.max(point.x, frame.x + 4), frame.x + frame.width - 4),
+        y: Math.min(Math.max(point.y, frame.y + 4), frame.y + frame.height - 4),
+      });
+    return [
+      {
+        x: Math.min(...boxes.map((b) => b.x)) - 10,
+        y: Math.min(...boxes.map((b) => b.y)) - 10,
+      },
+      {
+        x: Math.max(...boxes.map((b) => b.x + b.width)) + 10,
+        y: Math.max(...boxes.map((b) => b.y + b.height)) + 10,
+      },
+    ].map(clamp);
+  };
+  await drag(...(await around(['v101', 'v102'])));
   await expect(page.locator('.lineage-card.picked')).toHaveCount(2);
-  checks.push('Shift+drag draws a lasso that selects cards');
+  await drag(...(await around(['v100'])), 'Control');
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(3);
+  // Without Ctrl a new box replaces the selection.
+  await drag(...(await around(['v100'])));
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
+  // Holding Shift shows a grab cursor, and Shift+drag pans without selecting.
+  const viewport = page.locator('.lineage-viewport');
+  await page.keyboard.down('Shift');
+  await expect(viewport).toHaveClass(/pan-ready/);
+  await page.keyboard.up('Shift');
+  await expect(viewport).not.toHaveClass(/pan-ready/);
+  const [startX, startY] = await transform();
+  const empty = await around(['v100']);
+  await drag(empty[0], { x: empty[0].x + 60, y: empty[0].y + 40 }, 'Shift');
+  await expect
+    .poll(async () => (await transform()).slice(0, 2))
+    .toEqual([startX + 60, startY + 40]);
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
+  checks.push('Dragging draws a selection box (Ctrl adds); Shift+drag pans with a grab cursor');
 
   // Hosts: filter to one (its ancestors stay as context) and colour cards by host.
   await (await menu('Filters')).getByLabel('Host').selectOption('Sirius');
