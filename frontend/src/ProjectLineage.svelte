@@ -60,6 +60,7 @@
     dark,
     onRun,
     onCompare,
+    rail,
   }: {
     project: string;
     runs: Run[];
@@ -70,7 +71,14 @@
     onRun: (run: Run) => void;
     /** Opens the workspace with exactly these runs shown. */
     onCompare: (ids: string[]) => void;
+    /** The header element the controls move into on wide screens; without it they form a row. */
+    rail?: HTMLElement;
   } = $props();
+  /** Moves an element into another one (the header) for as long as it is shown. */
+  function portal(node: HTMLElement, target: HTMLElement) {
+    target.append(node);
+    return { destroy: () => node.remove() };
+  }
 
   // The page's choices for a project, kept in this browser.
   type ColorBy = 'run' | 'host';
@@ -545,11 +553,11 @@
   let showLabels = $derived(scale >= 0.55);
 </script>
 
-<div class="lineage-page">
+{#snippet toolbar()}
   <div class="lineage-toolbar" role="toolbar" aria-label={$t('lineage.toolbar.label')}>
     <div class="lineage-search">
       <Search
-        size="lg"
+        size={rail ? 'sm' : 'lg'}
         labelText={$t('lineage.filter.search')}
         placeholder={$t('lineage.filter.search')}
         closeButtonLabelText={$t('common.search.clear')}
@@ -558,7 +566,7 @@
     </div>
     <Button
       kind="ghost"
-      size="field"
+      size="small"
       icon={Filter}
       aria-haspopup="dialog"
       aria-expanded={menu === 'filters'}
@@ -569,7 +577,7 @@
     >
     <Button
       kind="ghost"
-      size="field"
+      size="small"
       icon={View}
       aria-haspopup="dialog"
       aria-expanded={menu === 'view'}
@@ -582,14 +590,14 @@
       >
         {#if selected && index?.nodes.has(selected)}<Button
             kind="ghost"
-            size="field"
+            size="small"
             icon={TreeViewAlt}
             iconDescription={$t('lineage.selection.addPath')}
             tooltipPosition="bottom"
             on:click={() => pick([...picked, ...path])}
           /><Button
             kind="ghost"
-            size="field"
+            size="small"
             icon={Branch}
             iconDescription={$t('lineage.selection.addBranch')}
             tooltipPosition="bottom"
@@ -597,14 +605,14 @@
           />{/if}
         {#if pickedRuns.length}<Button
             kind="ghost"
-            size="field"
+            size="small"
             icon={Erase}
             iconDescription={$t('lineage.selection.clear')}
             tooltipPosition="bottom"
             on:click={() => pick([])}
           /><Button
             kind="primary"
-            size="field"
+            size="small"
             icon={ChartLine}
             on:click={() => onCompare(pickedRuns)}
             >{$t('lineage.selection.compareCount', { count: pickedRuns.length })}</Button
@@ -613,7 +621,7 @@
     <span class="lineage-toolbar-actions">
       <Button
         kind="ghost"
-        size="field"
+        size="small"
         icon={Information}
         iconDescription={$t('lineage.toolbar.info')}
         tooltipPosition="bottom"
@@ -623,7 +631,7 @@
       />
       <Button
         kind="ghost"
-        size="field"
+        size="small"
         icon={ZoomOut}
         iconDescription={$t('lineage.zoom.out')}
         tooltipPosition="bottom"
@@ -631,7 +639,7 @@
       />
       <Button
         kind="ghost"
-        size="field"
+        size="small"
         icon={ZoomIn}
         iconDescription={$t('lineage.zoom.in')}
         tooltipPosition="bottom"
@@ -639,7 +647,7 @@
       />
       <Button
         kind="ghost"
-        size="field"
+        size="small"
         icon={FitToScreen}
         iconDescription={$t('lineage.zoom.fit')}
         tooltipPosition="bottom"
@@ -647,7 +655,7 @@
       />
       <Button
         kind="ghost"
-        size="field"
+        size="small"
         icon={InProgress}
         iconDescription={$t('lineage.zoom.running')}
         tooltipPosition="bottom"
@@ -656,7 +664,7 @@
       />
       <Button
         kind="ghost"
-        size="field"
+        size="small"
         icon={SettingsAdjust}
         iconDescription={$t('lineage.settings.open')}
         tooltipPosition="bottom"
@@ -665,6 +673,11 @@
       />
     </span>
   </div>
+{/snippet}
+
+<div class="lineage-page">
+  {#if rail}<div class="lineage-rail-controls" use:portal={rail}>{@render toolbar()}</div>{:else}{@render
+      toolbar()}{/if}
   {#if menu && menuAnchor}<ContextPopover
       anchor={menuAnchor}
       title={menu === 'filters'

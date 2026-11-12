@@ -201,7 +201,7 @@ styles. Select a card for what changed, its hypothesis, result and verdict, rela
 bases, compute segments, the metric along its lineage, and every config difference from its
 parent or from another run you pick.
 
-The toolbar is one row: the name filter; **Filters** (group, tag, host, collapse rejected
+The controls sit in the page header on wide screens (a single row below it on narrow ones): the name filter; **Filters** (group, tag, host, collapse rejected
 branches, show runs without lineage; the button counts the active ones); **View** (arrange cards
 by lineage depth, start update or start time, and colour them by run or host); the actions for
 the open or selected runs, as icons; and on the right an **i** button with the counts, zoom,

@@ -1695,6 +1695,8 @@
    * Shows exactly these runs in the project's workspace view, as solos (which override
    * visibility until cleared), then opens the workspace.
    */
+  /** Where the Lineage page puts its controls: the header's page bar. */
+  let lineageRail = $state<HTMLDivElement>();
   async function compareInWorkspace(ids: string[]) {
     if (!view || !selection(view.body.visible, ids, message('lineage.compare.done', { count: ids.length })))
       return;
@@ -2581,7 +2583,10 @@
         add={false}
         onDefaults={() => openDefaults()}
         onAdd={() => openPanel()}
-      />{/if}{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
+      />{/if}{:else if page === 'lineage'}<div
+      class="lineage-rail"
+      bind:this={lineageRail}
+    ></div>{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
       class="run-actions"
     >
       {#if page === 'run' && currentRun?.state === 'running' && currentRun.snapshot_at == null}{@const stopLabel =
@@ -3263,6 +3268,7 @@
           {dark}
           onRun={(run) => details(run)}
           onCompare={compareInWorkspace}
+          rail={width >= 1056 ? lineageRail : undefined}
         />{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div
           class="project-page-content"
         >

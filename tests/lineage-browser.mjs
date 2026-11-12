@@ -127,8 +127,14 @@ try {
   await expect(cards).toHaveCount(4);
   // The toolbar is one row; its menus, counts and options open on demand.
   const toolbar = page.locator('.lineage-toolbar');
+  // Wide screens put the controls in the header itself; narrow ones keep a single row below it.
+  assert.equal(await toolbar.evaluate((item) => !!item.closest('header')), true);
+  await page.setViewportSize({ width: 900, height: 900 });
+  await expect.poll(() => toolbar.evaluate((item) => !!item.closest('header'))).toBe(false);
   const { height } = await toolbar.boundingBox();
   assert.ok(height <= 56, 'one toolbar row: ' + height);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect.poll(() => toolbar.evaluate((item) => !!item.closest('header'))).toBe(true);
   const menu = async (name) => {
     await toolbar.getByRole('button', { name }).click();
     return page.getByRole('dialog');
@@ -153,7 +159,7 @@ try {
   ).toHaveCount(1);
   await expect(card('v102')).toContainText('Sirius · 2× RTX 4090 48GB');
   checks.push(
-    'One toolbar row; cards show verdicts, hardware and metrics; links read as the logged change',
+    'Controls in the header (one row when narrow); cards show verdicts, hardware and metrics; links read as the logged change',
   );
 
   // The page opens at 100% on the running run, which has a rippling accent ring.

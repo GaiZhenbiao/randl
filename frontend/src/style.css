@@ -1978,6 +1978,18 @@ aside {
   padding-inline: 16px;
 }
 /* The Lineage page: a pannable graph of run cards beside a details panel. */
+/* On wide screens the controls sit in the header's page bar instead of a row of their own. */
+.lineage-rail,
+.lineage-rail-controls {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.lineage-rail-controls .lineage-toolbar {
+  flex: 1 1 auto;
+  padding: 0 0 0 16px;
+  border-bottom: 0;
+}
 .layered-shell > main.lineage-main {
   display: flex;
   flex-direction: column;
