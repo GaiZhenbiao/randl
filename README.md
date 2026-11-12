@@ -295,16 +295,21 @@ renames metric keys of a stored run, for example so older runs compare with newe
 history records (rewritten in place, one stored block at a time), chart points, logged media,
 metric list, summary and define_metric settings. A key already renamed is left alone. A target
 key that exists is refused unless `merge` (`--combine`) is set, and a merge is refused while any
-step or history record holds both keys. Each rename returns an undo ID for
+step or history record holds both keys; one refused rename refuses the whole request. Each
+rename reports its status and how many history records and points hold the old key, and
+`dryRun` (`--dry-run`) only reports. Each rename returns an undo ID for
 `run_metrics_rename_undo` (`--undo ID`), which restores the records, points and summary as they
 were.
 
 `run_history_write` (`randl runs write-history --id RUN --rows-file rows.json`) writes numeric
-values at given steps of a stored run, such as audit results computed after training, which the
-SDK cannot log at earlier steps. Each row (`{"step": 545000, "values": {"audit/…/value": 0.73}}`)
-merges into the history record at that `_step`, or adds a record when there is none. A
-different stored value at the same step is refused unless `replace` (`--replace`) is set;
-identical values change nothing. These three tools are not available to the Assistant, and all
+values into a stored run's history, such as audit results computed after training, which the
+SDK cannot log at earlier steps. A row names its record by a logged field,
+`{"match": {"update": 473000}, "values": {"audit/…/value": 0.73}}`, where exactly one record
+must match, or by step, `{"step": 545000, "values": {…}}`, which adds a record when none has
+that `_step`. A different stored value is refused unless `replace` (`--replace`) is set, and
+identical values change nothing. Every row reports a status (merged, added, unchanged, or
+refused for no match, several matches or a conflict); `dryRun` (`--dry-run`) only reports, and
+one refused row refuses the whole request. These three tools are not available to the Assistant, and all
 of them are audited with their `by`.
 
 ### Project overview and server status

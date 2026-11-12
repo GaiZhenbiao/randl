@@ -426,7 +426,11 @@ export function lineageNode(
     // The verdict tag decides; the block's verdict applies to runs without one.
     verdict:
       verdicts.find((verdict) => tags.has('verdict:' + verdict)) ??
-      verdicts.find((verdict) => verdict === text(object(run.lineage?.verdict)?.status)) ??
+      // `verdict` is the status itself, or {status, reason}.
+      verdicts.find(
+        (verdict) =>
+          verdict === (text(run.lineage?.verdict) ?? text(object(run.lineage?.verdict)?.status)),
+      ) ??
       null,
     hypothesis: text(run.lineage?.hypothesis),
     change: text(run.lineage?.change),

@@ -221,11 +221,11 @@ test('renaming a metric moves its history, points, summary and settings, and und
   );
   assert.throws(
     () => drain(store.metricsRename({ id, renames: [{ from: 'loss', to: 'new' }] })),
-    /already exists/,
+    /the new key exists; merge to combine/,
   );
   assert.throws(
     () => drain(store.metricsRename({ id, renames: [{ from: 'loss', to: 'new' }], merge: true })),
-    /same step/,
+    /a step or record has both keys/,
   );
   // Undo restores the original records exactly.
   const undone = drain(store.metricsRenameUndo({ undo: renames[0].undo }));
@@ -285,7 +285,10 @@ test('history writes merge audit values into records at their steps', async (t) 
       }),
     );
   const revision = run().revision;
-  assert.deepEqual(write(), { id, changed: true, added: 1, updated: 2 });
+  const statuses = (result) => result.rows.map((row) => row.status);
+  assert.deepEqual(statuses(write({ dryRun: true })), ['merged', 'merged', 'added']);
+  assert.equal(run().revision, revision, 'a dry run writes nothing');
+  assert.deepEqual(statuses(write()), ['merged', 'merged', 'added']);
   assert.ok(run().revision > revision);
   assert.deepEqual(records()[100], { _step: 1000, loss: 100, [audit]: 0.5 });
   assert.deepEqual(records().at(-1), { _step: 9000, [audit]: 0.8 });
@@ -297,11 +300,13 @@ test('history writes merge audit values into records at their steps', async (t) 
   assert.ok(store.keys([id]).includes(audit));
   // The same write again changes nothing; a different value needs replace.
   const again = run().revision;
-  assert.deepEqual(write(), { id, changed: false, added: 0, updated: 0 });
+  const repeat = write();
+  assert.equal(repeat.changed, false);
+  assert.deepEqual(statuses(repeat).slice(0, 2), ['unchanged', 'unchanged']);
   assert.equal(run().revision, again);
   assert.throws(
     () => drain(store.historyWrite({ id, rows: [{ step: 1000, values: { loss: 7 } }] })),
-    /Different values are already stored: loss@1000/,
+    /1 of 1 rows were refused \(row 0: conflict\); nothing was written/,
   );
   drain(store.historyWrite({ id, rows: [{ step: 1000, values: { loss: 7 } }], replace: true }));
   assert.equal(records()[100].loss, 7);
@@ -309,6 +314,95 @@ test('history writes merge audit values into records at their steps', async (t) 
     series('loss').find(([step]) => step === 1000),
     [1000, 7],
   );
+});
+
+test('history rows can name their record by a logged field instead of the step', async (t) => {
+  // Steps here are offset from updates, as in runs resumed with step offsets.
+  const rows = history(300, (index) => ({
+    _step: 7000 + index * 3,
+    update: 1000 + index * 10,
+    loss: index,
+  }));
+  rows.push({ _step: 9000, update: 1500, loss: 0 }); // a second record logged at update 1500
+  const { store, id, records, series } = await historyFixture(t, rows);
+  const audit = 'audit/box/value';
+  const merge = (extra = {}) =>
+    drain(
+      store.historyWrite({
+        id,
+        rows: [
+          { match: { update: 1100 }, values: { [audit]: 0.6 } },
+          { match: { update: 1500 }, values: { [audit]: 0.7 } },
+          { match: { update: 1234 }, values: { [audit]: 0.8 } },
+        ],
+        ...extra,
+      }),
+    );
+  assert.deepEqual(
+    merge({ dryRun: true }).rows.map(({ status, reason, step }) => [status, reason, step]),
+    [
+      ['merged', undefined, 7030],
+      ['refused', 'ambiguous', undefined],
+      ['refused', 'no-match', undefined],
+    ],
+  );
+  assert.throws(() => merge(), /2 of 3 rows were refused/);
+  assert.deepEqual(series(audit), [], 'nothing written');
+  const one = drain(
+    store.historyWrite({ id, rows: [{ match: { update: 1100 }, values: { [audit]: 0.6 } }] }),
+  );
+  assert.deepEqual(one.rows, [{ row: 0, status: 'merged', step: 7030, keys: 1, replaced: 0 }]);
+  assert.deepEqual(records()[10], { _step: 7030, update: 1100, loss: 10, [audit]: 0.6 });
+  assert.deepEqual(series(audit), [[7030, 0.6]]);
+});
+
+test('a rename dry run counts the records and points of each key', async (t) => {
+  const rows = history(50, (step) =>
+    step < 20 ? { _step: step, old: step } : { _step: step, b: 1 },
+  );
+  const { store, id, records } = await historyFixture(t, rows);
+  const before = records();
+  const plan = drain(
+    store.metricsRename({
+      id,
+      renames: [
+        { from: 'old', to: 'new' },
+        { from: 'b', to: 'old' },
+        { from: 'gone', to: 'x' },
+      ],
+      dryRun: true,
+    }),
+  );
+  assert.deepEqual(
+    plan.renames.map(({ from, status, reason, records, points }) => [
+      from,
+      status,
+      reason,
+      records,
+      points,
+    ]),
+    [
+      ['old', 'renamed', undefined, 20, 20],
+      ['b', 'refused', 'exists', 30, 30],
+      ['gone', 'missing', undefined, 0, 0],
+    ],
+  );
+  assert.deepEqual(records(), before);
+  // One refused rename refuses them all.
+  assert.throws(
+    () =>
+      drain(
+        store.metricsRename({
+          id,
+          renames: [
+            { from: 'old', to: 'new' },
+            { from: 'b', to: 'old' },
+          ],
+        }),
+      ),
+    /nothing was renamed/,
+  );
+  assert.deepEqual(records(), before);
 });
 
 test('metric renames and history writes are tools with audit, summary and a CLI', async (t) => {
@@ -358,7 +452,7 @@ test('metric renames and history writes are tools with audit, summary and a CLI'
     '--rows',
     JSON.stringify([{ step: 1, values: { 'audit/x': 0.5 } }]),
   );
-  assert.deepEqual(written, { id: run.id, changed: true, added: 0, updated: 1 });
+  assert.deepEqual(written.rows, [{ row: 0, status: 'merged', step: 1, keys: 1, replaced: 0 }]);
   const summary = await cli('runs', 'update-meta', '--id', run.id, '--summary', '{"audit/x": 0.5}');
   assert.equal(summary.summary['audit/x'], 0.5);
   const undone = await cli('runs', 'rename-metrics', '--undo', String(renamed.renames[0].undo));

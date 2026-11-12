@@ -314,7 +314,7 @@ export const toolCatalog = [
   {
     name: 'run_metrics_rename',
     description:
-      "Rename metric keys of a stored run, for example old names to current ones so runs compare: its history records, chart points, logged media, metric index, summary and define_metric settings. Not available to the Assistant. renames is a list of {from, to}. A key already renamed (from gone, to present) is left alone; a target that already exists is refused unless merge is true, and a merge is refused when a step or history record holds both keys. Each applied rename returns an undo id for run_metrics_rename_undo. by names the caller in the audit log.",
+      "Rename metric keys of a stored run, for example old names to current ones so runs compare: its history records, chart points, logged media, metric index, summary and define_metric settings. Not available to the Assistant. renames is a list of {from, to}. A key already renamed (from gone, to present) is left alone; a target that already exists is refused unless merge is true, and a merge is refused when a step or history record holds both keys. Each rename reports its status (renamed, merged, unchanged, missing, or refused with exists, both or same) and how many history records and points hold the old key; dryRun: true only reports, and one refused rename refuses the whole request. Each applied rename returns an undo id for run_metrics_rename_undo. by names the caller in the audit log.",
     agent: false,
     parameters: schema(
       {
@@ -326,6 +326,7 @@ export const toolCatalog = [
           items: schema({ from: metricName, to: metricName }, ['from', 'to']),
         },
         merge: { type: 'boolean' },
+        dryRun: { type: 'boolean' },
         by: { type: 'string', maxLength: 200 },
       },
       ['id', 'renames'],
@@ -344,7 +345,7 @@ export const toolCatalog = [
   {
     name: 'run_history_write',
     description:
-      "Write numeric values at given steps of a stored run's history, such as audit results computed after training (the SDK cannot log at earlier steps). Not available to the Assistant. rows is a list of {step, values: {metric: number}}; each merges into the history record at that _step, or adds one. A different stored value at the same step and metric is refused unless replace is true; identical values change nothing. by names the caller in the audit log.",
+      "Write numeric values into a stored run's history, such as audit results computed after training (the SDK cannot log at earlier steps). Not available to the Assistant. Each row is {step, values} (the record with that _step, or a new record) or {match, values}, where match names logged fields such as {\"update\": 473000} and exactly one record must match. values maps metric names to numbers and merges into the record; a different stored value is refused unless replace is true, and identical values change nothing. Every row gets a status (merged, added, unchanged, or refused with no-match, ambiguous or conflict). dryRun: true writes nothing; otherwise one refused row refuses the whole request. by names the caller in the audit log.",
     agent: false,
     parameters: schema(
       {
@@ -353,9 +354,17 @@ export const toolCatalog = [
           type: 'array',
           minItems: 1,
           maxItems: 100000,
-          items: schema(
-            {
+          items: {
+            ...schema(
+              {
               step: { type: 'number' },
+              match: {
+                type: 'object',
+                minProperties: 1,
+                maxProperties: 20,
+                propertyNames: { maxLength: 512 },
+                additionalProperties: { type: ['string', 'number', 'boolean'] },
+              },
               values: {
                 type: 'object',
                 propertyNames: { pattern: '^[^_]', maxLength: 512 },
@@ -363,11 +372,14 @@ export const toolCatalog = [
                 minProperties: 1,
                 maxProperties: 1000,
               },
-            },
-            ['step', 'values'],
-          ),
+              },
+              ['values'],
+            ),
+            oneOf: [{ required: ['step'] }, { required: ['match'] }],
+          },
         },
         replace: { type: 'boolean' },
+        dryRun: { type: 'boolean' },
         by: { type: 'string', maxLength: 200 },
       },
       ['id', 'rows'],

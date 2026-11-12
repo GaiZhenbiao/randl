@@ -363,9 +363,78 @@ export class Store {
    * one block at a time, then the index and summary change in one transaction.
    */
   *metricsRename(args: Row): Generator<void, Row> {
+    const renames = args.renames as { from: string; to: string }[],
+      { row, key } = this.editableRun(args.id),
+      summary = JSON.parse(row.summary),
+      file = this.history.fileId('wandb-history.jsonl');
+    // History records holding each source key, and holding both keys.
+    const records = renames.map(() => 0),
+      both = renames.map(() => 0);
+    if (file !== undefined) {
+      let count = 0;
+      for (const line of this.history.lines(key, file)) {
+        let record: Row | undefined;
+        renames.forEach(({ from, to }, index) => {
+          if (!line.content.includes(JSON.stringify(from))) return;
+          record ??= JSON.parse(line.content) as Row;
+          if (!Object.hasOwn(record, from)) return;
+          records[index]++;
+          if (Object.hasOwn(record, to)) both[index]++;
+        });
+        if (++count % 4096 === 0) yield;
+      }
+    }
+    const plan = renames.map(({ from, to }, index): Row => {
+      const fromId = this.history.metricId(from),
+        toId = this.history.metricId(to),
+        points = fromId === undefined ? 0 : this.history.series(key, fromId).steps.length,
+        counts = { records: records[index], points };
+      if (from === to) return { from, to, status: 'refused', reason: 'same', ...counts };
+      const source = this.hasMetric(key, summary, from),
+        target = this.hasMetric(key, summary, to);
+      if (!source) return { from, to, status: target ? 'unchanged' : 'missing', ...counts };
+      if (!target) return { from, to, status: 'renamed', ...counts };
+      if (!args.merge) return { from, to, status: 'refused', reason: 'exists', ...counts };
+      const steps = toId === undefined ? new Set() : new Set(this.history.series(key, toId).steps);
+      const overlap =
+        both[index] ||
+        (fromId !== undefined &&
+          this.history.series(key, fromId).steps.some((step) => steps.has(step)));
+      return overlap
+        ? { from, to, status: 'refused', reason: 'both', ...counts }
+        : { from, to, status: 'merged', ...counts };
+    });
+    if (args.dryRun) return { id: args.id, dryRun: true, renames: plan };
+    const refused = plan.filter((item) => item.status === 'refused');
+    if (refused.length)
+      throw managementError(
+        'METRIC_RENAMES_REFUSED',
+        `Refused, so nothing was renamed: ${refused
+          .slice(0, 3)
+          .map(
+            (item) =>
+              `${item.from} → ${item.to} (${
+                item.reason === 'exists'
+                  ? 'the new key exists; merge to combine'
+                  : item.reason === 'both'
+                    ? 'a step or record has both keys'
+                    : 'same name'
+              })`,
+          )
+          .join('; ')}.`,
+        { refused: refused.length },
+        409,
+      );
     const results: Row[] = [];
-    for (const { from, to } of args.renames as { from: string; to: string }[])
-      results.push(yield* this.renameMetric(args.id, from, to, !!args.merge, args.by ?? ''));
+    for (const item of plan)
+      results.push(
+        item.status === 'renamed' || item.status === 'merged'
+          ? {
+              ...item,
+              ...(yield* this.renameMetric(args.id, item.from, item.to, !!args.merge, args.by ?? '')),
+            }
+          : item,
+      );
     return { id: args.id, renames: results };
   }
   private *renameMetric(
@@ -550,63 +619,101 @@ export class Store {
     })();
   }
   /**
-   * Writes numeric values at given steps of a stored run's history (`run_history_write`), such
-   * as audit results computed after training. Each row merges into the history record at its
-   * `_step`, or adds a record when there is none. A different stored value at the same step
-   * and key is refused unless `replace` is set; identical values change nothing.
+   * Writes numeric values into a stored run's history (`run_history_write`), such as audit
+   * results computed after training. A row names its record by `_step` (`step`; a record is
+   * added when none has it) or by logged fields (`match`, such as {"update": 473000}; exactly
+   * one record must match). Values merge into the record; a different stored value is a
+   * conflict unless `replace` is set, and identical values change nothing. Every row gets a
+   * status; with `dryRun` nothing is written, otherwise any refused row refuses the whole
+   * request, so a run is never half written.
    */
   *historyWrite(args: Row): Generator<void, Row> {
+    type Wanted = {
+      step?: number;
+      match?: Record<string, string | number | boolean>;
+      values: Record<string, number>;
+    };
     const { key } = this.editableRun(args.id),
       file = this.history.ensureFileId('wandb-history.jsonl'),
-      wanted = new Map<number, Record<string, number>>();
-    for (const item of args.rows as { step: number; values: Record<string, number> }[])
-      wanted.set(item.step, { ...wanted.get(item.step), ...item.values });
-    const found = new Map<number, { offset: number; record: Row }>();
+      rows = args.rows as Wanted[];
+    const byStep = new Map<number, number[]>(),
+      hits = rows.map(() => [] as { offset: number; record: Row }[]),
+      probes = rows.map((row) =>
+        row.match
+          ? Object.entries(row.match).map(([name, value]) => JSON.stringify(name) + ':' + JSON.stringify(value))
+          : [],
+      );
+    rows.forEach((row, index) => {
+      if (row.step !== undefined) byStep.set(row.step, [...(byStep.get(row.step) ?? []), index]);
+    });
     let last = -1,
       count = 0;
     for (const line of this.history.lines(key, file)) {
       last = line.offset;
+      let record: Row | undefined;
+      const parse = () => (record ??= JSON.parse(line.content) as Row);
       const step = /"_step":(-?[\d.eE+]+)/.exec(line.content);
-      if (step && wanted.has(Number(step[1]))) {
-        const record = JSON.parse(line.content);
-        if (record._step === Number(step[1]) && !found.has(record._step))
-          found.set(record._step, { offset: line.offset, record });
-      }
+      for (const index of step ? (byStep.get(Number(step[1])) ?? []) : [])
+        if (parse()._step === Number(step![1]) && !hits[index].length)
+          hits[index].push({ offset: line.offset, record: parse() });
+      rows.forEach((row, index) => {
+        if (
+          row.match &&
+          probes[index].every((probe) => line.content.includes(probe)) &&
+          Object.entries(row.match).every(([name, value]) => parse()[name] === value)
+        )
+          hits[index].push({ offset: line.offset, record: parse() });
+      });
       if (++count % 4096 === 0) yield;
     }
-    const conflicts: string[] = [];
-    for (const [step, values] of wanted) {
-      const record = found.get(step)?.record;
-      if (record)
-        for (const [name, value] of Object.entries(values))
-          if (Object.hasOwn(record, name) && record[name] !== value && !args.replace)
-            conflicts.push(`${name}@${step}`);
+    // Plan every row against the records as earlier rows leave them.
+    const edited = new Map<number, Row>(),
+      results: Row[] = [];
+    for (const [index, row] of rows.entries()) {
+      const found = hits[index];
+      if (row.match && found.length !== 1) {
+        results.push({ row: index, status: 'refused', reason: found.length ? 'ambiguous' : 'no-match', matches: found.length });
+        continue;
+      }
+      if (!found.length) {
+        results.push({ row: index, status: 'added', step: row.step, keys: Object.keys(row.values).length });
+        continue;
+      }
+      const { offset } = found[0],
+        record = edited.get(offset) ?? found[0].record,
+        conflicts = Object.entries(row.values)
+          .filter(([name, value]) => Object.hasOwn(record, name) && record[name] !== value)
+          .map(([name]) => name);
+      const step = historyStep(record, offset, false);
+      if (conflicts.length && !args.replace) {
+        results.push({ row: index, status: 'refused', reason: 'conflict', step, conflicts });
+        continue;
+      }
+      const added = Object.keys(row.values).filter((name) => !Object.hasOwn(record, name)).length;
+      if (!added && !conflicts.length) {
+        results.push({ row: index, status: 'unchanged', step });
+        continue;
+      }
+      edited.set(offset, { ...record, ...row.values });
+      results.push({ row: index, status: 'merged', step, keys: added, replaced: conflicts.length });
     }
-    if (conflicts.length)
+    const refused = results.filter((result) => result.status === 'refused');
+    if (args.dryRun) return { id: args.id, dryRun: true, changed: false, rows: results };
+    if (refused.length)
       throw managementError(
-        'HISTORY_VALUE_CONFLICT',
-        `Different values are already stored: ${conflicts.slice(0, 5).join(', ')}${conflicts.length > 5 ? ', …' : ''}.`,
-        { count: conflicts.length },
+        'HISTORY_ROWS_REFUSED',
+        `${refused.length} of ${rows.length} rows were refused (${refused
+          .slice(0, 3)
+          .map((result) => `row ${result.row}: ${result.reason}`)
+          .join('; ')}); nothing was written. Run with dryRun for every row's status.`,
+        { refused: refused.length },
         409,
       );
-    const edits = new Map<number, string>();
-    for (const [step, values] of wanted) {
-      const stored = found.get(step);
-      if (!stored) continue;
-      const next = JSON.stringify({ ...stored.record, ...values });
-      if (next !== JSON.stringify(stored.record)) edits.set(stored.offset, next);
-    }
+    const edits = new Map([...edited].map(([offset, record]) => [offset, JSON.stringify(record)]));
     if (edits.size) yield* this.history.rewriteLines(key, file, (_, offset) => edits.get(offset));
     return this.db.transaction(() => {
-      let added = 0,
-        changed = edits.size,
-        newKeys = false;
-      for (const [step, values] of wanted) {
-        const stored = found.get(step)?.record;
-        if (!stored) {
-          this.history.linePut(key, file, ++last, JSON.stringify({ _step: step, ...values }));
-          added++;
-        }
+      let newKeys = false;
+      const write = (step: number, values: Record<string, number>, stored?: Row) => {
         for (const [name, value] of Object.entries(values)) {
           if (stored?.[name] === value) continue;
           const metric = this.history.ensureMetricId(name);
@@ -614,15 +721,23 @@ export class Store {
           this.history.pointPut(key, metric, step, value);
           this.history.catalogAdd(key, metric);
         }
+      };
+      for (const [index, row] of rows.entries()) {
+        const result = results[index];
+        if (result.status === 'added') {
+          this.history.linePut(key, file, ++last, JSON.stringify({ _step: row.step, ...row.values }));
+          write(row.step!, row.values);
+        } else if (result.status === 'merged') write(result.step, row.values, hits[index][0].record);
       }
       this.history.finishWrites(key);
-      if (added || changed) {
+      const changed = results.some((result) => result.status !== 'unchanged');
+      if (changed) {
         this.db
           .prepare('UPDATE runs SET history_count=max(history_count,?) WHERE id=?')
           .run(last + 1, args.id);
         this.historyEdited(args.id, newKeys);
       } else this.history.resetCaches();
-      return { id: args.id, changed: !!(added || changed), added, updated: changed };
+      return { id: args.id, changed, rows: results };
     })();
   }
   private presentRun(row:Row|undefined,now=Date.now()/1000){
