@@ -3,6 +3,7 @@
 // estimated end, and the planned runs queued after them. The timeline scrolls horizontally;
 // Ctrl+wheel, a pinch or the zoom buttons change its scale, and a bar opens its run or plan.
 import type { OpenTarget, PanelContext, Renderer } from '../types';
+import { color } from '../run-colors';
 
 type Bar = {
   id: string;
@@ -22,6 +23,8 @@ type Bar = {
   unknownLength: boolean;
   inferred?: boolean;
   rows: string[];
+  lane?: number;
+  lanes?: number;
   progress?: number | null;
   budget?: number | null;
   from?: number | null;
@@ -60,17 +63,35 @@ export function layout(hosts: Host[]) {
   }
   return { rows, headers, height: top };
 }
-/** A bar's pieces: one block per run of adjacent rows it covers. */
+/**
+ * A bar's pieces, inside the rows' 2 px padding. A bar that overlaps nothing is one block per
+ * run of adjacent rows it covers. Bars that overlap share their rows' height in lanes: one
+ * thin piece per row in the bar's lane, each after the first joined to the one above (`join`,
+ * the y where that one ends).
+ */
 export function pieces(bar: Bar, rows: Map<string, number>) {
-  const tops = bar.rows
-    .map((key) => rows.get(key))
-    .filter((top): top is number => top !== undefined)
-    .sort((a, b) => a - b);
-  const blocks: { top: number; height: number }[] = [];
+  const lanes = Math.max(1, bar.lanes ?? 1),
+    lane = Math.min(bar.lane ?? 0, lanes - 1),
+    inner = rowHeight - 4,
+    thin = inner / lanes,
+    tops = bar.rows
+      .map((key) => rows.get(key))
+      .filter((top): top is number => top !== undefined)
+      .sort((a, b) => a - b);
+  const blocks: { top: number; height: number; join?: number }[] = [];
+  let previous: number | undefined;
   for (const top of tops) {
-    const last = blocks.at(-1);
-    if (last && last.top + last.height === top) last.height += rowHeight;
-    else blocks.push({ top, height: rowHeight });
+    const adjacent = previous !== undefined && previous + rowHeight === top,
+      last = blocks.at(-1);
+    if (lanes === 1 && adjacent && last) last.height += rowHeight;
+    else if (lanes === 1) blocks.push({ top: top + 2, height: inner });
+    else
+      blocks.push({
+        top: top + 2 + lane * thin,
+        height: thin,
+        ...(adjacent && last ? { join: last.top + last.height } : {}),
+      });
+    previous = top;
   }
   return blocks;
 }
@@ -306,6 +327,21 @@ export function create({
     else if (bar.kind === 'planned' && bar.budget != null)
       lines.push(t('occupancy.tooltip.updates', { updates: numbers.format(bar.budget) }));
     if (bar.inferred) lines.push(t('occupancy.tooltip.inferred'));
+    // Every other run on these GPUs at the same time.
+    const sharing = [
+      ...new Set(
+        (data?.bars ?? [])
+          .filter(
+            (other) =>
+              (other.run ?? other.id) !== (bar.run ?? bar.id) &&
+              other.start < bar.end &&
+              other.end > bar.start &&
+              other.rows.some((row) => bar.rows.includes(row)),
+          )
+          .map((other) => shortName(other.name, 0)),
+      ),
+    ];
+    if (sharing.length) lines.push(t('occupancy.tooltip.sharing', { names: sharing.join(', ') }));
     if (bar.audit != null)
       lines.push(t('occupancy.tooltip.audit', { value: numbers.format(bar.audit) }));
     if (bar.verdict && bar.verdict !== 'running')
@@ -314,11 +350,19 @@ export function create({
       );
     return lines;
   }
+  /** A run's colour swatch, as RunName.svelte draws it. */
+  function swatch(run: string) {
+    const dot = document.createElement('i');
+    dot.className = 'occupancy-run-swatch';
+    dot.style.background = color(run, ctx?.colors ?? {});
+    return dot;
+  }
   function showTip(bar: Bar, anchor: DOMRect) {
     tooltip.replaceChildren(
       ...describe(bar).map((line, index) => {
         const item = document.createElement(index ? 'span' : 'strong');
-        item.textContent = line;
+        if (!index && bar.run) item.append(swatch(bar.run));
+        item.append(line);
         return item;
       }),
     );
@@ -397,6 +441,15 @@ export function create({
     }
     for (const bar of data.bars)
       for (const block of pieces(bar, rows)) {
+        // A run on several GPUs whose rows have lanes: its pieces joined by a spine.
+        if (block.join !== undefined) {
+          const spine = document.createElement('div');
+          spine.className = 'occupancy-spine kind-' + bar.kind;
+          spine.style.left = x(bar.start) + 'px';
+          spine.style.top = block.join + 'px';
+          spine.style.height = block.top - block.join + 'px';
+          trackItems.push(spine);
+        }
         const item = document.createElement('button');
         item.type = 'button';
         item.className = [
@@ -412,13 +465,17 @@ export function create({
           right = x(bar.end);
         item.style.left = left + 'px';
         item.style.width = Math.max(3, right - left - 1) + 'px';
-        item.style.top = block.top + 2 + 'px';
-        item.style.height = block.height - 4 + 'px';
+        // Thin pieces keep a pixel between lanes.
+        item.style.top = block.top + 'px';
+        item.style.height = Math.max(3, block.height - ((bar.lanes ?? 1) > 1 ? 1 : 0)) + 'px';
+        if ((bar.lanes ?? 1) > 1) item.classList.add('lane');
         item.dataset.id = bar.id;
         // A running run's estimate continues its bar, so only the first part is named; a short
         // bar shows the name's first part (such as v657) when the whole name does not fit.
-        const label = bar.kind === 'remaining' ? '' : shortName(bar.name, right - left - 12);
+        // A run's bar starts with its colour swatch, as run names do everywhere.
+        const label = bar.kind === 'remaining' ? '' : shortName(bar.name, right - left - 26);
         if (label && right - left > 28) {
+          if (bar.run && right - left > 40) item.append(swatch(bar.run));
           const text = document.createElement('span');
           text.textContent = label;
           item.append(text);

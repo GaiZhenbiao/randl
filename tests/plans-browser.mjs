@@ -223,7 +223,10 @@ try {
   const saved = plans.find((item) => item.id === 'p3');
   assert.deepEqual(saved.gpus, [0, 1]);
   assert.equal(saved.updates, 500);
-  await expect.poll(async () => (await box('planned')).y).toBeLessThan((await box('remaining')).y);
+  // The timeline redraws after the save, so a bar may be missing for a moment.
+  await expect
+    .poll(async () => ((await box('planned'))?.y ?? Infinity) - ((await box('remaining'))?.y ?? 0))
+    .toBeLessThan(0);
   await timeline.locator('.occupancy-track .kind-past').click();
   await expect(page).toHaveURL(/\/test\/plans\/runs\/p1_done/);
   checks.push('Bars open their run or plan; a plan given GPUs moves to those rows');

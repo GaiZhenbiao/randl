@@ -2,6 +2,7 @@
   // The ledger beside a run in the Lineage panel: its plan (for a planned run), whether it is
   // the current best recipe, the chosen runs compared with it at matched updates, its journal
   // and the findings citing it (RunLedger), and the evidence about it.
+  import RunName from './RunName.svelte';
   import { Button, InlineNotification, TextArea } from 'carbon-components-svelte';
   import JsonValue from './JsonValue.svelte';
   import RunLedger from './RunLedger.svelte';
@@ -106,17 +107,21 @@
       {#if plan.parent}<div>
           <dt>{$t('lineage.plan.parent')}</dt>
           <dd>
-            <button type="button" class="lineage-link" onclick={() => onSelect(plan.parent!)}
-              >{nameOf(plan.parent)}</button
-            >{plan.parentUpdate === null ? '' : ' @' + $number(plan.parentUpdate)}
+            <RunName
+              id={plan.parent}
+              name={nameOf(plan.parent)}
+              onclick={() => onSelect(plan.parent!)}
+            />{plan.parentUpdate === null ? '' : ' @' + $number(plan.parentUpdate)}
           </dd>
         </div>{/if}
       {#if plan.baseline}<div>
           <dt>{$t('lineage.plan.baseline')}</dt>
           <dd>
-            <button type="button" class="lineage-link" onclick={() => onSelect(plan.baseline!)}
-              >{nameOf(plan.baseline)}</button
-            >
+            <RunName
+              id={plan.baseline}
+              name={nameOf(plan.baseline)}
+              onclick={() => onSelect(plan.baseline!)}
+            />
           </dd>
         </div>{/if}
       {#if plan.rule}<div>
@@ -186,9 +191,11 @@
         <tbody>
           {#each compared as row (row.run)}<tr>
               <td
-                ><button type="button" class="lineage-link" onclick={() => onSelect(row.run)}
-                  >{shortOf(row.run)}</button
-                ></td
+                ><RunName
+                  id={row.run}
+                  name={nameOf(row.run)}
+                  onclick={() => onSelect(row.run)}
+                /></td
               >
               <td>{$number(row.matched)}</td>
               <td>{row.meanDiff === null ? '–' : signed(row.meanDiff)}</td>
@@ -227,15 +234,15 @@
       <h3>{$t('lineage.evidence.title')}</h3>
       <ul class="lineage-children">
         {#each evidence as item (item.id)}<li>
-            <button type="button" class="lineage-link" onclick={() => onSelect(item.id)}
-              >{item.display_name}</button
-            >{#if item.jobType}<span class="lineage-muted"> · {item.jobType}</span>{/if}
+            <RunName
+              id={item.id}
+              name={item.display_name}
+              onclick={() => onSelect(item.id)}
+            />{#if item.jobType}<span class="lineage-muted"> · {item.jobType}</span>{/if}
           </li>{/each}
         {#each node.examines as id (id)}<li>
             {$t('lineage.evidence.examines')}
-            <button type="button" class="lineage-link" onclick={() => onSelect(id)}
-              >{nameOf(id)}</button
-            >
+            <RunName {id} name={nameOf(id)} onclick={() => onSelect(id)} />
           </li>{/each}
       </ul>
     </section>{/if}

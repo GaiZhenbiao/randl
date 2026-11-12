@@ -17,6 +17,8 @@ const {
   pathToRoot,
   visibleRuns,
   wordDiff,
+  structuredDiff,
+  entryOf,
 } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 
 const node = (id, extra = {}) => ({
@@ -197,4 +199,46 @@ test('config values diff word by word', () => {
   assert.equal(show(wordDiff('"a"', '"b"')), '[-"a"-]{+"b"+}');
   assert.equal(show(wordDiff('', '5')), '{+5+}');
   assert.equal(show(wordDiff('x '.repeat(500), 'y '.repeat(500), 100)).length, 2000 + 8);
+});
+
+test('lists of objects diff by identity, down to the changed fields', () => {
+  const scene = (layers, extra = {}) => [
+    { name: 'forest', seed: 1, layers, assets: [{ name: 'trees', size: 512 }], ...extra },
+  ];
+  const before = scene([
+      { label: 'canopy', density: [0.3, 0.8], templates: [{ asset: 'oak', scale: 1 }] },
+      { label: 'shrub', density: [0.1, 0.2] },
+      { label: 'rocks', density: [0, 1] },
+    ]),
+    // Reordered, one layer changed in a nested list, one removed, one added.
+    after = scene(
+      [
+        { label: 'shrub', density: [0.1, 0.2] },
+        { label: 'canopy', density: [0.3, 0.9], templates: [{ asset: 'oak', scale: 2 }] },
+        { label: 'logs', density: [0.2, 0.4] },
+      ],
+      { seed: 2 },
+    );
+  const changes = structuredDiff(before, after);
+  assert.deepEqual(
+    changes.map(({ path, kind }) => [path, kind]),
+    [
+      ['[forest].seed', 'changed'],
+      ['[forest].layers[canopy].density', 'changed'],
+      ['[forest].layers[canopy].templates[oak].scale', 'changed'],
+      ['[forest].layers[rocks]', 'removed'],
+      ['[forest].layers[logs]', 'added'],
+    ],
+  );
+  assert.equal(entryOf(changes[1].path), '[forest]');
+  // Lists of numbers and lists without an identity of a different length are leaves.
+  assert.deepEqual(structuredDiff([1, 2], [1, 3]), [
+    { path: '', kind: 'changed', from: [1, 2], to: [1, 3] },
+  ]);
+  assert.deepEqual(structuredDiff([{ a: 1 }], [{ a: 2 }]), [
+    { path: '[0].a', kind: 'changed', from: 1, to: 2 },
+  ]);
+  assert.deepEqual(structuredDiff({ a: 1 }, { a: 1 }), []);
+  // Key order is not a change.
+  assert.deepEqual(structuredDiff([{ name: 'x', a: 1, b: 2 }], [{ b: 2, a: 1, name: 'x' }]), []);
 });

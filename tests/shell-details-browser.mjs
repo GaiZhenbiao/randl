@@ -113,7 +113,7 @@ try {
   // Overview uses the Runs table's timestamp name and one-line names with an ellipsis.
   await expect(page.locator('.overview-runs th').last()).toHaveText('Created');
   const overviewName = await page
-    .locator('.overview-runs .table-link-text')
+    .locator('.overview-runs .run-label-text')
     .first()
     .evaluate((e) => ({
       ellipsis: getComputedStyle(e).textOverflow,

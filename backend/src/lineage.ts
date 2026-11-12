@@ -178,6 +178,20 @@ export function ignoredKey(patterns: string[]) {
   return (key: string) => pattern.test(key);
 }
 /** Keys whose values differ, sorted, leaving out the ignored keys. */
+/** JSON with object keys sorted, so values that differ only in key order compare equal. */
+export function canonical(value: Json | undefined): string {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (value && typeof value === 'object')
+    return (
+      '{' +
+      Object.keys(value)
+        .sort()
+        .map((key) => JSON.stringify(key) + ':' + canonical(value[key]))
+        .join(',') +
+      '}'
+    );
+  return JSON.stringify(value) ?? 'undefined';
+}
 export function diffConfigs(
   from: Map<string, Json>,
   to: Map<string, Json>,
@@ -189,7 +203,7 @@ export function diffConfigs(
     if (skip(key)) continue;
     const a = from.get(key),
       b = to.get(key);
-    if (JSON.stringify(a) !== JSON.stringify(b)) changes.push({ key, from: a, to: b });
+    if (canonical(a) !== canonical(b)) changes.push({ key, from: a, to: b });
   }
   return changes.sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
 }

@@ -69,6 +69,11 @@ try {
 
   // Filters: text (in titles and bodies), topic and status combine, each within a frame or two.
   const search = controls.getByRole('searchbox', { name: 'Search findings' });
+  const find = async (text) => {
+    if (!(await search.isVisible()))
+      await controls.locator('.page-rail-search .bx--search-magnifier').click();
+    await search.fill(text);
+  };
   const timed = async (action, count) => {
     const start = Date.now();
     await action();
@@ -76,8 +81,8 @@ try {
     return Date.now() - start;
   };
   const times = [
-    await timed(() => search.fill('needle'), 1),
-    await timed(() => search.fill(''), 500),
+    await timed(() => find('needle'), 1),
+    await timed(() => find(''), 500),
     await timed(() => controls.getByLabel('Topic').selectOption({ label: 'Reward' }), 100),
     await timed(() => controls.getByLabel('Status').selectOption({ label: 'Ruled out' }), 25),
   ];
@@ -139,14 +144,25 @@ try {
   assert.equal((await call('findings_list', { project: 'test/findings' })).findings.length, 498);
   checks.push('Checked findings change status together, and are deleted after a confirmation');
 
-  // Narrow windows: the controls form a row under the header; the reader takes the page.
+  // Narrow windows keep the controls in the header; the reader takes the page. On phones the
+  // filters open from an icon and the header stays one row.
   await page.setViewportSize({ width: 900, height: 900 });
-  await expect.poll(() => controls.evaluate((element) => !!element.closest('header'))).toBe(false);
+  await expect.poll(() => controls.evaluate((element) => !!element.closest('header'))).toBe(true);
   await rows.first().click();
   await expect(page.locator('.findings-list')).toBeHidden();
   await page.getByRole('button', { name: 'Close finding' }).click();
   await expect(page.locator('.findings-list')).toBeVisible();
-  checks.push('Narrow windows keep the controls in one row and show the list or one finding');
+  await page.setViewportSize({ width: 390, height: 800 });
+  const header = await page.locator('header').first().boundingBox();
+  assert.ok(header.height <= 56, 'one header row on a phone: ' + header.height);
+  await controls.getByRole('button', { name: 'Filter findings' }).click();
+  const popover = page.getByRole('dialog', { name: 'Filter findings' });
+  await popover.getByLabel('Status').selectOption({ label: 'Ruled out' });
+  await expect(rows).toHaveCount(125);
+  await popover.getByLabel('Status').selectOption({ label: 'Any status' });
+  checks.push(
+    'Narrow windows keep the controls in the header; phones open the filters from an icon',
+  );
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks }, null, 2));

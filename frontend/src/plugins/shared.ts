@@ -369,6 +369,30 @@ export function lineChart(ctx: PanelContext, area = false) {
   );
   return { ...option, series };
 }
+/**
+ * Draws `panel.settings.marks` (host-set reference points, such as the update a finding cites)
+ * as dashed vertical lines with an optional label, on charts with a numeric X axis.
+ */
+export function addMarks(option: any, ctx: PanelContext) {
+  const marks = ctx.panel.settings?.marks;
+  if (!marks?.length || !option.series?.length) return;
+  if (!['value', 'time', 'log'].includes(option.xAxis?.type)) return;
+  const ink = ctx.dark ? '#c6c6c6' : '#525252';
+  option.series[0] = {
+    ...option.series[0],
+    markLine: {
+      symbol: 'none',
+      silent: true,
+      animation: false,
+      lineStyle: { type: 'dashed', width: 1, color: ink },
+      label: { color: ink, fontSize: 11, position: 'end', distance: 2 },
+      data: marks.map((mark) => ({
+        xAxis: mark.x,
+        label: { show: !!mark.label, formatter: mark.label ?? '' },
+      })),
+    },
+  };
+}
 export function renderer(
   host: Host,
   build: (ctx: PanelContext) => any,
@@ -576,6 +600,7 @@ export function renderer(
       context = ctx;
       ready = false;
       const option = build(ctx);
+      addMarks(option, ctx);
       const transform = ctx.data.recordTransform;
       const focusedComposition =
         ctx.panel.settings?.maxRuns === 'focused' &&

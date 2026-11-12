@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunName from './RunName.svelte';
   import { t, type Message } from './i18n';
 
   import { Button, Search, InlineNotification } from 'carbon-components-svelte';
@@ -58,7 +59,7 @@
           .toLowerCase()
           .includes(search.toLowerCase())) as run (run.id)}<li>
           <div>
-            <strong title={run.display_name}>{run.display_name}</strong><span>{run.name}</span>
+            <RunName id={run.id} name={run.display_name} strong /><span>{run.name}</span>
           </div>
           <Button kind="ghost" size="small" disabled={!!busy} on:click={() => restore(run.id)}
             >{busy === run.id ? $t('runs.trash.restoring') : $t('runs.trash.restore')}</Button

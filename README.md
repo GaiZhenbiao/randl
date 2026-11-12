@@ -194,19 +194,23 @@ same as in workspace charts) or its host's, its state, a verdict from its `verdi
 `verdict:rejected` or `verdict:running` tag, the host and GPUs it last trained on, and the
 latest and best value of the project's lineage metric. Running runs have an accent ring that
 ripples (it holds still when the system asks for reduced motion). Each link is labelled with the
-parent update and the run's logged `change` sentence, or, without one, any further relations
+run's logged `change` sentence (whole on hover), or, without one, any further relations
 such as `+grown head` and the changed config keys that set the run apart (those that change on
-the fewest links come first); hovering shows the whole label, and a legend explains the line
-styles. Select a card for what changed, its hypothesis, result and verdict, relations, config
+the fewest links come first), and a legend explains the line styles. Select a card for what changed, its hypothesis, result and verdict, relations, config
 bases, compute segments, the metric along its lineage, and every config difference from its
-parent or from another run you pick, as a word diff under each key (the run's name, state,
-verdict and **Open run** stay at the top as the panel scrolls).
+parent or from another run you pick, as a word diff under each key; lists of objects (such as
+`data.scenes`) are matched by name, label or ID and fold under a count of the entries and
+fields that changed (the run's name, state, verdict and **Open run** stay at the top as the
+panel scrolls).
 
-The controls sit in the page header on wide screens (a single row below it on narrow ones): the name filter; **Filters** (group, tag, host, collapse rejected
-branches, show runs without lineage; the button counts the active ones); **View** (arrange cards
-by lineage depth, start update or start time, colour them by run or host, and zoom in steps);
-the actions for the open or selected runs, as icons; and on the right an **i** button with the
-counts, **Fit all**, **Focus running runs** and **Lineage settings**.
+The controls sit in the page header at every width: **Filters** (group, tag, host, collapse
+rejected branches, show runs without lineage; the button counts the active ones); **View**
+(arrange cards by lineage depth, start update or start time, colour them by run or host, and
+zoom in steps); the actions for the open or selected runs, as icons; an **i** button with the
+counts; **Fit all**, **Focus running runs** and **Lineage settings** (inside **i** on phones);
+and the run search at the right end. The search matches the start of a run's short name
+(`v63` finds v630–v639), its name or ID anywhere, shows those runs even inside collapsed
+branches, and lists them to open one (arrow keys and Enter, or a click).
 
 The page opens at 100% on the running runs (all of them when they fit, else the one that
 reported last). Two-finger touchpad scrolling, the mouse wheel or Shift+drag pans (the cursor
@@ -327,7 +331,8 @@ Beside the runs, each project keeps what was learned from them and what comes ne
 - **Findings** (the **Findings** page): Markdown notes by topic, each citing the runs (and
   updates) it rests on, current or ruled out. The page lists them by title, topic, status,
   cited runs, last update and author, searched and filtered by topic and status from the
-  header and sorted by any column; the open finding reads beside the list. Arrow keys move
+  header and sorted by any column; the open finding reads beside the list, each cited run
+  with a chart of the project's Lineage metric that marks the cited update. Arrow keys move
   through the list, Space checks findings to change their status or delete them together,
   and `/` searches. Every edit keeps the previous version, shown under **Earlier versions**;
   a save names the version it started from, so two editors cannot overwrite each other. A
@@ -379,9 +384,10 @@ The **Plans** page shows where the project stands and what runs next:
 
 - **Best recipe**: the current one, since when and why, beside every earlier promotion on a
   dated timeline.
-- **GPU occupancy**: one row per GPU, grouped by host, with a bar for each run that held it,
-  running runs drawn up to now and on to their estimated end, and planned runs where they
-  should start. It scrolls sideways through time; Ctrl+scroll (or a touchpad pinch) and the buttons
+- **GPU occupancy**: one row per GPU, grouped by host (and one for runs that logged no GPU
+  indices), with a bar for each run that held it, running runs drawn up to now and on to their
+  estimated end, and planned runs where they should start. Runs that shared GPUs at the same
+  time split those rows into lanes, and the tooltip names them. It scrolls sideways through time; Ctrl+scroll (or a touchpad pinch) and the buttons
   zoom, **Go to now** returns, and a bar opens its run or plan.
 - **Queues**: one lane per host slot, with the run occupying it (progress toward its budget,
   estimated end and latest audit) followed by its planned runs in order, each with its

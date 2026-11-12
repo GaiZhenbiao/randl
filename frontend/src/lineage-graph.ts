@@ -178,15 +178,42 @@ export type Visible = {
  * roots, without the runs below a rejected run while those are collapsed. Runs with no parent
  * and no child are drawn only on request.
  */
+/**
+ * How well a run matches a search, best first: 0 when its short name (v636) starts with the
+ * query, 1 when its name or ID does, 2 when any of them contains it; null for no match.
+ */
+export function searchRank(node: Pick<LineageNode, 'id' | 'name' | 'display_name'>, query: string) {
+  const q = query.trim().toLowerCase();
+  if (!q) return 0;
+  const name = node.display_name.toLowerCase(),
+    short = name.split('_')[0],
+    ids = [node.name.toLowerCase(), node.id.toLowerCase()];
+  if (short.startsWith(q)) return 0;
+  if (name.startsWith(q) || ids.some((id) => id.startsWith(q))) return 1;
+  if (name.includes(q) || ids.some((id) => id.includes(q))) return 2;
+  return null;
+}
+/** The runs a search suggests, best matches first, then in name order (v630 before v631). */
+export function searchRuns(nodes: LineageNode[], query: string, limit = 8) {
+  if (!query.trim()) return [];
+  return nodes
+    .map((node) => ({ node, rank: searchRank(node, query) }))
+    .filter((item): item is { node: LineageNode; rank: number } => item.rank !== null)
+    .sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        a.node.display_name.localeCompare(b.node.display_name, undefined, { numeric: true }),
+    )
+    .slice(0, limit)
+    .map((item) => item.node);
+}
 export function visibleRuns(graph: LineageGraph, index: GraphIndex, filters: Filters): Visible {
   const query = filters.search.trim().toLowerCase();
   const matching = new Set(
     graph.nodes
       .filter(
         (node) =>
-          (!query ||
-            node.display_name.toLowerCase().includes(query) ||
-            node.name.toLowerCase().includes(query)) &&
+          (!query || searchRank(node, query) !== null) &&
           (!filters.group || node.group === filters.group) &&
           (!filters.tag || node.tags.includes(filters.tag)) &&
           (!filters.host || node.compute?.host === filters.host),
@@ -211,8 +238,9 @@ export function visibleRuns(graph: LineageGraph, index: GraphIndex, filters: Fil
   const shown = new Set<string>(),
     context = new Set<string>();
   for (const id of matching) {
-    if (hidden.has(id)) continue;
-    if (!filters.showIsolated && isolated(id)) {
+    // A searched-for run shows even inside a collapsed branch or without links.
+    if (hidden.has(id) && !query) continue;
+    if (!filters.showIsolated && isolated(id) && !query) {
       isolatedHidden++;
       continue;
     }
@@ -515,4 +543,87 @@ export function wordDiff(before: string, after: string, limit = 400): DiffPart[]
       { text: after, kind: 'added' },
     ].filter((part) => part.text) as DiffPart[];
   return parts;
+}
+
+export type StructuredChange = {
+  /** Where in the value, such as `[subtropical_forest].layers[canopy].density_response.gap`. */
+  path: string;
+  kind: 'added' | 'removed' | 'changed';
+  from?: Json;
+  to?: Json;
+};
+const identityFields = ['name', 'id', 'label', 'asset', 'key', 'path'];
+/** JSON with object keys sorted, so values that differ only in key order compare equal. */
+export function canonical(value: Json | undefined): string {
+  if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
+  if (value && typeof value === 'object')
+    return (
+      '{' +
+      Object.keys(value)
+        .sort()
+        .map((key) => JSON.stringify(key) + ':' + canonical((value as Record<string, Json>)[key]))
+        .join(',') +
+      '}'
+    );
+  return JSON.stringify(value) ?? 'undefined';
+}
+const isRecord = (value: unknown): value is Record<string, Json> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+/** The field naming each item of a list of objects, when one does so uniquely in both lists. */
+export function identityOf(...lists: Json[][]) {
+  const items = lists.flat();
+  if (!items.length || !items.every(isRecord)) return null;
+  return (
+    identityFields.find((field) =>
+      lists.every((list) => {
+        const names = list.map((item) => (item as Record<string, Json>)[field]);
+        return (
+          names.every((name) => typeof name === 'string' || typeof name === 'number') &&
+          new Set(names).size === names.length
+        );
+      }),
+    ) ?? null
+  );
+}
+/**
+ * The differences between two values, down to their changed leaves: objects by key, lists of
+ * objects by an identity field (name, id, label, asset, key or path) or else by position when
+ * they are as long, so a reordered or extended list shows only the entries that changed.
+ */
+export function structuredDiff(
+  from: Json | undefined,
+  to: Json | undefined,
+  path = '',
+): StructuredChange[] {
+  if (canonical(from) === canonical(to)) return [];
+  if (from === undefined) return [{ path, kind: 'added', to }];
+  if (to === undefined) return [{ path, kind: 'removed', from }];
+  if (isRecord(from) && isRecord(to))
+    return [...new Set([...Object.keys(from), ...Object.keys(to)])].flatMap((key) =>
+      structuredDiff(from[key], to[key], path ? path + '.' + key : key),
+    );
+  if (Array.isArray(from) && Array.isArray(to)) {
+    const field = identityOf(from, to);
+    if (field) {
+      const byName = (list: Json[]) =>
+        new Map(list.map((item) => [String((item as Record<string, Json>)[field]), item]));
+      const before = byName(from),
+        after = byName(to);
+      return [...new Set([...before.keys(), ...after.keys()])].flatMap((name) =>
+        structuredDiff(before.get(name), after.get(name), `${path}[${name}]`),
+      );
+    }
+    if (
+      from.length === to.length &&
+      [...from, ...to].some((item) => typeof item === 'object' && item)
+    )
+      return from.flatMap((item, position) =>
+        structuredDiff(item, to[position], `${path}[${position}]`),
+      );
+  }
+  return [{ path, kind: 'changed', from, to }];
+}
+/** The entry of a list a change belongs to (`[canopy]` of `[canopy].templates[0]`), if any. */
+export function entryOf(path: string) {
+  return /^\[[^\]]*\]/.exec(path)?.[0] ?? '';
 }

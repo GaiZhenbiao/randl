@@ -67,26 +67,44 @@ npm run randl -- serve --port 8743 --data-dir /path/to/scratch-data
 
 ### Page controls
 
-A project page's controls (search, filters, view menus, its primary action and the info
-button) go in the header rail, after the page's name, through `PageRail.svelte`:
+A project page's controls go in the header rail, after the page's name, through
+`PageRail.svelte`, as the workspace's do:
 
 ```svelte
-<PageRail target={rail} label={$t('findings.controls')}>
-  <Search size={rail ? 'sm' : 'lg'} … />
-  <Select inline hideLabel … />
-  <span class="page-rail-end"><Button size={rail ? 'small' : 'field'} …>New finding</Button></span>
+<PageRail target={rail} label={$t('findings.controls')} bind:search searchLabel={$t('findings.search')}>
+  {#if narrow}<Button icon={Filter} iconDescription={…} …/>{:else}<Select inline hideLabel … />{/if}
+  <span class="page-rail-end"><Button size="small" …>New finding</Button></span>
 </PageRail>
 ```
 
-- `App.svelte` lists such pages in `railPages` and passes `rail` while the window is at
-  least 1056 px wide; narrower, the same controls form one row under the header that
-  scrolls sideways instead of wrapping.
-- Keep the row short: put secondary choices in a popover (Lineage's **Filters**, **View**
-  and **Info**), hide labels whose options name themselves, and put trailing actions in a
-  `page-rail-end` element. Check the fit at 1056 px in French and Spanish.
-- Use small controls in the rail and field-size ones in the row. The page's name keeps its
-  width; the search field shrinks first.
+- `App.svelte` lists such pages in `railPages` and passes `rail` and `narrow` (760 px or less).
+  The controls stay in the header at every width.
+- Filters, view menus and actions come first; trailing actions go in a `page-rail-end`
+  element. The page's main search ends the rail (`search`, `searchLabel`): an icon until it is
+  opened or holds text, as the workspace's panel search is, and on phones it covers the bar
+  while open. `suggestions` (a listbox snippet) and `onsearchkey` add a list of matches to jump
+  to, as Lineage's run search does.
+- On phones (`narrow`) buttons show as icons and secondary controls move into a popover
+  (Lineage's **Filters**, **View** and **Info**; Findings' topic and status), so the header
+  stays one row. Check the fit at 1056 px in French and Spanish and at 390 px.
 - Give the group a `label` unless its controls already form a labelled toolbar.
+
+### Run names
+
+Show a run's name with `RunName.svelte` wherever it appears outside the Runs table and run
+list (which draw the same swatch with their colour pickers):
+
+```svelte
+<RunName id={run.id} name={run.display_name} href={runURL(run)} onclick={…} />
+```
+
+- It puts the run's colour swatch first (the project's run colours, which App keeps in
+  `run-name.ts`, so it matches the Runs tab and charts), then the name on one line, cut with
+  an ellipsis; the full name shows on hover and, for links and buttons, on keyboard focus.
+- Without `href` it is a button with `onclick`, or plain text with neither. `strong` suits
+  headings; `quiet` gives a table link in body text colour.
+- Places that draw runs themselves (the GPU timeline, chart legends) use the same colour from
+  `run-colors.ts`.
 
 ## Tests
 

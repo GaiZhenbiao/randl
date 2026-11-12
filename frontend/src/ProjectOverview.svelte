@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunName from './RunName.svelte';
   import { onMount, tick } from 'svelte';
   import {
     Button,
@@ -243,13 +244,13 @@
           <tbody>
             {#each running.slice(0, 20) as run (run.id)}<tr>
                 <td
-                  ><div class="run-cell"><a
-                    class="table-link"
+                  ><div class="run-cell"><RunName
+                    quiet
+                    id={run.id}
+                    name={run.display_name}
                     href={runURL(run)}
-                    title={run.display_name}
                     onclick={(event) => interceptLink(event, () => onRun(run))}
-                    ><span class="table-link-text">{run.display_name}</span></a
-                  >{#if run.stop_requested}<Tag size="sm" type="gray">{$t('runs.stop.requested')}</Tag>{/if}</div></td
+                  />{#if run.stop_requested}<Tag size="sm" type="gray">{$t('runs.stop.requested')}</Tag>{/if}</div></td
                 >
                 <td>{$duration(liveRuntime(run))}</td>
                 <td>{$number(run.history_count)}</td>
@@ -333,14 +334,13 @@
             <ol class="size-list">
               {#each details.largestRuns as item}{@const size = item.history + item.files}{@const run = runFor(item.id)}<li>
                   <span class="size-name"
-                    >{#if run}<a
-                        class="table-link"
+                    >{#if run}<RunName
+                        quiet
+                        id={item.id}
+                        name={item.display_name}
                         href={runURL(run)}
-                        title={item.display_name}
                         onclick={(event) => interceptLink(event, () => onRun(run))}
-                        ><span class="table-link-text">{item.display_name}</span></a
-                      >{:else}<span class="table-link-text" title={item.display_name}>{item.display_name}</span
-                      >{/if}{#if item.deleted}<Tag size="sm" type="gray">{$t('projects.deletedRun')}</Tag>{/if}</span
+                      />{:else}<RunName id={item.id} name={item.display_name} />{/if}{#if item.deleted}<Tag size="sm" type="gray">{$t('projects.deletedRun')}</Tag>{/if}</span
                   ><span class="size-bar"
                     ><i style:width={(100 * size) / (details.largestRuns[0].history + details.largestRuns[0].files) + '%'}
                     ></i></span
@@ -386,13 +386,13 @@
             ]}
             size="compact"
             ><svelte:fragment slot="cell" let:row let:cell
-              >{#if cell.key === 'display_name'}<a
-                  class="table-link"
+              >{#if cell.key === 'display_name'}<RunName
+                  quiet
+                  id={String(row.id)}
+                  name={String(cell.value)}
                   href={runURL(runFor(String(row.id))!)}
-                  title={String(cell.value)}
                   onclick={(event) => interceptLink(event, () => onRun(runFor(String(row.id))!))}
-                  ><span class="table-link-text">{cell.value}</span></a
-                >{:else if cell.key === 'state'}<span class="state-label"
+                />{:else if cell.key === 'state'}<span class="state-label"
                   ><span class="run-state" data-state={cell.value}></span>{row.label}</span
                 >{:else if cell.key === 'runtime'}{cell.value == null ? '—' : $duration(Number(cell.value))}{:else if cell.key === 'created'}{$date(
                   Number(cell.value),
@@ -501,17 +501,6 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-  .run-cell::before {
-    content: '';
-    flex: 0 0 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--cds-support-02);
-  }
-  .run-cell .table-link {
-    display: flex;
-    min-width: 0;
   }
   .run-links a {
     color: var(--cds-link-01);

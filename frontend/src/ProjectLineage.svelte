@@ -2,13 +2,13 @@
   // The Lineage page (README "Lineage"): runs as cards, linked from the run whose checkpoint
   // each started from. The server derives the graph; this page filters, lays out and explains
   // it, and hands chosen runs to the workspace for comparison.
+  import RunName from './RunName.svelte';
   import PageRail from './PageRail.svelte';
   import { onMount, tick, untrack } from 'svelte';
   import {
     Button,
     Checkbox,
     InlineNotification,
-    Search,
     Select,
     SelectItem,
   } from 'carbon-components-svelte';
@@ -26,7 +26,8 @@
   import SettingsAdjust from 'carbon-icons-svelte/lib/SettingsAdjust.svelte';
   import ChartLine from 'carbon-icons-svelte/lib/ChartLine.svelte';
   import { tool, apiMessage } from './api';
-  import { t, number, type Message } from './i18n';
+  import { t, type Message } from './i18n';
+  import { statusLabel } from './ui';
   import { runPalette } from './run-colors';
   import type { Plugin, Run } from './types';
   import LineageDetails from './LineageDetails.svelte';
@@ -35,6 +36,7 @@
   import {
     boundsOf,
     cardsIn,
+    searchRuns,
     descendants,
     edgePath,
     indexGraph,
@@ -65,6 +67,7 @@
     onCompare,
     onPage,
     rail,
+    narrow = false,
   }: {
     project: string;
     runs: Run[];
@@ -79,6 +82,8 @@
     onPage: (page: string, params?: Record<string, string>) => void;
     /** The header element the controls move into on wide screens; without it they form a row. */
     rail?: HTMLElement;
+    /** A phone-width window: the controls show as icons. */
+    narrow?: boolean;
   } = $props();
 
   // The page's choices for a project, kept in this browser.
@@ -601,14 +606,14 @@
   /** Resume and extension links continue a run; other links start a new one. */
   const continues = (edge: LineageEdge) => edge.relation === 'resume' || edge.relation === 'extend';
   /** Links read as the child's logged `change` sentence, else its relations and changed keys. */
+  /**
+   * A link's label: the child's logged change sentence, else its relations and a few changed
+   * keys. The start update and the full key list are in the run's details panel.
+   */
   function edgeLabel(edge: LineageEdge) {
     const parts: string[] = [];
-    if (edge.update !== null)
-      parts.push(
-        $t('lineage.edge.update', { update: $number(edge.update, { notation: 'compact' }) }),
-      );
     const change = index?.nodes.get(edge.target)?.change;
-    if (change) return [...parts, change].join(' · ');
+    if (change) return change;
     const traits = edge.traits.filter((trait) => trait !== 'extends_config');
     if (traits.length) parts.push(traits.map((trait) => '+' + trait.replace(/_/g, ' ')).join(' '));
     const keys = edge.changedKeys.slice(0, 2).map(shortKey);
@@ -646,38 +651,74 @@
     ].filter(Boolean).length,
   );
   let showLabels = $derived(scale >= 0.55);
+  // Search suggestions: the best-matching runs, chosen with the arrows and Enter or a click.
+  let suggested = $derived(graph ? searchRuns(graph.nodes, filters.search) : []),
+    active = $state(0);
+  $effect(() => {
+    filters.search;
+    active = 0;
+  });
+  // A pause in typing brings the best match into view.
+  $effect(() => {
+    const best = suggested[0]?.id;
+    if (!best) return;
+    const timer = setTimeout(() => untrack(() => reveal(best)), 400);
+    return () => clearTimeout(timer);
+  });
+  function choose(id: string) {
+    select(id, false);
+    if (index?.parent.has(id) || index?.children.has(id) || index?.nodes.has(id)) reveal(id);
+  }
+  function searchKey(event: KeyboardEvent) {
+    if (!suggested.length) return;
+    if (event.key === 'ArrowDown') active = (active + 1) % suggested.length;
+    else if (event.key === 'ArrowUp') active = (active - 1 + suggested.length) % suggested.length;
+    else if (event.key === 'Enter') choose(suggested[active].id);
+    else return;
+    event.preventDefault();
+  }
 </script>
 
 {#snippet toolbar()}
   <div class="lineage-toolbar" role="toolbar" aria-label={$t('lineage.toolbar.label')}>
-    <div class="lineage-search">
-      <Search
-        size={rail ? 'sm' : 'lg'}
-        labelText={$t('lineage.filter.search')}
-        placeholder={$t('lineage.filter.search')}
-        closeButtonLabelText={$t('common.search.clear')}
-        bind:value={filters.search}
-      />
-    </div>
-    <Button
-      kind="ghost"
-      size="small"
-      icon={Filter}
-      aria-haspopup="dialog"
-      aria-expanded={menu === 'filters'}
-      on:click={(event) => openMenu('filters', event)}
-      >{activeFilters
-        ? $t('lineage.toolbar.filtersActive', { count: activeFilters })
-        : $t('lineage.toolbar.filters')}</Button
-    >
-    <Button
-      kind="ghost"
-      size="small"
-      icon={View}
-      aria-haspopup="dialog"
-      aria-expanded={menu === 'view'}
-      on:click={(event) => openMenu('view', event)}>{$t('lineage.toolbar.view')}</Button
-    >
+    {#if narrow}<Button
+        kind="ghost"
+        size="small"
+        icon={Filter}
+        iconDescription={activeFilters
+          ? $t('lineage.toolbar.filtersActive', { count: activeFilters })
+          : $t('lineage.toolbar.filters')}
+        tooltipPosition="bottom"
+        aria-haspopup="dialog"
+        aria-expanded={menu === 'filters'}
+        on:click={(event) => openMenu('filters', event)}
+      /><Button
+        kind="ghost"
+        size="small"
+        icon={View}
+        iconDescription={$t('lineage.toolbar.view')}
+        tooltipPosition="bottom"
+        aria-haspopup="dialog"
+        aria-expanded={menu === 'view'}
+        on:click={(event) => openMenu('view', event)}
+      />{:else}<Button
+        kind="ghost"
+        size="small"
+        icon={Filter}
+        aria-haspopup="dialog"
+        aria-expanded={menu === 'filters'}
+        on:click={(event) => openMenu('filters', event)}
+        >{activeFilters
+          ? $t('lineage.toolbar.filtersActive', { count: activeFilters })
+          : $t('lineage.toolbar.filters')}</Button
+      ><Button
+        kind="ghost"
+        size="small"
+        icon={View}
+        aria-haspopup="dialog"
+        aria-expanded={menu === 'view'}
+        on:click={(event) => openMenu('view', event)}>{$t('lineage.toolbar.view')}</Button
+      >{/if}
     {#if pickedRuns.length || (selected && index?.nodes.has(selected))}<span
         class="lineage-selection"
         role="group"
@@ -705,13 +746,20 @@
             iconDescription={$t('lineage.selection.clear')}
             tooltipPosition="bottom"
             on:click={() => pick([])}
-          /><Button
-            kind="primary"
-            size="small"
-            icon={ChartLine}
-            on:click={() => onCompare(pickedRuns)}
-            >{$t('lineage.selection.compareCount', { count: pickedRuns.length })}</Button
-          >{/if}
+          />{#if narrow}<Button
+              kind="primary"
+              size="small"
+              icon={ChartLine}
+              iconDescription={$t('lineage.selection.compareCount', { count: pickedRuns.length })}
+              tooltipPosition="bottom"
+              on:click={() => onCompare(pickedRuns)}
+            />{:else}<Button
+              kind="primary"
+              size="small"
+              icon={ChartLine}
+              on:click={() => onCompare(pickedRuns)}
+              >{$t('lineage.selection.compareCount', { count: pickedRuns.length })}</Button
+            >{/if}{/if}
       </span>{/if}
     <span class="lineage-toolbar-actions">
       <Button
@@ -724,7 +772,7 @@
         aria-expanded={menu === 'info'}
         on:click={(event) => openMenu('info', event)}
       />
-      <Button
+      {#if !narrow}<Button
         kind="ghost"
         size="small"
         icon={FitToScreen}
@@ -749,13 +797,41 @@
         tooltipPosition="bottom"
         tooltipAlignment="end"
         on:click={() => (settingsOpen = true)}
-      />
+      />{/if}
     </span>
   </div>
 {/snippet}
 
+<!-- Runs matching the search, to open one; the graph itself filters as the query changes. -->
+{#snippet suggestList()}<div
+    class="page-rail-suggestions"
+    role="listbox"
+    id="lineage-suggestions"
+    aria-label={$t('lineage.filter.suggestions')}
+  >
+    {#each suggested as node, position (node.id)}<div
+        role="option"
+        tabindex="-1"
+        id={'lineage-suggestion-' + position}
+        aria-selected={position === active}
+        onpointerdown={(event) => event.preventDefault()}
+        onclick={() => choose(node.id)}
+        onkeydown={() => {}}
+      >
+        <RunName id={node.id} name={node.display_name} /><span class="lineage-muted"
+          >{statusLabel(node.state, $t)}</span
+        >
+      </div>{:else}<p class="page-rail-empty">{$t('lineage.filter.noSuggestions')}</p>{/each}
+  </div>{/snippet}
+
 <div class="lineage-page">
-  <PageRail target={rail}>{@render toolbar()}</PageRail>
+  <PageRail
+    target={rail}
+    bind:search={filters.search}
+    searchLabel={$t('lineage.filter.search')}
+    onsearchkey={searchKey}
+    suggestions={graph ? suggestList : undefined}>{@render toolbar()}</PageRail
+  >
   {#if menu && menuAnchor}<ContextPopover
       anchor={menuAnchor}
       title={menu === 'filters'
@@ -854,7 +930,26 @@
               {$t('lineage.selection.count', { count: pickedRuns.length })}
             </li>{/if}
           <li class="lineage-muted">{$t('lineage.selection.hint')}</li>
-        </ul>{/if}
+        </ul>
+        {#if narrow}<div class="lineage-info-actions">
+            <Button kind="ghost" size="small" icon={FitToScreen} on:click={fit}
+              >{$t('lineage.zoom.fit')}</Button
+            ><Button
+              kind="ghost"
+              size="small"
+              icon={InProgress}
+              disabled={!runningIds.length}
+              on:click={focusRunning}>{$t('lineage.zoom.running')}</Button
+            ><Button
+              kind="ghost"
+              size="small"
+              icon={SettingsAdjust}
+              on:click={() => {
+                closeMenu();
+                settingsOpen = true;
+              }}>{$t('lineage.settings.open')}</Button
+            >
+          </div>{/if}{/if}
     </ContextPopover>{/if}
   {#if error}<InlineNotification
       lowContrast
@@ -915,9 +1010,7 @@
                   edgeLabel(edge)}{#if label}<span
                     class="lineage-edge-label"
                     class:on-path={pathSet.has(edge.target)}
-                    title={[index.nodes.get(edge.target)?.change, ...edge.changedKeys]
-                      .filter(Boolean)
-                      .join('\n')}
+                    title={index.nodes.get(edge.target)?.change || label}
                     style:left={to.x - 8 + 'px'}
                     style:top={to.y + nodeHeight / 2 + 'px'}>{label}</span
                   >{/if}{/if}{/each}{/if}

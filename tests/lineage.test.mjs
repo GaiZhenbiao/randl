@@ -326,6 +326,16 @@ test('config diffs skip ignored keys and compare nested values', () => {
     { key: 'rl.algorithm.lr', from: 1e-6, to: 2e-7 },
     { key: 'rl.algorithm.new', from: undefined, to: true },
   ]);
+  // Lists of objects logged with their keys in another order are the same value.
+  const scenes = (entries) => flattenConfig({ data: { scenes: entries } });
+  assert.deepEqual(
+    diffConfigs(
+      scenes([{ name: 'forest', seed: 1, layers: [{ label: 'canopy', cover: 0.7 }] }]),
+      scenes([{ layers: [{ cover: 0.7, label: 'canopy' }], seed: 1, name: 'forest' }]),
+      [],
+    ),
+    [],
+  );
 });
 
 test('edges that would close a cycle are dropped', () => {

@@ -8,6 +8,7 @@ import {
   DataZoomComponent,
   ParallelComponent,
   ToolboxComponent,
+  MarkLineComponent,
 } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 core.use([
@@ -21,6 +22,7 @@ core.use([
   DataZoomComponent,
   ParallelComponent,
   ToolboxComponent,
+  MarkLineComponent,
   CanvasRenderer,
 ]);
 // ECharts already uses this clone marker for typed arrays. Numeric pairs have

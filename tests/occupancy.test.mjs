@@ -176,7 +176,7 @@ test('a running run without a compute block sits where its plan put it, or still
   assert.equal(bar('plan:behind').start, now + 2 * hour);
 });
 
-test('segments without GPU indices get packed rows; moves between hosts split a run', () => {
+test('segments without GPU indices share one row per host in lanes; moves between hosts split a run', () => {
   const runs = [
     run('a', {
       start: 10 * hour,
@@ -214,10 +214,14 @@ test('segments without GPU indices get packed rows; moves between hosts split a 
     }),
   ];
   const result = occupancy(runs, [], now);
-  const rows = (id) => result.bars.find((item) => item.id === id).rows;
-  assert.deepEqual(rows('a#0'), ['h/?0']);
-  assert.deepEqual(rows('b#0'), ['h/?1']);
-  assert.deepEqual(rows('c#0'), ['h/?0']);
+  const placed = (id) => {
+    const bar = result.bars.find((item) => item.id === id);
+    return [bar.rows, bar.lane, bar.lanes];
+  };
+  // a and b overlap, so they split the row; c starts after a ends and reuses its lane.
+  assert.deepEqual(placed('a#0'), [['h/?'], 0, 2]);
+  assert.deepEqual(placed('b#0'), [['h/?'], 1, 2]);
+  assert.deepEqual(placed('c#0'), [['h/?'], 0, 2]);
   const moved = result.bars.filter((bar) => bar.run === 'moved');
   assert.deepEqual(
     moved.map((bar) => [bar.host, bar.start / hour, bar.end / hour]),
@@ -230,8 +234,53 @@ test('segments without GPU indices get packed rows; moves between hosts split a 
   assert.deepEqual(
     result.hosts.map((host) => host.rows.map((row) => row.key)),
     [
-      ['h/0', 'h/?0', 'h/?1'],
+      ['h/0', 'h/?'],
       ['k/0', 'k/1'],
+    ],
+  );
+  // The moved run overlaps nothing, so it keeps whole rows.
+  assert.deepEqual(
+    moved.map((bar) => bar.lanes),
+    [1, 1, 1],
+  );
+});
+
+test('runs sharing GPUs at the same time stack in lanes, one lane across all their GPUs', () => {
+  const on = (gpus) => ({ host: 'g', gpu_count: gpus.length, segments: [segment('g', 's', gpus)] });
+  const runs = [
+    run('train', { start: 10 * hour, end: 20 * hour, compute: on([0, 1]) }),
+    // An audit on GPU 1 while training runs, and one on GPUs 0-1 while both do.
+    run('audit', { start: 12 * hour, end: 18 * hour, compute: on([1]) }),
+    run('probe', { start: 13 * hour, end: 14 * hour, compute: on([0, 1]) }),
+    // The next run on the same GPUs, after the first ends.
+    run('next', { start: 20 * hour, end: 30 * hour, compute: on([0, 1]) }),
+  ];
+  const result = occupancy(runs, [], now);
+  const lane = (id) => {
+    const bar = result.bars.find((item) => item.run === id);
+    return [bar.lane, bar.lanes];
+  };
+  assert.deepEqual(['train', 'audit', 'probe', 'next'].map(lane), [
+    [0, 3],
+    [1, 3],
+    [2, 3],
+    // After the others end it overlaps nothing, so it takes whole rows again.
+    [0, 1],
+  ]);
+  // A run nobody overlaps keeps whole rows, even after a hand-over of a few minutes.
+  const alone = occupancy(
+    [
+      run('a', { start: 0, end: 10 * hour, compute: on([0]) }),
+      run('b', { start: 10 * hour - 300, end: 20 * hour, compute: on([0]) }),
+    ],
+    [],
+    now,
+  );
+  assert.deepEqual(
+    alone.bars.map((bar) => [bar.lane, bar.lanes]),
+    [
+      [0, 1],
+      [0, 1],
     ],
   );
 });

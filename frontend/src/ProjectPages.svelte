@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RunName from './RunName.svelte';
   import { artifactURL, runURL, interceptLink, statusLabel } from './ui';
   import JsonValue from './JsonValue.svelte';
   import { t, date, type Message } from './i18n';
@@ -324,12 +325,13 @@
                 ')\npath = artifact.download()'}</pre>
             <h3 class="table-heading">{$t('artifacts.usage.producedBy')}</h3>
             {#if detail.producer}<div class="artifact-run-row">
-                <a
-                  class="table-link"
+                <RunName
+                  quiet
+                  id={detail.producer.id}
+                  name={detail.producer.display_name}
                   href={runURL(detail.producer)}
                   onclick={(event) => interceptLink(event, () => onRun(detail.producer))}
-                  >{detail.producer.display_name}</a
-                ><span>{statusLabel(detail.producer.state, $t)}</span>
+                /><span>{statusLabel(detail.producer.state, $t)}</span>
               </div>{:else}<p>{$t('artifacts.usage.uploaded')}</p>{/if}
             <h3 class="table-heading">{$t('artifacts.usage.usedBy')}</h3>
             {#if detail.consumers.length}<DataTable
@@ -345,14 +347,16 @@
                 ]}
                 size="compact"
                 ><svelte:fragment slot="cell" let:row let:cell
-                  >{#if cell.key === 'display_name'}<a
-                      class="table-link"
+                  >{#if cell.key === 'display_name'}<RunName
+                      quiet
+                      id={String(row.id)}
+                      name={String(cell.value)}
                       href={runURL(detail.consumers.find((run: any) => run.id === row.id))}
                       onclick={(event) =>
                         interceptLink(event, () =>
                           onRun(detail.consumers.find((run: any) => run.id === row.id)),
-                        )}>{cell.value}</a
-                    >{:else}{cell.value}{/if}</svelte:fragment
+                        )}
+                    />{:else}{cell.value}{/if}</svelte:fragment
                 ></DataTable
               >{:else}<p>{$t('artifacts.usage.unused')}</p>{/if}
           </TabContent>

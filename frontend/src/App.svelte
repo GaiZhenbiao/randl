@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { runColors } from './run-name';
+  import RunName from './RunName.svelte';
   import {
     filterChoice,
     fieldLabel,
@@ -734,6 +736,8 @@
   const resolvedColors = $derived(
     (shownResolved = steady(shownResolved, resolveRunColors(projectRuns, storedColors, dark))),
   );
+  // Run names everywhere (RunName.svelte) take the project's run colours.
+  $effect(() => runColors.set(resolvedColors));
   let help = $state(false),
     panelDialog = $state(false),
     projectDialog = $state(false),
@@ -2571,8 +2575,7 @@
       />{/if}
     <!-- The workspace's view picker names the page. -->
     <h1 class:bx--visually-hidden={page === 'workspace'}>
-      {currentRun?.display_name ||
-        (page === 'workspace'
+      {#if currentRun?.display_name}<RunName id={currentRun.id} name={currentRun.display_name} />{:else}{(page === 'workspace'
           ? $t('nav.workspace')
           : page === 'overview'
             ? project
@@ -2584,7 +2587,7 @@
                 ? $t('app.settings.title')
                 : page === 'not-found'
                 ? $t(routeError || 'app.errors.pageNotFound')
-                : $t(pages.find((p) => p.id === page)?.name))}
+                : $t(pages.find((p) => p.id === page)?.name))}{/if}
     </h1>
     {#if page === 'run' && currentRun && barStage < 3}<RunStateTag run={currentRun} />{/if}
   </div>
@@ -3286,16 +3289,21 @@
           onRun={(run) => details(run)}
           onCompare={compareInWorkspace}
           onPage={(next, params) => void openPage(next, params)}
-          rail={width >= 1056 ? pageRail : undefined}
+          rail={pageRail}
+            narrow={width <= 760}
         />{:else if page === 'findings' && project}{#key project}<FindingsPage
             {project}
             runs={projectRuns}
-            rail={width >= 1056 ? pageRail : undefined}
+            {plugins}
+            {dark}
+            rail={pageRail}
+            narrow={width <= 760}
             onRun={(run) => details(run)}
           />{/key}{:else if page === 'plans' && project}{#key project}<PlansPage
             {project}
             runs={projectRuns}
-            rail={width >= 1056 ? pageRail : undefined}
+            rail={pageRail}
+            narrow={width <= 760}
             {plugins}
             {dark}
             onRun={(run) => details(run)}

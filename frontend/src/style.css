@@ -675,7 +675,8 @@ pre {
   .header-actions .bx--btn svg {
     display: none;
   }
-  .shell aside {
+  /* The run list's drawer, not every aside on the page (such as the Lineage run panel). */
+  .shell > aside {
     position: fixed;
     top: 48px;
     bottom: 0;
@@ -685,7 +686,7 @@ pre {
     max-width: 90vw;
     transform: translateX(-101%);
   }
-  .shell.drawer-open aside {
+  .shell.drawer-open > aside {
     transform: translateX(0);
   }
   main {
@@ -1978,8 +1979,8 @@ aside {
   padding-inline: 16px;
 }
 /* The Lineage page: a pannable graph of run cards beside a details panel. */
-/* Page controls (PageRail.svelte, CONTRIBUTING.md "Page controls"): in the header rail after
-   the title on wide screens, else one row under the header that scrolls sideways. */
+/* Page controls (PageRail.svelte, CONTRIBUTING.md "Page controls"): in the header after the
+   page's name at every width; the page's main search ends the rail, as the workspace's does. */
 .page-rail,
 .page-rail-controls {
   display: flex;
@@ -1988,8 +1989,8 @@ aside {
   min-width: 0;
 }
 .page-rail-controls {
-  gap: 8px;
-  padding-left: 16px;
+  gap: 4px;
+  padding-left: 8px;
 }
 .page-rail-row {
   display: flex;
@@ -2009,9 +2010,90 @@ aside {
 .page-rail-end {
   margin-left: auto;
 }
-/* With page controls beside it, the page's name keeps its width; the search field gives way. */
-header:has(.page-rail-controls) .page-title h1 {
-  flex-shrink: 0;
+/* The search is an icon until it is opened or holds text. */
+.page-rail-controls > .page-rail-search,
+.page-rail-row > .page-rail-search {
+  position: relative;
+  flex: none;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+.page-rail-end + .page-rail-search {
+  margin-inline-start: 0;
+}
+.page-rail-controls > .page-rail-search.open,
+.page-rail-row > .page-rail-search.open {
+  flex: 0 1 280px;
+  min-width: 140px;
+}
+.page-rail-search .bx--search--expanded {
+  width: 100%;
+}
+.page-rail-search .bx--search--expandable,
+.page-rail-search .bx--search-input,
+.page-rail-search .bx--search-input::placeholder {
+  transition: none;
+}
+/* Suggestions under the open search. */
+.page-rail-suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 30;
+  width: max(100%, 320px);
+  max-height: 360px;
+  overflow-y: auto;
+  padding: 4px 0;
+  background: var(--cds-ui-01);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
+}
+.page-rail-suggestions [role='option'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 16px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.page-rail-suggestions [role='option'][aria-selected='true'],
+.page-rail-suggestions [role='option']:hover {
+  background: var(--cds-hover-ui);
+}
+.page-rail-suggestions .lineage-muted {
+  margin-left: auto;
+  flex: none;
+}
+.page-rail-empty {
+  padding: 8px 16px;
+  font-size: 14px;
+  color: var(--cds-text-02);
+}
+@media (min-width: 761px) {
+  /* With page controls beside it, the page's name keeps its width; the search gives way. */
+  header:has(.page-rail-controls) .page-title h1 {
+    flex-shrink: 0;
+  }
+}
+@media (max-width: 760px) {
+  .page-rail-controls {
+    padding-left: 0;
+    gap: 2px;
+  }
+  /* An open search covers the bar until it closes, as the workspace's does. */
+  .page-rail-controls > .page-rail-search.open {
+    position: absolute;
+    inset: 4px 4px 4px 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    background: var(--cds-ui-01);
+  }
+  .page-rail-suggestions {
+    width: 100%;
+  }
 }
 .layered-shell > main.lineage-main {
   display: flex;
@@ -6173,6 +6255,11 @@ header:has(.page-rail-controls) .page-title h1 {
 .page-rail-row .findings-search {
   flex-shrink: 1;
 }
+.page-rail-row .bx--form-item,
+.page-rail-controls .bx--form-item {
+  flex: 0 1 auto;
+  min-width: 0;
+}
 .page-rail-row .bx--select--inline,
 .page-rail-controls .bx--select--inline {
   flex-shrink: 1;
@@ -6260,7 +6347,7 @@ header:has(.page-rail-controls) .page-title h1 {
   gap: 4px;
   width: 100%;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 16px;
   border: 0;
   font: inherit;
   text-align: left;
@@ -6278,9 +6365,12 @@ header:has(.page-rail-controls) .page-title h1 {
 .findings-sort svg {
   fill: currentColor;
 }
+/* Rows match the Runs table: Carbon's short rows (tall ones for touch), 16 px cell padding
+   lined up with the headers, text centred in the row. */
 .findings-table td {
-  height: 40px;
-  padding: 0 8px;
+  height: 32px;
+  padding: 0 16px;
+  vertical-align: middle;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6306,9 +6396,18 @@ header:has(.page-rail-controls) .page-title h1 {
 .findings-table tbody tr.ruled-out .findings-col-title {
   color: var(--cds-text-02);
 }
-.findings-col-check {
+.findings-table .findings-col-check {
   width: 48px;
-  padding-left: 16px !important;
+  padding: 0 0 0 16px;
+  vertical-align: middle;
+}
+.findings-table th.findings-col-check {
+  text-align: left;
+}
+@media (pointer: coarse) {
+  .findings-table td {
+    height: 40px;
+  }
 }
 .findings-col-title {
   width: auto;
@@ -7127,5 +7226,154 @@ th.findings-col-citations .findings-sort {
   box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
 }
 .occupancy-tooltip[hidden] {
+  display: none;
+}
+
+/* Run names (RunName.svelte): the run's swatch, then its name on one line. */
+.run-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: bottom;
+}
+.run-label-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.run-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-label.strong {
+  font-weight: 600;
+}
+.run-label.strong .run-label-swatch {
+  width: 10px;
+  height: 10px;
+}
+.run-label-button {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--cds-link-01);
+  background: none;
+  cursor: pointer;
+}
+.run-label-button:hover .run-label-text {
+  text-decoration: underline;
+}
+.run-label-button:focus-visible {
+  outline: 2px solid var(--cds-focus);
+}
+/* Keyboard focus shows the whole name below a cut one. */
+.run-label[data-name]:focus-visible::after {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  width: max-content;
+  max-width: min(32rem, 80vw);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  color: var(--cds-inverse-01, #fff);
+  background: var(--cds-inverse-02, #393939);
+  content: attr(data-name);
+  pointer-events: none;
+}
+
+.occupancy-run-swatch {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #fff 70%, transparent);
+  vertical-align: baseline;
+}
+
+/* A finding's cited runs: each run's name and cited update, then its primary metric. */
+.finding-citations .finding-citation {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--cds-ui-03);
+}
+.finding-citation-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.finding-citation-at {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--cds-text-02);
+}
+.finding-citation-chart {
+  margin-top: 4px;
+}
+
+/* A changed list or object: folded under a count; opened, each changed field and its diff. */
+.config-diff-nested summary {
+  font-size: 12px;
+  color: var(--cds-link-01);
+  cursor: pointer;
+}
+.config-diff-nested ul {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid var(--cds-ui-03);
+}
+.config-diff-nested li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.config-diff-subpath {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--cds-text-02);
+  overflow-wrap: anywhere;
+}
+
+/* Joins the per-row pieces of a run on several GPUs whose rows are split into lanes. */
+.occupancy-spine {
+  position: absolute;
+  width: 3px;
+  pointer-events: none;
+  background: var(--cds-text-02);
+}
+.occupancy-spine.kind-running,
+.occupancy-spine.kind-remaining {
+  background: var(--cds-interactive-04);
+}
+.occupancy-spine.kind-planned {
+  background: #8a3ffc;
+}
+
+/* A bar sharing its rows with overlapping runs is a thin lane: labels give way to the tooltip. */
+.occupancy-bar.lane {
+  padding: 0;
+  border-width: 0 0 0 2px;
+  font-size: 0;
+}
+.occupancy-bar.lane .occupancy-run-swatch {
   display: none;
 }

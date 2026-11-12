@@ -1,6 +1,7 @@
 <script lang="ts">
   // The Lineage page's side panel for one run: its parent link, hypothesis, metric history
   // along its lineage, and config diffs against its parent and a run the reader picks.
+  import RunName from './RunName.svelte';
   import { Button, InlineNotification, Tag, Toggle } from 'carbon-components-svelte';
   import Close from 'carbon-icons-svelte/lib/Close.svelte';
   import Launch from 'carbon-icons-svelte/lib/Launch.svelte';
@@ -23,6 +24,8 @@
     type LineageGraph,
     type LineageNode,
     wordDiff,
+    structuredDiff,
+    entryOf,
   } from './lineage-graph';
   let {
     node,
@@ -107,9 +110,22 @@
     const at = key.lastIndexOf('.');
     return at < 0 ? ['', key] : [key.slice(0, at + 1), key.slice(at + 1)];
   };
+  /** Lists and objects on both sides diff field by field, folded under a count. */
+  const nested = (change: ConfigChange) =>
+    [change.from, change.to].every((value) => !!value && typeof value === 'object') &&
+    structuredDiff(change.from, change.to).some((part) => part.path !== '');
   const verdictTag = (verdict: string) =>
     verdict === 'adopted' ? 'green' : verdict === 'rejected' ? 'red' : 'blue';
 </script>
+
+{#snippet valueDiff(from: Json | undefined, to: Json | undefined)}<code class="config-diff-value"
+    >{#if from === undefined}<span class="config-diff-missing">{$t('lineage.diff.missing')} →</span
+      >{/if}{#each wordDiff(text(from), text(to)) as part, position (position)}<span
+        class="diff-{part.kind}">{part.text}</span
+      >{/each}{#if to === undefined}<span class="config-diff-missing"
+        >→ {$t('lineage.diff.missing')}</span
+      >{/if}</code
+  >{/snippet}
 
 {#snippet diffTable(diff: Diff, fromName: string)}
   {#if !diff}<p class="lineage-muted">{$t('common.status.loading')}</p>
@@ -133,15 +149,26 @@
             <span class="config-diff-key" title={change.key}
               ><span class="config-diff-path">{path}</span><strong>{leaf}</strong></span
             >
-            <code class="config-diff-value"
-              >{#if change.from === undefined}<span class="config-diff-missing"
-                  >{$t('lineage.diff.missing')} →</span
-                >{/if}{#each wordDiff(text(change.from), text(change.to)) as part, position (position)}<span
-                  class="diff-{part.kind}">{part.text}</span
-                >{/each}{#if change.to === undefined}<span class="config-diff-missing"
-                  >→ {$t('lineage.diff.missing')}</span
-                >{/if}</code
-            >
+            {#if nested(change)}{@const parts = structuredDiff(
+                change.from,
+                change.to,
+              )}{@const entries = new Set(parts.map((part) => entryOf(part.path))).size}
+              <details class="config-diff-nested">
+                <summary
+                  >{entries > 1 || parts.some((part) => entryOf(part.path))
+                    ? $t('lineage.diff.entries', { count: entries })
+                    : ''}{entries > 1 || parts.some((part) => entryOf(part.path)) ? ' · ' : ''}{$t(
+                    'lineage.diff.fields',
+                    { count: parts.length },
+                  )}</summary
+                >
+                <ul>
+                  {#each parts as part (part.path)}<li>
+                      <span class="config-diff-subpath" title={part.path}>{part.path || leaf}</span>
+                      {@render valueDiff(part.from, part.to)}
+                    </li>{/each}
+                </ul>
+              </details>{:else}{@render valueDiff(change.from, change.to)}{/if}
           </li>{/each}
       </ul>{/if}
     {#if ignored}<Toggle
@@ -158,7 +185,7 @@
   <!-- The header stays in place while the rest of the panel scrolls. -->
   <header class="lineage-details-header">
     <div class="lineage-details-heading">
-      <h2 id="lineage-details-title">{node.display_name}</h2>
+      <h2 id="lineage-details-title"><RunName id={node.id} name={node.display_name} strong /></h2>
       <p class="lineage-details-meta">
         <span class="lineage-state state-{node.state}">{statusLabel(node.state, $t)}</span>
         {#if node.verdict}<Tag size="sm" type={verdictTag(node.verdict)}
@@ -225,9 +252,11 @@
     {#if !node.planned}<section>
         <h3>{$t('lineage.panel.parent')}</h3>
         {#if parentEdge && parent}<p>
-            <button type="button" class="lineage-link" onclick={() => onSelect(parent.id)}
-              >{parent.display_name}</button
-            >
+            <RunName
+              id={parent.id}
+              name={parent.display_name}
+              onclick={() => onSelect(parent.id)}
+            />
           </p>
           <p class="lineage-muted">
             {parentEdge.update === null
@@ -264,9 +293,11 @@
         {#if children.length}<h4>{$t('lineage.panel.children', { count: children.length })}</h4>
           <ul class="lineage-children">
             {#each children as child (child.id)}<li>
-                <button type="button" class="lineage-link" onclick={() => onSelect(child.id)}
-                  >{child.display_name}</button
-                >
+                <RunName
+                  id={child.id}
+                  name={child.display_name}
+                  onclick={() => onSelect(child.id)}
+                />
               </li>{/each}
           </ul>{/if}
       </section>

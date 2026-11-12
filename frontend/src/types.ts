@@ -1,6 +1,8 @@
 import type { Translator, Values } from './i18n';
 import type { OptionValue, PluginSettings } from '../../backend/src/plugin-options';
 export type PlotSettings = {
+  /** Reference points the host draws as vertical lines (not stored in views). */
+  marks?: { x: number; label?: string }[];
   maxRuns?: number | null | 'focused';
   legendPosition?: 'top' | 'bottom' | 'left' | 'right';
   legendTemplate?: string;

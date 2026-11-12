@@ -33,6 +33,7 @@ export type OccupancyPlan = Pick<
   Plan,
   'id' | 'name' | 'host' | 'slot' | 'queue' | 'after' | 'created' | 'parentUpdate' | 'config'
 > & { gpus?: number[] | null; updates?: number | null };
+/** A timeline row: one GPU, or a host's GPUs that were not logged. */
 export type OccupancyRow = { key: string; gpu: number | null };
 export type OccupancyHost = { host: string; model: string; rows: OccupancyRow[] };
 export type OccupancyBar = {
@@ -62,6 +63,9 @@ export type OccupancyBar = {
   inferred?: boolean;
   /** The timeline rows it covers. */
   rows: string[];
+  /** Its lane within those rows, when bars overlap in time, of `lanes` sharing them. */
+  lane?: number;
+  lanes?: number;
   progress?: number | null;
   budget?: number | null;
   from?: number | null;
@@ -138,8 +142,9 @@ function segmentTimes(run: OccupancyRun, now: number): Segment[] {
 }
 
 /**
- * Lays out the timeline: one row per GPU index (0 to the highest seen) of each host, then
- * rows for segments whose GPU indices were not logged, packed so their bars do not overlap.
+ * Lays out the timeline: one row per GPU index (0 to the highest seen) of each host, then one
+ * row for segments whose GPU indices were not logged; bars that overlap in time on a row
+ * (two runs on one GPU, an evaluation beside training) share it in lanes.
  * Planned runs start once every GPU they need is free (after the running run's estimated end
  * and the plans ahead of them) and after the run or plan they are queued after.
  */
@@ -422,35 +427,65 @@ export function occupancy(
       };
     });
   const byHost = new Map(hosts.map((host) => [host.host, host]));
-  for (const bar of bars)
-    if (bar.gpus?.length) bar.rows = bar.gpus.map((gpu) => bar.host + '/' + gpu);
-  const loose = bars
-    .filter((bar) => !bar.gpus?.length && byHost.has(bar.host))
-    .sort((a, b) => a.start - b.start || a.end - b.end);
-  // A running run's two parts share a row.
-  const placed = new Map<string, string>(),
-    rowEnds = new Map<string, number[]>();
-  for (const bar of loose) {
-    const host = byHost.get(bar.host)!,
-      owner = bar.run ?? bar.id,
-      kept = bar.kind === 'remaining' ? placed.get(owner) : undefined;
-    if (kept) {
-      bar.rows = [kept];
+  // Bars whose GPUs were not logged share one row per host.
+  for (const bar of bars) {
+    if (!byHost.has(bar.host)) continue;
+    bar.rows = bar.gpus?.length ? bar.gpus.map((gpu) => bar.host + '/' + gpu) : [bar.host + '/?'];
+  }
+  for (const host of hosts)
+    if (bars.some((bar) => bar.host === host.host && bar.rows[0] === host.host + '/?'))
+      host.rows.push({ key: host.host + '/?', gpu: null });
+  // Bars that overlap in time on a row share it in lanes: each bar takes the first lane free
+  // on every row it covers, so a run on several GPUs keeps one lane across them, and a running
+  // run's estimate stays in its run's lane. Overlaps under ten minutes (one run's last
+  // heartbeat after the next one's start) are not overlaps.
+  const slack = 600,
+    until = (bar: OccupancyBar) =>
+      bar.kind === 'running' ? (runEnds.get(bar.run!) ?? bar.end) : bar.end,
+    owner = (bar: OccupancyBar) => bar.run ?? bar.id;
+  const lanesEnd = new Map<string, { end: number; owner: string }[]>(),
+    laneOf = new Map<string, number>(),
+    // Owners whose bars overlap, joined into groups that split their rows alike.
+    group = new Map<string, string>();
+  const root = (key: string): string => {
+    const parent = group.get(key) ?? key;
+    if (parent === key) return key;
+    const top = root(parent);
+    group.set(key, top);
+    return top;
+  };
+  const placedBars = [...bars]
+    .filter((item) => item.rows.length)
+    .sort((a, b) => a.start - b.start || until(b) - until(a));
+  for (const bar of placedBars) {
+    const kept = bar.kind === 'remaining' ? laneOf.get(owner(bar)) : undefined;
+    if (kept !== undefined) {
+      bar.lane = kept;
       continue;
     }
-    const ends = rowEnds.get(bar.host) ?? [];
-    let index = ends.findIndex((end) => end <= bar.start);
-    if (index < 0) {
-      index = ends.length;
-      ends.push(0);
-      host.rows.push({ key: bar.host + '/?' + index, gpu: null });
+    let lane = 0;
+    while (
+      bar.rows.some((row) => (lanesEnd.get(row)?.[lane]?.end ?? -Infinity) > bar.start + slack)
+    )
+      lane++;
+    for (const row of bar.rows) {
+      const ends = lanesEnd.get(row) ?? [];
+      // Every bar still running on this row overlaps this one.
+      for (const other of ends)
+        if (other && other.end > bar.start + slack) group.set(root(owner(bar)), root(other.owner));
+      ends[lane] = { end: until(bar), owner: owner(bar) };
+      lanesEnd.set(row, ends);
     }
-    // The whole run (with its estimate) keeps the row.
-    const until = bar.kind === 'running' ? (runEnds.get(bar.run!) ?? bar.end) : bar.end;
-    ends[index] = until;
-    rowEnds.set(bar.host, ends);
-    bar.rows = [bar.host + '/?' + index];
-    placed.set(owner, bar.rows[0]);
+    bar.lane = lane;
+    laneOf.set(owner(bar), lane);
   }
+  // Each bar takes 1/lanes of its rows' height, where lanes is its group's lane count; bars
+  // that overlap nothing keep the whole row.
+  const groupLanes = new Map<string, number>();
+  for (const bar of placedBars) {
+    const key = root(owner(bar));
+    groupLanes.set(key, Math.max(groupLanes.get(key) ?? 1, (bar.lane ?? 0) + 1));
+  }
+  for (const bar of placedBars) bar.lanes = groupLanes.get(root(owner(bar))) ?? 1;
   return { now, hosts, bars, unplaced };
 }

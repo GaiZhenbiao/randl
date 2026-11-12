@@ -1,14 +1,14 @@
 <script lang="ts">
   // A project's findings (README "Experiment ledger"): what the runs showed, by topic, each
   // citing the runs and updates it rests on, with every earlier version kept.
-  import { onMount, tick } from 'svelte';
+  import RunName from './RunName.svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import {
     Button,
     InlineNotification,
     Modal,
     RadioButton,
     RadioButtonGroup,
-    Search,
     Select,
     SelectItem,
     Tag,
@@ -23,14 +23,18 @@
   import ArrowDown from 'carbon-icons-svelte/lib/ArrowDown.svelte';
   import ArrowUp from 'carbon-icons-svelte/lib/ArrowUp.svelte';
   import PageRail from './PageRail.svelte';
+  import ContextPopover from './ContextPopover.svelte';
+  import Filter from 'carbon-icons-svelte/lib/Filter.svelte';
   import MarkdownIt from 'markdown-it';
   import Choice from './Choice.svelte';
   import LedgerSource from './LedgerSource.svelte';
   import type { Source } from './lineage-graph';
-  import { tool, apiMessage } from './api';
+  import { api, tool, apiMessage } from './api';
   import { t, number, date, type Message } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL } from './ui';
-  import type { Run } from './types';
+  import type { Plugin, Run } from './types';
+  import PanelCard from './Panel.svelte';
+  import { runColors } from './run-name';
 
   type Citation = { run: string; update?: number; note?: string };
   type Finding = {
@@ -50,9 +54,16 @@
     runs,
     onRun,
     rail,
+    narrow = false,
+    plugins,
+    dark,
   }: {
+    /** A phone-width window: filters move into a popover and buttons show as icons. */
+    narrow?: boolean;
     project: string;
     runs: Run[];
+    plugins: Plugin[];
+    dark: boolean;
     onRun: (run: Run, tab?: string) => void;
     /** The header rail for the page's controls (PageRail.svelte), on wide screens. */
     rail?: HTMLElement;
@@ -77,6 +88,30 @@
       text: [finding.title, finding.topic, finding.body, finding.by].join('\n').toLowerCase(),
     })),
   );
+  // Cited runs show the project's primary metric (the Lineage metric) over its progress key.
+  let primary = $state<{ metric: string; progressKey: string } | null>(null);
+  let lineChart = $derived(plugins.find((plugin) => plugin.id === 'line' && plugin.enabled));
+  onMount(() => {
+    tool('project_lineage_settings_get', { id: project }).then(
+      (settings) => (primary = settings),
+      () => (primary = null),
+    );
+  });
+  // Whether each cited run logged the primary metric: runs that did not show a note, not an
+  // empty chart.
+  let logged = $state<Record<string, boolean>>({});
+  $effect(() => {
+    const metric = primary?.metric,
+      ids = (current?.citations ?? [])
+        .map((citation) => citation.run)
+        .filter((id) => runById.has(id) && !(id in untrack(() => logged)));
+    if (!metric || !ids.length) return;
+    for (const id of new Set(ids))
+      api('/api/metrics', { runs: [id] }).then(
+        (result) => (logged = { ...logged, [id]: (result.metrics ?? []).includes(metric) }),
+        () => (logged = { ...logged, [id]: true }),
+      );
+  });
   async function load() {
     try {
       findings = (await tool('findings_list', { project })).findings;
@@ -217,13 +252,17 @@
     else return;
     event.preventDefault();
   }
-  let searchInput = $state<HTMLInputElement>();
+  let filtersAnchor = $state<HTMLElement | null>(null);
   function pageKey(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     if (target.closest('input, textarea, select, [contenteditable], [role="dialog"]')) return;
     if (event.key === '/') {
       event.preventDefault();
-      searchInput?.focus();
+      // The header search is an icon until opened.
+      document.querySelector<HTMLElement>('.page-rail-search .bx--search-magnifier')?.click();
+      void tick().then(() =>
+        document.querySelector<HTMLInputElement>('.page-rail-search input')?.focus(),
+      );
     } else if (event.key === 'Escape' && checked.size) checked = new Set();
   }
 
@@ -384,18 +423,57 @@
           {#each finding.citations as citation, position (position)}{@const cited = runById.get(
               citation.run,
             )}
-            <li>
-              {#if cited}<a
-                  class="bx--link"
-                  href={runURL(cited)}
-                  onclick={(event) => interceptLink(event, () => onRun(cited))}
-                  >{cited.display_name}</a
-                >{:else}<span class="lineage-muted">{citation.run}</span>{/if}{citation.update ===
-              undefined
-                ? ''
-                : ' @' + $number(citation.update)}{#if citation.note}<span class="lineage-muted">
-                  — {citation.note}</span
-                >{/if}
+            <li class="finding-citation">
+              <p class="finding-citation-head">
+                {#if cited}<RunName
+                    id={cited.id}
+                    name={cited.display_name}
+                    href={runURL(cited)}
+                    onclick={(event) => interceptLink(event, () => onRun(cited))}
+                  />{:else}<RunName
+                    id={citation.run}
+                    name={citation.run}
+                  />{/if}{#if citation.update !== undefined}<span class="finding-citation-at"
+                    >@{$number(citation.update)}</span
+                  >{/if}
+              </p>
+              {#if citation.note}<p class="lineage-muted">{citation.note}</p>{/if}
+              <!-- The run's primary metric, with the cited update marked. -->
+              {#if cited && primary?.metric && logged[cited.id] === false}<p class="lineage-muted">
+                  {$t('findings.citation.noMetric', { metric: primary.metric })}
+                </p>{:else if cited && primary?.metric && lineChart && logged[cited.id]}<div
+                  class="finding-citation-chart"
+                >
+                  <PanelCard
+                    height={180}
+                    panel={{
+                      id: 'finding-' + finding.id + '-' + position,
+                      plugin: 'line',
+                      metric: primary.metric,
+                      metrics: [primary.metric],
+                      title: primary.metric,
+                      settings: {
+                        ...(primary.progressKey ? { xAxis: primary.progressKey } : {}),
+                        legendPosition: 'bottom',
+                        ...(citation.update !== undefined
+                          ? {
+                              // The update shows beside the run's name.
+                              marks: [{ x: citation.update }],
+                            }
+                          : {}),
+                      },
+                    }}
+                    runs={[cited]}
+                    {dark}
+                    colors={$runColors}
+                    plugin={lineChart}
+                    readonly
+                    onedit={() => {}}
+                    onremove={() => {}}
+                    onduplicate={() => {}}
+                    onmove={() => {}}
+                  />
+                </div>{/if}
             </li>{/each}
         </ul>
       </section>{/if}
@@ -413,23 +491,12 @@
   </th>
 {/snippet}
 
-<PageRail target={rail} label={$t('findings.controls')}>
-  <div class="findings-search">
-    <Search
-      size={rail ? 'sm' : 'lg'}
-      labelText={$t('findings.search')}
-      placeholder={$t('findings.search')}
-      closeButtonLabelText={$t('common.search.clear')}
-      bind:ref={searchInput}
-      bind:value={search}
-    />
-  </div>
-  <Select
+{#snippet filterSelects(inline: boolean)}<Select
     size="sm"
-    inline
-    hideLabel
+    {inline}
+    hideLabel={inline}
     labelText={$t('findings.filter.topic')}
-    selected={topic ?? ''}
+    selected={topic === null ? '' : '=' + topic}
     on:change={(event) => {
       const value = (event.target as HTMLSelectElement).value;
       topic = value === '' ? null : value.slice(1);
@@ -441,11 +508,10 @@
         value={'=' + name}
         text={name || $t('findings.noTopic')}
       />{/each}</Select
-  >
-  <Select
+  ><Select
     size="sm"
-    inline
-    hideLabel
+    {inline}
+    hideLabel={inline}
     labelText={$t('findings.filter.status')}
     selected={status}
     on:change={(event) => (status = (event.target as HTMLSelectElement).value as typeof status)}
@@ -453,13 +519,44 @@
       value="finding"
       text={$t('findings.status.finding')}
     /><SelectItem value="ruled_out" text={$t('findings.status.ruledOut')} /></Select
-  >
+  >{/snippet}
+
+<PageRail
+  target={rail}
+  label={$t('findings.controls')}
+  bind:search
+  searchLabel={$t('findings.search')}
+>
+  {#if narrow}<Button
+      kind="ghost"
+      size="small"
+      icon={Filter}
+      iconDescription={$t('findings.filter.open')}
+      tooltipPosition="bottom"
+      aria-haspopup="dialog"
+      aria-expanded={!!filtersAnchor}
+      on:click={(event) =>
+        (filtersAnchor = filtersAnchor ? null : (event.currentTarget as HTMLElement))}
+    />{:else}{@render filterSelects(true)}{/if}
   <span class="page-rail-end"
-    ><Button size={rail ? 'small' : 'field'} icon={Add} on:click={() => edit()}
-      >{$t('findings.edit.new')}</Button
-    ></span
+    >{#if narrow}<Button
+        size="small"
+        icon={Add}
+        iconDescription={$t('findings.edit.new')}
+        tooltipPosition="bottom"
+        tooltipAlignment="end"
+        on:click={() => edit()}
+      />{:else}<Button size="small" icon={Add} on:click={() => edit()}
+        >{$t('findings.edit.new')}</Button
+      >{/if}</span
   >
 </PageRail>
+{#if filtersAnchor}<ContextPopover
+    anchor={filtersAnchor}
+    title={$t('findings.filter.open')}
+    onClose={() => (filtersAnchor = null)}
+    width={300}><div class="form-stack">{@render filterSelects(false)}</div></ContextPopover
+  >{/if}
 
 <div class="findings-page" class:reading={!!current}>
   {#if error}<InlineNotification

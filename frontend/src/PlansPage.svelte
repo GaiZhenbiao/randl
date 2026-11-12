@@ -2,6 +2,7 @@
   // A project's current state (README "Experiment ledger"): the best recipe and how it got
   // there, the GPUs of each host over time (the `gpu-occupancy` panel), and one lane per host
   // slot with the run occupying it and the planned runs queued behind it.
+  import RunName from './RunName.svelte';
   import { onMount } from 'svelte';
   import {
     Button,
@@ -19,6 +20,7 @@
   import LedgerSource from './LedgerSource.svelte';
   import PanelCard from './Panel.svelte';
   import PageRail from './PageRail.svelte';
+  import { runColors } from './run-name';
 
   import { tool, apiMessage } from './api';
   import { t, number, date, locale, type Message } from './i18n';
@@ -35,7 +37,10 @@
     onRun,
     onPage,
     rail,
+    narrow = false,
   }: {
+    /** A phone-width window: buttons show as icons. */
+    narrow?: boolean;
     /** The header rail for the page's controls (PageRail.svelte), on wide screens. */
     rail?: HTMLElement;
     project: string;
@@ -383,11 +388,12 @@
   }
 </script>
 
-{#snippet runLink(id: string)}{@const run = runById.get(id)}{#if run}<a
-      class="bx--link"
+{#snippet runLink(id: string)}{@const run = runById.get(id)}{#if run}<RunName
+      id={run.id}
+      name={run.display_name}
       href={runURL(run)}
-      onclick={(event) => interceptLink(event, () => onRun(run))}>{run.display_name}</a
-    >{:else}<span>{id}</span>{/if}{/snippet}
+      onclick={(event) => interceptLink(event, () => onRun(run))}
+    />{:else}<RunName {id} name={id} />{/if}{/snippet}
 
 {#snippet planCard(plan: Plan, position: number | null)}{@const at = scheduled.get(plan.id)}
   <li class="plan-card" id={'plan-' + plan.id}>
@@ -519,9 +525,16 @@
 
 <PageRail target={rail} label={$t('plans.controls')}>
   <span class="page-rail-end"
-    ><Button size={rail ? 'small' : 'field'} icon={Add} on:click={() => edit()}
-      >{$t('plans.edit.new')}</Button
-    ></span
+    >{#if narrow}<Button
+        size="small"
+        icon={Add}
+        iconDescription={$t('plans.edit.new')}
+        tooltipPosition="bottom"
+        tooltipAlignment="end"
+        on:click={() => edit()}
+      />{:else}<Button size="small" icon={Add} on:click={() => edit()}
+        >{$t('plans.edit.new')}</Button
+      >{/if}</span
   >
 </PageRail>
 <div class="project-page-content plans-page">
@@ -619,6 +632,7 @@
           {project}
           {dark}
           {refresh}
+          colors={$runColors}
           plugin={occupancyPlugin}
           readonly
           onopen={open}

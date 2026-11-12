@@ -49,7 +49,24 @@ try {
     });
     return run.id;
   };
-  await seed('v100_root', config('v100_root', null), ['verdict:adopted'], [0.5, 0.75]);
+  // Scenes: a list of objects with nested lists, logged in another key order by v102.
+  const scenes = (canopy, extra = []) => [
+    {
+      name: 'forest',
+      seed: 7,
+      layers: [
+        { label: 'canopy', cover: canopy, templates: [{ asset: 'oak', scale: [0.9, 1.3] }] },
+        { label: 'shrub', cover: 0.2 },
+        ...extra,
+      ],
+    },
+  ];
+  await seed(
+    'v100_root',
+    config('v100_root', null, { data: { scenes: scenes(0.7) } }),
+    ['verdict:adopted'],
+    [0.5, 0.75],
+  );
   // v101 starts from a copied warm source of v100 and changes the learning rate.
   await seed(
     'v101_lr',
@@ -60,6 +77,17 @@ try {
   await seed(
     'v102_head',
     config('v102_head', null, {
+      data: {
+        scenes: scenes(0.6, [{ label: 'logs', cover: 0.1 }]).map(({ layers, seed, name }) => ({
+          layers: layers.map(({ templates, ...layer }) =>
+            templates
+              ? { ...layer, templates: [{ scale: [0.9, 1.1], asset: 'oak' }] }
+              : { ...layer },
+          ),
+          seed,
+          name,
+        })),
+      },
       model: { head: 1024 },
       lineage: {
         parent: { run_id: 'v100_root', update: 2000 },
@@ -127,14 +155,41 @@ try {
   await expect(cards).toHaveCount(4);
   // The toolbar is one row; its menus, counts and options open on demand.
   const toolbar = page.locator('.lineage-toolbar');
-  // Wide screens put the controls in the header itself; narrow ones keep a single row below it.
+  // The controls sit in the header at every width, the search at its right end (an icon until
+  // opened); on phones the buttons are icons and the header stays one row.
+  const searchbox = page.getByRole('searchbox', { name: 'Filter runs by name' });
+  // The header search is an icon until opened, as a reader opens it.
+  const findRuns = async (text) => {
+    if (!(await searchbox.isVisible()))
+      await page.locator('.page-rail-search .bx--search-magnifier').click();
+    await searchbox.click();
+    await searchbox.fill(text);
+  };
+  const rightOf = async () => {
+    const field = await page.locator('.page-rail-search').boundingBox(),
+      filters = await toolbar.getByRole('button', { name: 'Filters' }).boundingBox();
+    return field.x > filters.x + filters.width;
+  };
   assert.equal(await toolbar.evaluate((item) => !!item.closest('header')), true);
-  await page.setViewportSize({ width: 900, height: 900 });
-  await expect.poll(() => toolbar.evaluate((item) => !!item.closest('header'))).toBe(false);
-  const { height } = await toolbar.boundingBox();
-  assert.ok(height <= 56, 'one toolbar row: ' + height);
+  assert.equal(await rightOf(), true);
+  for (const width of [900, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => toolbar.evaluate((item) => !!item.closest('header'))).toBe(true);
+    const header = await page.locator('header').first().boundingBox();
+    assert.ok(header.height <= 56, `one header row at ${width}px: ${header.height}`);
+  }
+  await expect(toolbar.getByRole('button', { name: 'Filters' })).toHaveClass(/bx--btn--icon-only/);
+  await page.locator('.page-rail-search button').first().click();
+  await expect(searchbox).toBeFocused();
+  // On phones the open search covers the bar.
+  const open = await page.locator('.page-rail-search').boundingBox(),
+    filtersButton = await toolbar.getByRole('button', { name: 'Filters' }).boundingBox();
+  assert.ok(open.x <= filtersButton.x && open.width > 200, 'the open search covers the bar');
+  await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect.poll(() => toolbar.evaluate((item) => !!item.closest('header'))).toBe(true);
+  await expect(toolbar.getByRole('button', { name: 'Filters' })).not.toHaveClass(
+    /bx--btn--icon-only/,
+  );
   const menu = async (name) => {
     await toolbar.getByRole('button', { name }).click();
     return page.getByRole('dialog');
@@ -150,13 +205,15 @@ try {
   await expect(card('v100').locator('[aria-label="Adopted"]')).toHaveCount(1);
   await expect(page.locator('.lineage-edges .lineage-edge')).toHaveCount(3);
   await expect(page.locator('.lineage-edges .lineage-edge.matched')).toHaveCount(2);
-  await expect(page.locator('.lineage-edge-label', { hasText: '@1K · lr' })).toHaveCount(1);
-  // A logged change sentence labels its link; other links list their changed keys.
-  await expect(
-    page.locator('.lineage-edge-label', {
-      hasText: '@2K · Command head widened from 512 to 1024 units',
-    }),
-  ).toHaveCount(1);
+  // A logged change sentence labels its link, and is its whole tooltip; other links list
+  // their changed keys. Neither shows the start update, which the details panel gives.
+  await expect(page.locator('.lineage-edge-label', { hasText: 'lr' })).toHaveText(['lr, scenes']);
+  const sentence = page.locator('.lineage-edge-label', {
+    hasText: 'Command head widened from 512 to 1024 units',
+  });
+  await expect(sentence).toHaveText('Command head widened from 512 to 1024 units');
+  await expect(sentence).toHaveAttribute('title', 'Command head widened from 512 to 1024 units');
+  await expect(page.locator('.lineage-edge-label', { hasText: '@' })).toHaveCount(0);
   await expect(card('v102')).toContainText('Sirius · 2× RTX 4090 48GB');
   checks.push(
     'Controls in the header (one row when narrow); cards show verdicts, hardware and metrics; links read as the logged change',
@@ -251,11 +308,22 @@ try {
   await expect(details).toContainText('1× RTX 4090 24GB (3)');
   // Config changes read as word diffs under their key, its path muted.
   const diffKeys = parentDiff.locator('.config-diff-key');
-  await expect(diffKeys).toHaveText(['model.head']);
-  await expect(diffKeys.first().locator('.config-diff-path')).toHaveText('model.');
-  await expect(parentDiff.locator('.config-diff-row').first()).toContainText('Not set');
+  await expect(diffKeys).toHaveText(['data.scenes', 'model.head']);
+  await expect(diffKeys.nth(1).locator('.config-diff-path')).toHaveText('model.');
+  await expect(parentDiff.locator('.config-diff-row').nth(1)).toContainText('Not set');
+  // A list of objects folds under a count; opened, only the changed fields show, matched by
+  // name or label whatever their order, each with its word diff.
+  const sceneDiff = parentDiff.locator('.config-diff-row', { hasText: 'scenes' });
+  await expect(sceneDiff.locator('summary')).toHaveText('1 entry changed · 3 fields');
+  await sceneDiff.locator('summary').click();
+  await expect(sceneDiff.locator('.config-diff-subpath')).toHaveText([
+    '[forest].layers[canopy].cover',
+    '[forest].layers[canopy].templates[oak].scale',
+    '[forest].layers[logs]',
+  ]);
+  await expect(sceneDiff.locator('.config-diff-nested .diff-removed').first()).toHaveText('0.7');
   await parentDiff.getByText('Show 1 ignored key').click();
-  await expect(diffKeys).toHaveText(['model.head', 'rl.checkpoint.save_dir']);
+  await expect(diffKeys).toHaveText(['data.scenes', 'model.head', 'rl.checkpoint.save_dir']);
   const pathRow = parentDiff.locator('.config-diff-row', { hasText: 'save_dir' });
   await expect(pathRow.locator('.diff-removed')).toHaveText(['v100_root']);
   await expect(pathRow.locator('.diff-added')).toHaveText(['v102_head']);
@@ -289,10 +357,31 @@ try {
   await expect(toolbar.getByRole('button', { name: 'Filters (1)' })).toBeVisible();
   await (await menu('Filters (1)')).getByText('Collapse rejected branches').click();
   await closeMenu();
-  await page.getByRole('searchbox', { name: 'Filter runs by name' }).fill('v103');
+  await findRuns('v103');
   await expect(cards).toHaveCount(3);
   await expect(page.locator('.lineage-card.context')).toHaveCount(2);
-  await page.getByRole('searchbox', { name: 'Filter runs by name' }).fill('');
+  // A partial name suggests runs, best matches first; a searched-for run shows even inside a
+  // collapsed rejected branch, and choosing a suggestion opens it.
+  await (await menu('Filters')).getByText('Collapse rejected branches').click();
+  await closeMenu();
+  await findRuns('v10');
+  const suggestions = page.getByRole('listbox', { name: 'Matching runs' }).getByRole('option');
+  await expect(suggestions).toHaveCount(4);
+  await findRuns('v103');
+  await expect(suggestions).toHaveText([/v103_below/]);
+  await expect(card('v103')).toBeVisible();
+  await searchbox.press('Enter');
+  await expect(page.locator('.lineage-details h2')).toHaveText('v103_below');
+  await findRuns('below');
+  await expect(suggestions).toHaveText([/v103_below/]);
+  await findRuns('zzz');
+  await expect(page.getByRole('listbox', { name: 'Matching runs' })).toContainText(
+    'No run matches.',
+  );
+  await findRuns('');
+  await (await menu('Filters (1)')).getByText('Collapse rejected branches').click();
+  await closeMenu();
+  await page.keyboard.press('Escape');
   await (await menu('Filters')).getByText('Show runs without lineage').click();
   await closeMenu();
   await expect(cards).toHaveCount(5);
@@ -501,6 +590,14 @@ try {
   const stored = await server.tools.execute('project_lineage_settings_get', { id: 'test/lineage' });
   assert.equal(stored.scale, null);
   checks.push('Lineage settings save and redraw the cards');
+
+  // On phones the run panel takes the page (the run list's drawer styles leave it alone).
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${origin}/test/lineage/lineage?run=test%2Flineage%2Fv102_head`);
+  await expect(page.locator('.lineage-details h2')).toBeInViewport();
+  await expect(page.locator('.lineage-details h2')).toHaveText('v102_head');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  checks.push('On phones the run panel fills the page');
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks }, null, 2));
