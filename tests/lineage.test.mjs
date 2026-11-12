@@ -119,6 +119,39 @@ test('several runs with one name pick the latest created before the child', () =
   assert.equal(parent.ambiguous, true);
 });
 
+test('a shared folder name goes to the run whose folder path matches more of the parent path', () => {
+  const runs = [
+    run('perf_baseline', { saveDir: '/root/runs/perf_cache16_lr_u750/baseline', id: 'perf' }),
+    run('forest_interior_u1_baseline', {
+      saveDir: '/root/diagnostics/runtime_interior_u1/baseline',
+      id: 'interior',
+    }),
+    run('other_baseline', { saveDir: '/root/x/baseline', id: 'other' }),
+  ];
+  const child = run('diverse_v2', {
+    parents: ['/root/diagnostics/runtime_interior_u1/baseline/update_00000007'],
+  });
+  assert.deepEqual(parentOf([...runs, child], child), {
+    id: 'e/p/interior',
+    ambiguous: false,
+    relation: 'initialize_from',
+    traits: [],
+    update: 7,
+    explicit: false,
+  });
+});
+
+test('a warm-source label shared by runs of different names matches none of them', () => {
+  const a = run('forest_unbounded_from_pool31_u1000_v1', { saveDir: '/r/a' }),
+    b = run('forest_unbounded_p4_lrhalf_from_u500_v1', { saveDir: '/r/b' });
+  const child = run('child', {
+    parents: ['/root/protected/forest_unbounded_u500/update_00000500'],
+  });
+  assert.deepEqual(parentOf([a, b, child], child), {
+    unresolved: { source: '/root/protected/forest_unbounded_u500/update_00000500', update: 500 },
+  });
+});
+
 test('an explicit lineage block wins over the parent path', () => {
   const parent = run('v621_parent', { id: 'abc123' }),
     decoy = run('v611_decoy', { saveDir: '/c/v611_decoy' });

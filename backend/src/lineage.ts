@@ -181,7 +181,8 @@ export function pathUpdate(path: string): number | null {
   return null;
 }
 
-type Candidate = { id: string; created: number };
+/** A run that a name or path may refer to, with its folders' segments (checkpoint folders dropped). */
+type Candidate = { id: string; created: number; name: string; folders: string[][] };
 /** Finds the run a parent checkpoint path or name refers to. */
 export class RunMatcher {
   private tokens = new Map<string, Candidate[]>();
@@ -195,7 +196,14 @@ export class RunMatcher {
       else if (!list.includes(run)) list.push(run);
     };
     for (const run of runs) {
-      const candidate = { id: run.id, created: run.created };
+      const candidate = {
+        id: run.id,
+        created: run.created,
+        name: run.display_name,
+        folders: run.identities
+          .filter((identity): identity is string => !!identity)
+          .map(folderPath),
+      };
       this.byId.set(run.id, candidate);
       this.byId.set(run.name, candidate);
       add(this.byName, run.display_name, candidate);
@@ -233,7 +241,7 @@ export class RunMatcher {
     const parts = segments(path).filter((part) => !updateSegment.test(part));
     const own = (list: Candidate[] | undefined) => !!list?.some((run) => run.id === child.id);
     for (let index = parts.length - 1; index >= 0; index--) {
-      const named = this.tokens.get(parts[index]),
+      const named = closest(this.tokens.get(parts[index]), parts.slice(0, index + 1), child),
         exact = this.pick(named, child);
       if (exact) return exact;
       if (own(named)) return 'self';
@@ -243,15 +251,49 @@ export class RunMatcher {
         exactLabel = this.pick(labelled, child);
       if (exactLabel) return exactLabel;
       if (own(labelled)) return 'self';
+      // A version label such as `v621` stands for the one run named `v621_…`; a prefix shared
+      // by runs of different names (`forest_unbounded_…`) names none of them.
       const prefix = label[1] + '_',
         prefixed = new Set<Candidate>();
       for (const [token, list] of this.tokens)
         if (token.startsWith(prefix)) for (const run of list) prefixed.add(run);
+      if (new Set([...prefixed].map((run) => run.name)).size !== 1) continue;
       const match = this.pick([...prefixed], child);
       if (match) return match;
     }
     return null;
   }
+}
+
+/** A folder path's segments without trailing checkpoint folders. */
+function folderPath(path: string) {
+  const parts = segments(path);
+  while (parts.length && containers.has(parts.at(-1)!)) parts.pop();
+  return parts;
+}
+/**
+ * Of several runs whose folder has the matched name, those whose folder path shares the most
+ * trailing segments with the parent path (`runtime_interior_u1/baseline` beats `baseline`).
+ */
+function closest(list: Candidate[] | undefined, path: string[], child: LineageRun) {
+  const others = list?.filter((run) => run.id !== child.id);
+  if (!list || !others || others.length < 2) return list;
+  const shared = (run: Candidate) =>
+    Math.max(
+      0,
+      ...run.folders.map((folder) => {
+        let count = 0;
+        while (
+          count < folder.length &&
+          count < path.length &&
+          folder[folder.length - 1 - count] === path[path.length - 1 - count]
+        )
+          count++;
+        return count;
+      }),
+    );
+  const best = Math.max(...others.map(shared));
+  return list.filter((run) => run.id === child.id || shared(run) === best);
 }
 
 const verdicts = ['adopted', 'rejected', 'running'] as const;
