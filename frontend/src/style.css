@@ -5854,6 +5854,12 @@ aside {
 .lineage-facts dt {
   color: var(--cds-text-02);
 }
+.lineage-facts dd,
+.finding-citations li,
+.recipe-current a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .lineage-actions {
   display: flex;
   flex-wrap: wrap;
