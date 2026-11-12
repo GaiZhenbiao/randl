@@ -514,7 +514,8 @@ export class Tools {
           ...(await lineageSettings(this.db, id)),
           ...changes,
         });
-        return lineageSettings(this.db, id);
+        result = await lineageSettings(this.db, id);
+        break;
       }
       case 'runs_config_diff': {
         const run = await this.db.call('run', a.to);

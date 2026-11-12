@@ -148,3 +148,18 @@ test('an update axis orders columns by start update without overlapping cards', 
   assert.ok(at('root').x < at('a').x && at('a').x < at('c').x);
   assert.ok(!overlaps(layout.positions));
 });
+
+test('a time axis with a distinct start per run stays a bounded number of columns wide', () => {
+  const ids = ['root', ...Array.from({ length: 200 }, (_, index) => 'c' + index)];
+  const edges = ids.slice(1).map((id) => edge('root', id));
+  // The root starts well before its children, which start 37 s apart.
+  const created = new Map(ids.map((id, index) => [id, index ? 1e9 + index * 37 : 1e9 - 7400]));
+  const layout = layoutGraph(dagre, ids, edges, 'time', (id) => created.get(id));
+  const columns = new Set([...layout.positions.values()].map((position) => position.x));
+  // Proportional to time: the root's lead takes half the width; the children share the rest.
+  assert.equal(columns.size, 21);
+  assert.ok(layout.width < 40 * (nodeWidth + 85) + nodeWidth);
+  const at = (id) => layout.positions.get(id);
+  assert.ok(at('root').x < at('c0').x && at('c0').x <= at('c100').x && at('c100').x < at('c199').x);
+  assert.ok(!overlaps(layout.positions));
+});

@@ -113,6 +113,18 @@ try {
   await expect.poll(async () => (await transform())[1]).toBeCloseTo(yBefore - 120);
   checks.push('The wheel pans the graph and Ctrl+wheel zooms it');
 
+  // Arranged by start update, cards sit left to right in the order their runs started.
+  const left = async (name) => parseFloat(await card(name).evaluate((item) => item.style.left));
+  await page.getByRole('combobox', { name: /Arrange by/ }).click();
+  await page.getByRole('option', { name: 'Start update' }).click();
+  await expect.poll(async () => (await left('v101')) < (await left('v102'))).toBe(true);
+  assert.ok((await left('v100')) < (await left('v101')));
+  assert.ok((await left('v102')) < (await left('v103')));
+  await page.getByRole('combobox', { name: /Arrange by/ }).click();
+  await page.getByRole('option', { name: 'Lineage depth' }).click();
+  await expect.poll(async () => (await left('v101')) === (await left('v102'))).toBe(true);
+  checks.push('Cards can be arranged by start update and back by lineage depth');
+
   await card('v102').click();
   const details = page.locator('.lineage-details');
   await expect(details.locator('h2')).toHaveText('v102_head');

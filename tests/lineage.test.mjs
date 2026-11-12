@@ -36,6 +36,7 @@ test('checkpoint paths name their run folder and update', () => {
   assert.equal(folderName('/a/checkpoints/v611_x'), 'v611_x');
   assert.equal(pathUpdate('/a/checkpoints/v611_x/update_00518000'), 518000);
   assert.equal(pathUpdate('/a/warm_sources/v621_u00543000/'), 543000);
+  assert.equal(pathUpdate('/a/warm_sources/v311_update_00121250/update_00121250'), 121250);
   assert.equal(pathUpdate('/a/checkpoints/v611_x'), null);
 });
 
@@ -65,10 +66,15 @@ test('parent paths match runs across hosts and checkpoint layouts', () => {
   const n8 = run('N8_child', {
     parents: ['tmp/navigation_alignment/N5_h1_velocity_nose100_fresh/checkpoints/'],
   });
+  // The other warm-source label style.
+  const v314 = run('v314_child', {
+    parents: ['tmp/navigation_forest/warm_sources/v621_update_00121250/update_00121250'],
+  });
   const n9 = run('N9_child', {
     parents: ['tmp/navigation_alignment/N5_h1_velocity_nose100_fresh/checkpoints'],
   });
-  const runs = [v611, v621, n5, v622, v640, n8, n9];
+  const runs = [v611, v621, n5, v622, v640, n8, n9, v314];
+  assert.equal(parentOf(runs, v314).id, v621.id);
   assert.deepEqual(parentOf(runs, v622), {
     id: v611.id,
     ambiguous: false,
@@ -136,6 +142,22 @@ test('an explicit lineage block wins over the parent path', () => {
     lineage: { parent: { run_name: 'gone', update: '7' } },
   });
   assert.deepEqual(parentOf([decoy, lost], lost), { unresolved: { source: 'gone', update: 7 } });
+});
+
+test('a logged block that names no parent or the run itself adds no link', () => {
+  const source = run('v611_src', { saveDir: '/c/v611_src' });
+  const cold = run('v800_cold', {
+    parents: ['/c/v611_src/update_00000001'],
+    lineage: { parent: null, relation: 'initialize_from', hypothesis: 'fresh' },
+  });
+  const empty = run('v801_empty', { lineage: { parent: {} } });
+  const extended = run('v802_extended', {
+    id: 'ext802',
+    lineage: { parent: { run_id: 'ext802', update: 900 }, relation: 'extend' },
+  });
+  const renamed = run('v803_named', { lineage: { parent: { run_name: 'v803_named' } } });
+  const runs = [source, cold, empty, extended, renamed];
+  for (const child of [cold, empty, extended, renamed]) assert.equal(parentOf(runs, child), null);
 });
 
 test('config diffs skip ignored keys and compare nested values', () => {
@@ -295,5 +317,19 @@ test('project_lineage returns nodes, edges, metric values and config diffs', asy
   assert.equal(
     (await call('project_lineage', { id: 'e/p' })).nodes.find((item) => item.id === child).best,
     0.55,
+  );
+});
+
+test('lineage settings changes are audited like other project settings', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'randl-lineage-audit-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const server = await createServer(directory);
+  t.after(() => server.app.close());
+  await server.db.call('upsert', { entity: 'e', project: 'p', name: 'r' });
+  await server.tools.execute('project_lineage_settings_update', { id: 'e/p', goal: 'min' });
+  const entries = await server.db.call('auditList');
+  assert.ok(
+    JSON.stringify(entries).includes('project_lineage_settings_update'),
+    JSON.stringify(entries).slice(0, 300),
   );
 });

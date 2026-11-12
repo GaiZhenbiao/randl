@@ -212,13 +212,15 @@ wandb.config.update({"lineage": {
 
 `parent.run_id` is the SDK run ID (or the full `entity/project/id`); `parent.run_name`, the
 display name, is used when the ID matches no run. `changes` maps dotted config keys to
-`[old, new]` and replaces the computed diff on the link. Runs without the block are linked
+`[old, new]` and names the keys on the link instead of a computed diff. The block is
+authoritative: a run that logs it with no parent (a cold start) or with itself as parent (an
+in-place resume or extension) gets no link. Runs without the block are linked
 by the checkpoint path in their **parent checkpoint keys** (default
 `rl.checkpoint.initialize_from`, then `rl.checkpoint.resume`): the path's folder or a
-`<name>_u<update>` warm-source label is matched, from the end of the path, against other
+`<name>_u<update>` (or `<name>_update_<update>`) warm-source label is matched, from the end of the path, against other
 runs' **run folder keys** (default `rl.checkpoint.save_dir` and `rl.checkpoint.run_name`)
 and display names, ignoring the host-specific start of the path. The update comes from an
-`update_<N>` folder or a `_u<N>` label. A path that names the run's own folder adds no link.
+`update_<N>` folder or the label. A path that names the run's own folder adds no link.
 When several runs share the name, the latest created before the child is linked and marked
 as ambiguous. Changed keys are then computed from the two stored configs, leaving out
 `lineage.*`, the parent and folder keys, and the **keys left out of diffs** (by default

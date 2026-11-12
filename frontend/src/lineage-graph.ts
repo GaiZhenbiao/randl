@@ -232,42 +232,30 @@ export function layoutGraph(
   }
   return { positions, width, height };
 }
+/** At most this many columns along a start axis, so a time axis stays a few screens wide. */
+const axisColumns = 40;
 /**
- * Moves each card's column to its start on a shared axis: distinct starts are spread in order
- * so that no two columns are closer than a card, keeping larger gaps proportional.
+ * Moves each card to the column of its start on a shared axis: starts map proportionally onto
+ * at most `axisColumns` columns, runs with no known start (roots) take a column before them,
+ * and cards that share a column stack downward in their layout order.
  */
 function placeOnAxis(positions: Map<string, Position>, start: (id: string) => number | null) {
-  const starts = [...positions.keys()].map((id) => start(id)),
-    values = starts.filter((v): v is number => v !== null);
-  const distinct = [...new Set(values)].sort((a, b) => a - b);
-  const span = distinct.length > 1 ? distinct.at(-1)! - distinct[0] : 0,
-    step = nodeWidth + gap.rank / 2,
-    // Proportional spacing over the whole span, never closer than one column apart.
-    scale = span ? (step * (distinct.length - 1) * 2) / span : 0;
-  const column = new Map<number, number>();
-  // Runs with no known start (roots) take the first column.
-  let previous = starts.includes(null) ? 0 : -Infinity;
-  for (const value of distinct) {
-    const x = Math.max(previous + step, (value - distinct[0]) * scale);
-    column.set(value, x);
-    previous = x;
-  }
-  const order = [...positions.entries()].sort((a, b) => a[1].y - b[1].y);
-  const placed: Position[] = [];
-  for (const [id, position] of order) {
-    const value = start(id);
-    position.x = value === null ? 0 : column.get(value)!;
-    // Move down past any card already placed in an overlapping column.
-    for (;;) {
-      const blocker = placed.find(
-        (other) =>
-          Math.abs(other.x - position.x) < nodeWidth + gap.node &&
-          Math.abs(other.y - position.y) < nodeHeight + gap.node,
-      );
-      if (!blocker) break;
-      position.y = blocker.y + nodeHeight + gap.node;
-    }
-    placed.push(position);
+  const starts = new Map([...positions.keys()].map((id) => [id, start(id)]));
+  const values = [...starts.values()].filter((v): v is number => v !== null),
+    low = Math.min(...values),
+    span = values.length ? Math.max(...values) - low : 0,
+    columns = Math.min(new Set(values).size, axisColumns),
+    first = [...starts.values()].includes(null) ? 1 : 0,
+    step = nodeWidth + gap.rank / 2;
+  const column = (value: number | null) =>
+    value === null ? 0 : first + (span ? Math.round(((value - low) / span) * (columns - 1)) : 0);
+  // Lowest free top in each column; cards are placed in their layout's top-to-bottom order.
+  const free = new Map<number, number>();
+  for (const [id, position] of [...positions].sort((a, b) => a[1].y - b[1].y)) {
+    const index = column(starts.get(id)!);
+    position.x = index * step;
+    position.y = Math.max(position.y, free.get(index) ?? -Infinity);
+    free.set(index, position.y + nodeHeight + gap.node);
   }
 }
 /** A cubic path from a parent card's right edge to a child card's left edge. */

@@ -75,6 +75,7 @@ for (const authenticated of [false, true]) {
       'sdk_environment_smoke.py',
       'sdk_snapshot_smoke.py',
       'sdk_record_transform_smoke.py',
+      'sdk_lineage_smoke.py',
       'sdk_connect_smoke.py',
     ].filter(
       // RANDL_SDK_SCRIPTS=sdk_snapshot_smoke.py,... runs a subset.

@@ -289,6 +289,8 @@
     { id: 'update', text: $t('lineage.axis.update') },
     { id: 'time', text: $t('lineage.axis.time') },
   ]);
+  const menuLabel = (id: string) =>
+    $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close');
   let showLabels = $derived(scale >= 0.55);
 </script>
 
@@ -306,6 +308,7 @@
     <Dropdown
       size="lg"
       type="inline"
+      translateWithId={menuLabel}
       labelText={$t('lineage.filter.group.label')}
       selectedId={filters.group}
       items={[
@@ -317,6 +320,7 @@
     <Dropdown
       size="lg"
       type="inline"
+      translateWithId={menuLabel}
       labelText={$t('lineage.filter.tag.label')}
       selectedId={filters.tag}
       items={[
@@ -328,6 +332,7 @@
     <Dropdown
       size="lg"
       type="inline"
+      translateWithId={menuLabel}
       labelText={$t('lineage.axis.label')}
       selectedId={axis}
       items={axisItems}

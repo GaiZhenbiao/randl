@@ -25,16 +25,6 @@ export const lineageDefaults: LineageSettings = {
   identityKeys: ['rl.checkpoint.save_dir', 'rl.checkpoint.run_name'],
   ignoreKeys: ['*save_dir', '*run_name', '*runs_root', '*_path', '*_dir', '*.name', '*.resume'],
 };
-export const lineageRelations = [
-  'initialize_from',
-  'resume',
-  'extend',
-  'grown_head',
-  'grown_gru',
-  'added_inputs',
-  'added_frames',
-  'extends_config',
-] as const;
 /** At most this many changed keys travel on each edge; the side panel requests the full diff. */
 export const edgeChangeLimit = 12;
 
@@ -147,7 +137,7 @@ export function diffConfigs(
 }
 
 const updateSegment = /^update_(\d+)$/,
-  sourceLabel = /^(.+)_u(\d+)$/;
+  sourceLabel = /^(.+)_u(?:pdate_)?(\d+)$/;
 /** Path segments that hold checkpoints rather than name a run. */
 const containers = new Set(['checkpoints', 'checkpoint']);
 /** The segments of a path, without empty ones. */
@@ -158,7 +148,10 @@ export function folderName(path: string) {
   while (parts.length && containers.has(parts.at(-1)!)) parts.pop();
   return parts.at(-1) ?? '';
 }
-/** The update index a checkpoint path names (`update_00543000` or `<run>_u00543000`). */
+/**
+ * The update index a checkpoint path names: `update_00543000`, or a warm-source label such as
+ * `<run>_u00543000` or `<run>_update_00543000`.
+ */
 export function pathUpdate(path: string): number | null {
   for (const part of segments(path).reverse()) {
     const match = updateSegment.exec(part) ?? sourceLabel.exec(part);
@@ -204,12 +197,15 @@ export class RunMatcher {
   /** A run named by SDK ID, full ID or display name (an explicit `lineage.parent`). */
   named(child: LineageRun, id: string | null, name: string | null) {
     const exact = id ? this.byId.get(id) : undefined;
-    if (exact && exact.id !== child.id) return { id: exact.id, ambiguous: false };
-    return name ? this.pick(this.byName.get(name), child) : null;
+    if (exact) return exact.id === child.id ? 'self' : { id: exact.id, ambiguous: false };
+    if (!name) return null;
+    const named = this.byName.get(name);
+    return this.pick(named, child) ?? (named?.some((run) => run.id === child.id) ? 'self' : null);
   }
   /**
    * A run whose folder name or display name is a segment of the path, read from its end. A
-   * `<label>_u<update>` segment (a copied warm source) also matches runs named `<label>_…`.
+   * `<label>_u<update>` or `<label>_update_<update>` segment (a copied warm source) also
+   * matches runs named `<label>_…`.
    * 'self' when the nearest named segment is only the child's own folder or name.
    */
   path(child: LineageRun, path: string) {
@@ -263,15 +259,19 @@ export function resolveParent(
   matcher: RunMatcher,
   settings: LineageSettings,
 ): ParentMatch | null {
-  const parent = object(run.lineage?.parent);
-  if (run.lineage && parent) {
-    const id = text(parent.run_id),
-      name = text(parent.run_name),
-      update = integer(parent.update),
+  // A logged block is authoritative: no named parent (a cold start) or the run itself (an
+  // in-place resume or extension) means no link, even when a parent key holds a path.
+  if (run.lineage) {
+    const parent = object(run.lineage.parent),
+      id = text(parent?.run_id),
+      name = text(parent?.run_name);
+    if (!id && !name) return null;
+    const update = integer(parent!.update),
       relation = text(run.lineage.relation) ?? 'initialize_from',
       match = matcher.named(run, id, name);
+    if (match === 'self') return null;
     if (match) return { ...match, relation, update, explicit: true };
-    return { unresolved: { source: name ?? id ?? '', update } };
+    return { unresolved: { source: name ?? id!, update } };
   }
   let unresolved: Unresolved | null = null;
   for (const [index, path] of run.parents.entries()) {
