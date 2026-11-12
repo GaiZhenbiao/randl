@@ -246,7 +246,7 @@ test('the CLI saves findings, sets the recipe, plans runs and adds journal entri
   );
 });
 
-test('the lineage graph carries the recipe, open plans, evidence and recent means', async (t) => {
+test('plans know the run that carried them out; the graph carries evidence and recent means', async (t) => {
   const { server, call } = await fixture(t);
   const log = (id, rows) =>
     server.db.call('ingest', id, {
@@ -284,11 +284,18 @@ test('the lineage graph carries the recipe, open plans, evidence and recent mean
   await call('plan_save', { project: 'e/p', id: 'p-carried', name: 'v2-planned' });
   await call('plan_save', { project: 'e/p', id: 'p-named', name: 'base' });
   const graph = await call('project_lineage', { id: 'e/p' });
-  assert.equal(graph.recipe.run, 'e/p/arm');
+  // The graph, which the Assistant can read, carries no ledger records.
+  assert.equal(graph.recipe, undefined);
+  assert.equal(graph.plans, undefined);
+  const { plans } = await call('plans_list', { project: 'e/p' });
   assert.deepEqual(
-    graph.plans.map((plan) => plan.id),
-    ['p-open'],
-    'carried-out plans drop out',
+    plans.map((plan) => [plan.id, plan.run]),
+    [
+      ['p-open', null],
+      ['p-carried', 'e/p/carried'],
+      ['p-named', 'e/p/base'],
+    ],
+    'a plan is carried out by the run logging its id, else the run with its name',
   );
   const node = (id) => graph.nodes.find((item) => item.id === id);
   assert.ok(Math.abs(node('e/p/base').recent - 0.45) < 1e-9, 'mean of the last 2 audits');

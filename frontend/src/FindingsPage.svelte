@@ -116,7 +116,11 @@
     try {
       await tool('finding_save', {
         project,
-        id: draft.version === null ? draft.id || slug(draft.title) : draft.id,
+        // A title with no ASCII letters or digits gives no slug, so such findings get a random id.
+        id:
+          draft.version === null
+            ? draft.id || slug(draft.title) || 'finding-' + crypto.randomUUID().slice(0, 8)
+            : draft.id,
         topic: draft.topic.trim(),
         title: draft.title.trim(),
         body: draft.body,

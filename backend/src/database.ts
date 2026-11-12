@@ -2413,8 +2413,35 @@ export class Store {
   planDelete(a: Row) {
     return this.ledger.planDelete(a.project, a.id);
   }
+  /**
+   * A project's plans, each marked with the run that carries it out (one logging
+   * `lineage.plan` = its id, else one with its name), and the running runs with the host and
+   * slot their `lineage.compute` names, for the queues.
+   */
   plans(a: Row) {
-    return this.ledger.plans(a.project);
+    const [entity, name] = String(a.project).split('/');
+    const runs = this.db
+      .prepare(
+        "SELECT id,display_name,state,json_extract(config,'$.lineage.value.plan') plan,json_extract(config,'$.lineage.value.compute') compute FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL",
+      )
+      .all(entity, name) as Row[];
+    const byPlan = new Map(runs.filter((run) => run.plan).map((run) => [run.plan, run.id])),
+      byName = new Map(runs.map((run) => [run.display_name, run.id]));
+    const plans = this.ledger
+      .plans(a.project)
+      .map((plan) => ({ ...plan, run: byPlan.get(plan.id) ?? byName.get(plan.name) ?? null }));
+    const running = runs
+      .filter((run) => run.state === 'running' && run.compute)
+      .map((run) => {
+        const compute = JSON.parse(run.compute);
+        return {
+          id: run.id,
+          name: run.display_name,
+          host: typeof compute.host === 'string' ? compute.host : '',
+          slot: typeof compute.segments?.at?.(-1)?.slot === 'string' ? compute.segments.at(-1).slot : '',
+        };
+      });
+    return { plans, running };
   }
   journalAdd(a: Row) {
     if (!this.db.prepare('SELECT 1 FROM runs WHERE id=? AND deleted_at IS NULL').get(a.run))
@@ -2768,19 +2795,11 @@ export class Store {
         .sort((a, b) => frequency.get(a)! - frequency.get(b)! || (a < b ? -1 : 1))
         .slice(0, edgeChangeLimit);
     }
-    // Planned runs not yet carried out: no run names the plan or has its name.
-    const planned = new Set(nodes.map((node) => node.plan).filter(Boolean)),
-      names = new Set(nodes.map((node) => node.display_name));
-    const plans = this.ledger
-      .plans(project)
-      .filter((plan) => plan.status === 'planned' && !planned.has(plan.id) && !names.has(plan.name));
     return {
       project,
       settings,
       nodes,
       edges,
-      plans,
-      recipe: this.ledger.recipe(project).current,
       counts: {
         runs: nodes.length,
         explicit: edges.filter((edge) => edge.explicit).length,
@@ -2794,7 +2813,7 @@ export class Store {
    * metric paired with the baseline's where both logged the same `x` (`update` by default, or
    * `_step`), with the count, mean and last difference.
    */
-  runsCompare(a: Row) {
+  *runsCompare(a: Row): Generator<void, Row> {
     const pairs = (id: string) => {
       const values = this.history.series(id, a.metric),
         result = new Map<number, number>();
@@ -2811,12 +2830,15 @@ export class Store {
       });
       return result;
     };
-    const base = pairs(a.baseline);
-    return {
-      baseline: a.baseline,
-      metric: a.metric,
-      x: a.x,
-      runs: (a.runs as string[]).map((run) => {
+    const base = pairs(a.baseline),
+      compared: Row[] = [];
+    yield;
+    for (const run of a.runs as string[]) {
+      compared.push(compare(run));
+      yield;
+    }
+    return { baseline: a.baseline, metric: a.metric, x: a.x, runs: compared };
+    function compare(run: string) {
         const matched = [...pairs(run)]
           .filter(([x]) => base.has(x))
           .sort((left, right) => left[0] - right[0])
@@ -2830,8 +2852,7 @@ export class Store {
           last: matched.at(-1) ?? null,
           points: matched.slice(-200),
         };
-      }),
-    };
+    }
   }
   /** Every config key whose value differs between two runs, marking those the ignore list hides. */
   configDiff(from: string, to: string, ignore: string[]) {

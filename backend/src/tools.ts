@@ -469,7 +469,7 @@ export const toolCatalog = [
   {
     name: 'plans_list',
     description:
-      "List a project's planned runs: name, parent and update, hypothesis, change, config, baseline, stop or decision rule, host, slot, queue position and status.",
+      "List a project's planned runs (name, parent and update, hypothesis, change, config, baseline, stop or decision rule, host, slot, queue position, status, and the run that carried it out, if any) and its running runs with the host and slot their lineage.compute names.",
     agent: false,
     parameters: schema({ project: string }, ['project']),
   },
@@ -800,7 +800,7 @@ export class Tools {
         return this.db.call('recipe', a);
       case 'plans_list':
         await this.db.call('projectGet', a.project);
-        return { plans: await this.db.call('plans', a) };
+        return this.db.call('plans', a);
       case 'journal_list':
         if (!a.run && !a.project)
           throw managementError('RUN_NOT_FOUND', 'Name a run or a project.', {}, 400);

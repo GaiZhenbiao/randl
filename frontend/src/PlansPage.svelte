@@ -18,7 +18,7 @@
   import { t, number, date, type Message } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL, statusLabel } from './ui';
   import type { Run } from './types';
-  import type { LineageGraph, Plan, RecipeEvent } from './lineage-graph';
+  import type { Plan, RecipeEvent } from './lineage-graph';
 
   let {
     project,
@@ -39,22 +39,14 @@
 
   async function load() {
     try {
-      const [planned, best, graph] = await Promise.all([
+      const [planned, best] = await Promise.all([
         tool('plans_list', { project }),
         tool('recipe_get', { project }),
-        tool('project_lineage', { id: project }) as Promise<LineageGraph>,
       ]);
-      plans = planned.plans;
+      // Plans a run has carried out leave the queues.
+      plans = planned.plans.filter((plan: Plan) => !plan.run);
       recipe = best;
-      // The running runs on each slot, from the hardware their lineage block logs.
-      occupants = graph.nodes
-        .filter((node) => node.state === 'running' && node.compute?.host)
-        .map((node) => ({
-          id: node.id,
-          host: node.compute!.host ?? '',
-          slot: node.compute!.segments.at(-1)?.slot ?? '',
-          name: node.display_name,
-        }));
+      occupants = planned.running;
       error = '';
     } catch (reason) {
       error = apiMessage(reason);

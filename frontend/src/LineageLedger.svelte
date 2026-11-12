@@ -40,23 +40,28 @@
   const shortOf = (id: string) => nameOf(id).split('_')[0];
 
   // Chosen runs at matched updates of the lineage metric.
+  // At most this many chosen runs are compared, once the selection has settled.
+  const compareLimit = 50;
   let comparedKey = '';
   $effect(() => {
-    const runs = picked.filter((id) => id !== node.id),
+    const runs = picked.filter((id) => id !== node.id).slice(0, compareLimit),
       metric = graph.settings.metric,
       key = JSON.stringify([node.id, runs, metric]);
     if (key === comparedKey) return;
     comparedKey = key;
     compared = null;
     if (node.planned || !runs.length || !metric) return;
-    tool('runs_compare', { baseline: node.id, runs, metric }).then(
-      (result) => {
-        if (comparedKey === key) compared = result.runs;
-      },
-      (reason) => {
-        if (comparedKey === key) error = apiMessage(reason);
-      },
-    );
+    const timer = setTimeout(() => {
+      tool('runs_compare', { baseline: node.id, runs, metric }).then(
+        (result) => {
+          if (comparedKey === key) compared = result.runs;
+        },
+        (reason) => {
+          if (comparedKey === key) error = apiMessage(reason);
+        },
+      );
+    }, 300);
+    return () => clearTimeout(timer);
   });
 
   async function promote() {

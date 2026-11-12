@@ -163,3 +163,10 @@ test('a time axis with a distinct start per run stays a bounded number of column
   assert.ok(at('root').x < at('c0').x && at('c0').x <= at('c100').x && at('c100').x < at('c199').x);
   assert.ok(!overlaps(layout.positions));
 });
+
+test('planned runs are drawn even without a parent in the graph', () => {
+  const planned = { ...graph, nodes: [...graph.nodes, node('plan:p', { planned: { id: 'p' } })] };
+  const result = visibleRuns(planned, indexGraph(planned), filters);
+  assert.ok(result.shown.includes('plan:p'));
+  assert.ok(!result.shown.includes('lone'));
+});

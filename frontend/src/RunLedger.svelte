@@ -44,8 +44,10 @@
     busy = true;
     error = '';
     try {
+      // Each entry made here is new, even when its text repeats an earlier one.
       await tool('journal_add', {
         run,
+        key: crypto.randomUUID(),
         text: text.trim(),
         ...(update.trim() ? { update: Number(update) } : {}),
       });

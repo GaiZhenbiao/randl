@@ -94,7 +94,7 @@
 
   let compareItems = $derived(
     graph.nodes
-      .filter((other) => other.id !== node.id)
+      .filter((other) => other.id !== node.id && !other.planned)
       .map((other) => ({ id: other.id, text: other.display_name })),
   );
   let lineChart = $derived(plugins.find((plugin) => plugin.id === 'line'));

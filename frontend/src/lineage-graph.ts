@@ -76,6 +76,8 @@ export type Plan = {
   slot: string;
   queue: number | null;
   status: 'planned' | 'cancelled';
+  /** The run that carried the plan out, if any. */
+  run: string | null;
   created: number;
   updated: number;
   by: string;
@@ -179,7 +181,9 @@ export function visibleRuns(graph: LineageGraph, index: GraphIndex, filters: Fil
       }
   // A rejected run inside another collapsed branch is hidden with it.
   for (const id of collapsed.keys()) if (hidden.has(id)) collapsed.delete(id);
-  const isolated = (id: string) => !index.parent.has(id) && !index.children.has(id);
+  // Planned runs are drawn even before they have a parent in the graph.
+  const isolated = (id: string) =>
+    !index.parent.has(id) && !index.children.has(id) && !index.nodes.get(id)?.planned;
   let isolatedHidden = 0;
   const shown = new Set<string>(),
     context = new Set<string>();

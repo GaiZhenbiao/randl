@@ -49,6 +49,7 @@
     type Filters,
     type LineageEdge,
     type LineageGraph,
+    type Plan,
     type Layout,
   } from './lineage-graph';
 
@@ -142,9 +143,18 @@
     const id = project;
     lastLoad = Date.now();
     try {
-      const result: LineageGraph = await tool('project_lineage', { id });
+      // The ledger (plans, recipe) comes from its own tools, which the Assistant does not have.
+      const [result, planned, recipe] = await Promise.all([
+        tool('project_lineage', { id }),
+        tool('plans_list', { project: id }),
+        tool('recipe_get', { project: id }),
+      ]);
       if (id !== project) return;
-      graph = withPlans(result);
+      graph = withPlans({
+        ...result,
+        plans: planned.plans.filter((plan: Plan) => plan.status === 'planned' && !plan.run),
+        recipe: recipe.current,
+      });
       error = '';
     } catch (reason) {
       if (id === project) error = apiMessage(reason);
