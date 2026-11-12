@@ -471,6 +471,68 @@ test('host agents claim GPUs for the first plan that fits; claims are atomic, re
   assert.deepEqual([resume.plan.id, resume.gpu_ids, resume.plan.resume_run], ['one', [3], null]);
 });
 
+test('GPUs a running run logs are busy, whatever the agent reports free', async (t) => {
+  const { server, call } = await fixture(t);
+  // Started before allocations existed (or by hand): no plan holds its GPUs, its compute
+  // block does.
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'running-by-hand',
+    config: {
+      lineage: {
+        value: {
+          compute: {
+            host: 'k',
+            gpu_count: 2,
+            segments: [
+              { host: 'k', gpu_ids: [4, 5], gpu_count: 2, from_update: 0, to_update: null },
+            ],
+          },
+        },
+      },
+    },
+  });
+  await call('plan_save', {
+    project: 'e/p',
+    id: 'pair',
+    queue: 1,
+    resources: { gpus: 2, min_memory_gb: 48 },
+  });
+  await call('plan_save', {
+    project: 'e/p',
+    id: 'four',
+    queue: 2,
+    resources: { gpus: 4, hosts: ['k'] },
+  });
+  // All four reported free: the pair goes on 6 and 7, never on the run's 4 and 5.
+  const claimed = await call('plan_claim', {
+    project: 'e/p',
+    host: 'k',
+    free_gpus: [4, 5, 6, 7],
+    by: 'agent',
+    dryRun: true,
+  });
+  assert.deepEqual([claimed.plan.id, claimed.gpu_ids], ['pair', [6, 7]]);
+  // Only the run's GPUs reported free: nothing fits.
+  assert.deepEqual(
+    await call('plan_claim', { project: 'e/p', host: 'k', free_gpus: [4, 5], by: 'agent' }),
+    { status: 'empty', plan: null, waiting: 2, free_gpus: [] },
+  );
+  // Once the run ends, its GPUs are free again.
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'running-by-hand',
+    state: 'finished',
+  });
+  assert.deepEqual(
+    (await call('plan_claim', { project: 'e/p', host: 'k', free_gpus: [4, 5], by: 'agent' }))
+      .gpu_ids,
+    [4, 5],
+  );
+});
+
 test('older plans with a slot become GPU requests; the queue moves as one', async (t) => {
   const { server, call, plan } = await fixture(t);
   // A slot that last ran on two GPUs: its plans ask for two on that host.

@@ -2621,6 +2621,20 @@ export class Store {
   static requestOf(plan: Row): GpuRequest {
     return plan.resources ?? { gpus: 1, same_host: true };
   }
+  /** The GPUs running runs hold (host/gpu → run), from the open segment of their compute block. */
+  static runningGpus(runs: Row[]) {
+    const held = new Map<string, Row>();
+    for (const run of runs.filter((item) => item.state === 'running' && item.compute))
+      try {
+        const compute = JSON.parse(run.compute),
+          segment = compute?.segments?.at?.(-1),
+          host = segment?.host ?? compute?.host;
+        for (const gpu of segment?.gpu_ids ?? []) if (host) held.set(host + '/' + gpu, run);
+      } catch {
+        // A compute block that is not JSON names no GPUs.
+      }
+    return held;
+  }
   /** Since when a waiting plan has waited: its last return to the queue, else its creation. */
   static waitingSince(plan: Row) {
     const back = [...((plan.events as Row[]) ?? [])]
@@ -2710,11 +2724,15 @@ export class Store {
           allocation: mine.allocation,
           claim: mine.claim,
         };
-      const taken = new Set(
-        active
-          .filter((plan) => plan.allocation.host === a.host)
-          .flatMap((plan) => plan.allocation.gpus as number[]),
-      );
+      // Busy whatever the agent reports: GPUs a running run logs in its compute block (runs
+      // started before allocations, or by hand) and those an active allocation holds.
+      const held = Store.runningGpus(runs),
+        taken = new Set([
+          ...active
+            .filter((plan) => plan.allocation.host === a.host)
+            .flatMap((plan) => plan.allocation.gpus as number[]),
+          ...onHost.filter((gpu) => held.has(a.host + '/' + gpu.gpu)).map((gpu) => gpu.gpu),
+        ]);
       const free = onHost.filter((gpu) => reported.has(gpu.gpu) && !taken.has(gpu.gpu)),
         queue = this.waiting(plans).map((plan) => ({
           ...plan,
@@ -2821,19 +2839,13 @@ export class Store {
       inventory = this.ledger.gpus(a.project),
       holders = new Map<string, Row>();
     // Running runs hold the GPUs their compute block names.
-    for (const run of runs.filter((item) => item.state === 'running' && item.compute))
-      try {
-        const segment = JSON.parse(run.compute)?.segments?.at?.(-1);
-        for (const gpu of segment?.gpu_ids ?? [])
-          holders.set((segment.host ?? '') + '/' + gpu, {
-            plan: plans.find((plan) => plan.run === run.id)?.id ?? null,
-            name: run.display_name,
-            run: run.id,
-            state: 'running',
-          });
-      } catch {
-        // A compute block that is not JSON names no GPUs.
-      }
+    for (const [key, run] of Store.runningGpus(runs))
+      holders.set(key, {
+        plan: plans.find((plan) => plan.run === run.id)?.id ?? null,
+        name: run.display_name,
+        run: run.id,
+        state: 'running',
+      });
     for (const plan of plans)
       if (plan.status === 'started' && plan.allocation && !plan.allocation.released)
         for (const gpu of plan.allocation.gpus)
