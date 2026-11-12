@@ -307,8 +307,10 @@ were.
 values into a stored run's history, such as audit results computed after training, which the
 SDK cannot log at earlier steps. A row names its record by a logged field,
 `{"match": {"update": 473000}, "values": {"audit/…/value": 0.73}}`, or by step,
-`{"step": 545000, "values": {…}}`. Values merge into the record that matches (several matches
-are refused). When none matches, a record is added: at the row's `step` if it gives one,
+`{"step": 545000, "values": {…}}`. Values merge into the record that matches. Several matches
+are refused, listing their steps, unless the row gives `"pick": "last"` or `"first"`, which takes
+the matching record with the largest or smallest `_step` (a resumed run may log an update
+twice). When none matches, a record is added: at the row's `step` if it gives one,
 otherwise, for a single numeric match field, at the step implied by the records just below and
 above that value (refused when that is not a whole step or another record already uses it). A different stored value is refused unless `replace` (`--replace`) is set, and
 identical values change nothing. Every row reports a status (merged, added, unchanged, or

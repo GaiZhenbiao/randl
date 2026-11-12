@@ -541,3 +541,46 @@ test('a matched row with no record is added at the given or the implied step', a
     ['unchanged'],
   );
 });
+
+test('pick chooses among records that logged the same update, by step', async (t) => {
+  // A resumed run re-logged updates 300 and 400 on its continuing timeline.
+  const rows = [
+    ...history(5, (index) => ({ _step: index * 10, update: index * 100 })),
+    { _step: 50, update: 300 },
+    { _step: 60, update: 400 },
+  ];
+  const { store, id, records } = await historyFixture(t, rows);
+  const audit = 'audit/box/value';
+  const dry = drain(
+    store.historyWrite({
+      id,
+      rows: [{ match: { update: 300 }, values: { [audit]: 0.5 } }],
+      dryRun: true,
+    }),
+  );
+  assert.deepEqual(dry.rows[0], {
+    row: 0,
+    status: 'refused',
+    reason: 'ambiguous',
+    matches: 2,
+    steps: [30, 50],
+  });
+  drain(
+    store.historyWrite({
+      id,
+      rows: [
+        { match: { update: 300 }, pick: 'last', values: { [audit]: 0.5 } },
+        { match: { update: 400 }, pick: 'first', values: { [audit]: 0.6 } },
+      ],
+    }),
+  );
+  assert.deepEqual(
+    records().find((row) => row._step === 50),
+    { _step: 50, update: 300, [audit]: 0.5 },
+  );
+  assert.deepEqual(
+    records().find((row) => row._step === 40),
+    { _step: 40, update: 400, [audit]: 0.6 },
+  );
+  assert.equal(records().find((row) => row._step === 30)[audit], undefined);
+});
