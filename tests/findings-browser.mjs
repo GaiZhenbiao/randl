@@ -24,7 +24,14 @@ try {
     displayName: 'v1_base',
     state: 'finished',
   });
-  const topics = ['Model', 'Optimizer', 'Reward', 'Environment', 'Evaluation'];
+  // One topic is a whole sentence, as imported ledgers have.
+  const topics = [
+    'Model',
+    'Optimizer',
+    'Reward',
+    'Environment',
+    'Evaluation / Flight physics and realism from the November 1 and 2 logs',
+  ];
   for (let i = 0; i < 500; i++)
     await call('finding_save', {
       project: 'test/findings',
@@ -54,6 +61,10 @@ try {
   const controls = page.getByRole('group', { name: 'Search and filter findings' });
   assert.equal(await controls.evaluate((element) => !!element.closest('header')), true);
   await expect(page.locator('.finding-body')).toHaveCount(1);
+  // A long topic name in the filter does not push the page's action under the header's own.
+  const action = await controls.getByRole('button', { name: 'New finding' }).boundingBox(),
+    assistant = await page.getByRole('button', { name: 'Assistant' }).first().boundingBox();
+  assert.ok(action.x + action.width <= assistant.x, 'the rail ends before the Assistant button');
   checks.push('A linked finding opens in the reading pane; controls sit in the header rail');
 
   // Filters: text (in titles and bodies), topic and status combine, each within a frame or two.
