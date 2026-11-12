@@ -316,8 +316,7 @@ export function resolveParent(
       relation = settings.parentKeys[index].split('.').at(-1)!;
     // A resume or restart from the run's own folder keeps it one node.
     if (match === 'self') continue;
-    if (match)
-      return { ...match, relation, traits: [], update: pathUpdate(path), explicit: false };
+    if (match) return { ...match, relation, traits: [], update: pathUpdate(path), explicit: false };
     unresolved ??= { source: path, update: pathUpdate(path) };
   }
   return unresolved ? { unresolved } : null;
