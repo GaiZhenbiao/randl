@@ -5,9 +5,11 @@
   import { Button, InlineNotification, TextArea } from 'carbon-components-svelte';
   import JsonValue from './JsonValue.svelte';
   import RunLedger from './RunLedger.svelte';
+  import LedgerSource from './LedgerSource.svelte';
   import { tool, apiMessage } from './api';
   import { t, number, date, type Message } from './i18n';
   import { formatMetric, type LineageGraph, type LineageNode } from './lineage-graph';
+  import { formatBytes, runURL } from './ui';
   let {
     node,
     graph,
@@ -79,6 +81,11 @@
     }
   }
   let evidence = $derived(graph.nodes.filter((other) => other.examines.includes(node.id)));
+  // Uploaded evidence files are on the run page's Files tab.
+  let filesURL = $derived.by(() => {
+    const [entity, project, name] = node.id.split('/');
+    return runURL({ entity, project, name }, 'files');
+  });
   const signed = (value: number) =>
     (value > 0 ? '+' : '') + formatMetric(value, graph.settings.scale, $number);
 </script>
@@ -92,7 +99,8 @@
     on:close={() => (error = '')}
   />{/if}
 
-{#if node.planned}{@const plan = node.planned}<section class="lineage-story">
+{#if node.planned}{@const plan = node.planned}
+  <section class="lineage-story">
     <h3>{$t('lineage.plan.title')}</h3>
     <dl class="lineage-facts">
       {#if plan.parent}<div>
@@ -115,10 +123,18 @@
           <dt>{$t('lineage.plan.rule')}</dt>
           <dd class="lineage-hypothesis">{plan.rule}</dd>
         </div>{/if}
+      {#if plan.after}<div>
+          <dt>{$t('lineage.plan.after')}</dt>
+          <dd>{nameOf(plan.after)}</dd>
+        </div>{/if}
       {#if plan.host || plan.slot || plan.queue !== null}<div>
           <dt>{$t('lineage.plan.where')}</dt>
           <dd>
-            {[plan.host, plan.slot, plan.queue === null ? '' : $t('lineage.plan.queue', { position: plan.queue })]
+            {[
+              plan.host,
+              plan.slot,
+              plan.queue === null ? '' : $t('lineage.plan.queue', { position: plan.queue }),
+            ]
               .filter(Boolean)
               .join(' · ')}
           </dd>
@@ -126,6 +142,7 @@
     </dl>
     {#if plan.config !== null}<h3>{$t('lineage.plan.config')}</h3>
       <JsonValue value={plan.config} />{/if}
+    <p class="lineage-muted"><LedgerSource source={plan.source} /></p>
   </section>
 {:else}
   <section>
@@ -134,12 +151,9 @@
         {$t('lineage.recipe.since', { date: $date(graph.recipe.since, true) })}
       </p>
       <p class="lineage-hypothesis">{graph.recipe.reason}</p>
+      <p class="lineage-muted"><LedgerSource source={graph.recipe.source} /></p>
     {:else if promoting}<div class="form-stack">
-        <TextArea
-          labelText={$t('lineage.recipe.reason')}
-          rows={2}
-          bind:value={reason}
-        />
+        <TextArea labelText={$t('lineage.recipe.reason')} rows={2} bind:value={reason} />
         <div class="lineage-actions">
           <Button size="small" disabled={busy || !reason.trim()} on:click={promote}
             >{$t('lineage.recipe.promote')}</Button
@@ -193,6 +207,21 @@
     project={graph.project}
     onFinding={(id) => onPage('findings', { finding: id })}
   />
+
+  {#if node.files.length}<section>
+      <h3>{$t('lineage.evidence.files')}</h3>
+      <ul class="lineage-children">
+        {#each node.files as file, position (position)}<li>
+            {#if file.upload}<a class="bx--link" href={filesURL}>{file.name}</a>{:else}<span
+                >{file.name}</span
+              ><span class="lineage-muted"
+                >{' · ' + [file.host, file.path].filter(Boolean).join(':')}{file.bytes === undefined
+                  ? ''
+                  : ' · ' + formatBytes(file.bytes, $number)}</span
+              >{/if}
+          </li>{/each}
+      </ul>
+    </section>{/if}
 
   {#if evidence.length || node.examines.length}<section>
       <h3>{$t('lineage.evidence.title')}</h3>

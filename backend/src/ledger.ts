@@ -8,6 +8,8 @@ import { managementError } from './management-errors.js';
 
 type Row = Record<string, any>;
 export type Citation = { run: string; update?: number; step?: number; note?: string };
+/** Where a record came from, such as lines of a handbook it was extracted from. */
+export type Source = { document: string; lines?: [number, number]; quote?: string };
 export type Finding = {
   project: string;
   id: string;
@@ -16,6 +18,7 @@ export type Finding = {
   body: string;
   status: 'finding' | 'ruled_out';
   citations: Citation[];
+  source: Source | null;
   version: number;
   created: number;
   updated: number;
@@ -35,7 +38,10 @@ export type Plan = {
   host: string;
   slot: string;
   queue: number | null;
+  /** The run or plan this one is queued after, when its position is stated that way. */
+  after: string | null;
   status: 'planned' | 'cancelled';
+  source: Source | null;
   created: number;
   updated: number;
   by: string;
@@ -56,12 +62,12 @@ const notFound = (kind: string, id: string) =>
 export class Ledger {
   constructor(readonly db: Database.Database) {
     db.exec(`
-      CREATE TABLE IF NOT EXISTS findings(project TEXT NOT NULL,id TEXT NOT NULL,topic TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,citations TEXT NOT NULL,version INTEGER NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,deleted REAL,PRIMARY KEY(project,id));
+      CREATE TABLE IF NOT EXISTS findings(project TEXT NOT NULL,id TEXT NOT NULL,topic TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,status TEXT NOT NULL,citations TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',version INTEGER NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,deleted REAL,PRIMARY KEY(project,id));
       CREATE TABLE IF NOT EXISTS finding_versions(project TEXT NOT NULL,id TEXT NOT NULL,version INTEGER NOT NULL,record TEXT NOT NULL,by TEXT NOT NULL,time REAL NOT NULL,PRIMARY KEY(project,id,version));
-      CREATE TABLE IF NOT EXISTS recipe_events(id INTEGER PRIMARY KEY,project TEXT NOT NULL,run TEXT NOT NULL,since REAL NOT NULL,reason TEXT NOT NULL,by TEXT NOT NULL,created REAL NOT NULL);
+      CREATE TABLE IF NOT EXISTS recipe_events(id INTEGER PRIMARY KEY,project TEXT NOT NULL,run TEXT NOT NULL,since REAL NOT NULL,reason TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',by TEXT NOT NULL,created REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS recipe_history ON recipe_events(project,since);
       CREATE TABLE IF NOT EXISTS planned_runs(project TEXT NOT NULL,id TEXT NOT NULL,record TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,by TEXT NOT NULL,PRIMARY KEY(project,id));
-      CREATE TABLE IF NOT EXISTS run_journal(id TEXT PRIMARY KEY,run TEXT NOT NULL,time REAL NOT NULL,update_index REAL,step REAL,text TEXT NOT NULL,by TEXT NOT NULL,created REAL NOT NULL);
+      CREATE TABLE IF NOT EXISTS run_journal(id TEXT PRIMARY KEY,run TEXT NOT NULL,time REAL NOT NULL,update_index REAL,step REAL,text TEXT NOT NULL,source TEXT NOT NULL DEFAULT 'null',by TEXT NOT NULL,created REAL NOT NULL);
       CREATE INDEX IF NOT EXISTS run_journal_time ON run_journal(run,time);
     `);
   }
@@ -73,8 +79,8 @@ export class Ledger {
       .get(project, id) as Row | undefined;
   }
   private finding(row: Row): Finding {
-    const { deleted: _, citations, ...rest } = row;
-    return { ...rest, citations: JSON.parse(citations) } as Finding;
+    const { deleted: _, citations, source, ...rest } = row;
+    return { ...rest, citations: JSON.parse(citations), source: JSON.parse(source) } as Finding;
   }
   findingSave(args: Row) {
     return this.db.transaction(() => {
@@ -93,12 +99,14 @@ export class Ledger {
         body: args.body ?? old?.body ?? '',
         status: args.status ?? old?.status ?? 'finding',
         citations: JSON.stringify(args.citations ?? (old ? JSON.parse(old.citations) : [])),
+        source: JSON.stringify(args.source ?? (old ? JSON.parse(old.source) : null)),
       };
       if (
         old &&
         (Object.keys(next) as (keyof typeof next)[]).every((key) => next[key] === old[key])
       )
         return { status: 'unchanged', finding: this.finding(old) };
+      if (args.dryRun) return { status: old ? 'updated' : 'created', dryRun: true };
       // Versions continue past a deleted finding with the same id.
       const version =
           (
@@ -110,7 +118,7 @@ export class Ledger {
       // A deleted finding with the same id is replaced, keeping its versions.
       this.db
         .prepare(
-          'INSERT OR REPLACE INTO findings(project,id,topic,title,body,status,citations,version,created,updated,by,deleted) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)',
+          'INSERT OR REPLACE INTO findings(project,id,topic,title,body,status,citations,source,version,created,updated,by,deleted) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,NULL)',
         )
         .run(
           args.project,
@@ -120,6 +128,7 @@ export class Ledger {
           next.body,
           next.status,
           next.citations,
+          next.source,
           version,
           old?.created ?? now,
           now,
@@ -178,19 +187,29 @@ export class Ledger {
         .get(args.project, args.run, since, args.reason)
     )
       return { status: 'unchanged', ...this.recipe(args.project) };
+    if (args.dryRun) return { status: 'set', dryRun: true };
     this.db
       .prepare(
-        'INSERT INTO recipe_events(project,run,since,reason,by,created) VALUES(?,?,?,?,?,?)',
+        'INSERT INTO recipe_events(project,run,since,reason,source,by,created) VALUES(?,?,?,?,?,?,?)',
       )
-      .run(args.project, args.run, since, args.reason, args.by ?? '', Date.now() / 1000);
+      .run(
+        args.project,
+        args.run,
+        since,
+        args.reason,
+        JSON.stringify(args.source ?? null),
+        args.by ?? '',
+        Date.now() / 1000,
+      );
     return { status: 'set', ...this.recipe(args.project) };
   }
   recipe(project: string) {
     const history = this.db
       .prepare(
-        'SELECT id,run,since,reason,by,created FROM recipe_events WHERE project=? ORDER BY since DESC,id DESC',
+        'SELECT id,run,since,reason,source,by,created FROM recipe_events WHERE project=? ORDER BY since DESC,id DESC',
       )
       .all(project) as Row[];
+    for (const event of history) event.source = JSON.parse(event.source);
     return { current: history[0] ?? null, history };
   }
 
@@ -215,10 +234,13 @@ export class Ledger {
       host: field('host', ''),
       slot: field('slot', ''),
       queue: field('queue', null),
+      after: field('after', null),
       status: field('status', 'planned'),
+      source: field('source', null),
     };
     if (old && JSON.stringify(record) === old.record)
       return { status: 'unchanged', plan: this.plan(old) };
+    if (args.dryRun) return { status: old ? 'updated' : 'created', dryRun: true };
     this.db
       .prepare(
         'INSERT OR REPLACE INTO planned_runs(project,id,record,created,updated,by) VALUES(?,?,?,?,?,?)',
@@ -277,9 +299,10 @@ export class Ledger {
         409,
       );
     }
+    if (args.dryRun) return { status: 'added', dryRun: true };
     this.db
       .prepare(
-        'INSERT INTO run_journal(id,run,time,update_index,step,text,by,created) VALUES(?,?,?,?,?,?,?,?)',
+        'INSERT INTO run_journal(id,run,time,update_index,step,text,source,by,created) VALUES(?,?,?,?,?,?,?,?,?)',
       )
       .run(
         id,
@@ -288,6 +311,7 @@ export class Ledger {
         args.update ?? null,
         args.step ?? null,
         args.text,
+        JSON.stringify(args.source ?? null),
         args.by ?? '',
         Date.now() / 1000,
       );
@@ -296,8 +320,8 @@ export class Ledger {
       entry: this.entry(this.db.prepare('SELECT * FROM run_journal WHERE id=?').get(id) as Row),
     };
   }
-  private entry({ update_index, ...row }: Row) {
-    return { ...row, update: update_index };
+  private entry({ update_index, source, ...row }: Row) {
+    return { ...row, update: update_index, source: JSON.parse(source) };
   }
   /** One run's journal, or a project's (runs whose id starts with the project). */
   journal(args: { run?: string; project?: string }) {

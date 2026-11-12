@@ -322,3 +322,111 @@ test('plans know the run that carried them out; the graph carries evidence and r
   });
   assert.equal(bySteps.runs[0].matched, 0, 'steps differ between the runs');
 });
+
+test('ledger writes carry their source, plans queue after a run, and dry runs write nothing', async (t) => {
+  const { server, call } = await fixture(t);
+  const source = { document: 'handbook', lines: [120, 135], quote: 'Wide heads won.' };
+  const finding = { project: 'e/p', id: 'f', title: 'F', source };
+  assert.deepEqual(await call('finding_save', { ...finding, dryRun: true }), {
+    status: 'created',
+    dryRun: true,
+  });
+  assert.equal((await call('findings_list', { project: 'e/p' })).findings.length, 0);
+  assert.deepEqual((await call('finding_save', finding)).finding.source, source);
+  assert.equal((await call('finding_save', { ...finding, dryRun: true })).status, 'unchanged');
+  assert.equal(
+    (await call('finding_save', { ...finding, title: 'G', dryRun: true })).status,
+    'updated',
+  );
+  assert.equal(
+    (
+      await call('recipe_set', {
+        project: 'e/p',
+        run: 'e/p/arm',
+        reason: 'r',
+        source,
+        dryRun: true,
+      })
+    ).status,
+    'set',
+  );
+  assert.equal((await call('recipe_get', { project: 'e/p' })).current, null);
+  assert.deepEqual(
+    (await call('recipe_set', { project: 'e/p', run: 'e/p/arm', reason: 'r', source })).current
+      .source,
+    source,
+  );
+  const plan = await call('plan_save', {
+    project: 'e/p',
+    id: 'v657',
+    after: 'e/p/arm',
+    host: 'Sirius',
+    slot: 'sirius_34',
+    source,
+  });
+  assert.deepEqual([plan.plan.after, plan.plan.queue, plan.plan.source], ['e/p/arm', null, source]);
+  const entry = { run: 'e/p/arm', text: 'From the handbook.', source };
+  assert.equal((await call('journal_add', { ...entry, dryRun: true })).status, 'added');
+  assert.equal((await call('journal_list', { run: 'e/p/arm' })).entries.length, 0);
+  assert.deepEqual((await call('journal_add', entry)).entry.source, source);
+  const audit = await server.db.call('auditList');
+  assert.ok(
+    !audit.some((item) => item.arguments.includes('"dryRun":true')),
+    'dry runs are not audited',
+  );
+});
+
+test('evidence imports as a dated run with examined runs, file references and uploads', async (t) => {
+  const { server, call } = await fixture(t);
+  const evidence = {
+    project: 'e/p',
+    id: 'eval-arm-box40',
+    name: 'Evaluation of arm on box40',
+    job_type: 'evaluation',
+    created: '2026-10-05T12:00:00Z',
+    examines: ['e/p/arm'],
+    summary: { holds: 361, episodes: 512 },
+    config: { audit: { label: 'box40' } },
+    notes: 'Imported from the evaluations folder.',
+    source: { document: 'handbook', lines: [10, 12] },
+    files: [
+      { name: 'report.json', upload: true },
+      {
+        name: 'episode_0.mp4',
+        host: 'Sirius',
+        path: '/data/evals/arm/episode_0.mp4',
+        bytes: 52428800,
+      },
+    ],
+  };
+  assert.deepEqual(await call('evidence_save', { ...evidence, dryRun: true }), {
+    id: 'e/p/eval-arm-box40',
+    status: 'created',
+    dryRun: true,
+  });
+  assert.equal(await server.db.call('run', 'e/p/eval-arm-box40'), undefined);
+  assert.equal((await call('evidence_save', evidence)).status, 'created');
+  assert.equal((await call('evidence_save', evidence)).status, 'unchanged');
+  const { run } = await call('run_get', { id: 'e/p/eval-arm-box40' });
+  assert.deepEqual(
+    [run.state, run.job_type, run.created],
+    ['finished', 'evaluation', Date.parse('2026-10-05T12:00:00Z') / 1000],
+  );
+  assert.deepEqual(JSON.parse(run.config).evidence.value.files[1].host, 'Sirius');
+  assert.deepEqual(JSON.parse(run.summary), { holds: 361, episodes: 512 });
+  // Uploaded files go with the run through the usual upload route.
+  const upload = await server.app.inject({
+    method: 'PUT',
+    url: '/upload/e/p/eval-arm-box40/report.json',
+    payload: '{"holds": 361}',
+    headers: { 'content-type': 'application/json' },
+  });
+  assert.equal(upload.statusCode, 200, upload.body);
+  const graph = await call('project_lineage', { id: 'e/p' });
+  const node = graph.nodes.find((item) => item.id === 'e/p/eval-arm-box40');
+  assert.deepEqual([node.jobType, node.examines], ['evaluation', ['e/p/arm']]);
+  assert.equal(
+    (await call('evidence_save', { ...evidence, notes: 'Rechecked.' })).status,
+    'updated',
+  );
+});

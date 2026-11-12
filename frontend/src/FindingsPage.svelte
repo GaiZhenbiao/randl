@@ -19,6 +19,8 @@
   import TrashCan from 'carbon-icons-svelte/lib/TrashCan.svelte';
   import MarkdownIt from 'markdown-it';
   import Choice from './Choice.svelte';
+  import LedgerSource from './LedgerSource.svelte';
+  import type { Source } from './lineage-graph';
   import { tool, apiMessage } from './api';
   import { t, number, date, type Message } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL } from './ui';
@@ -32,6 +34,7 @@
     body: string;
     status: 'finding' | 'ruled_out';
     citations: Citation[];
+    source: Source | null;
     version: number;
     updated: number;
     by: string;
@@ -67,7 +70,9 @@
     return (findings ?? []).filter(
       (finding) =>
         !query ||
-        [finding.title, finding.topic, finding.body].some((text) => text.toLowerCase().includes(query)),
+        [finding.title, finding.topic, finding.body].some((text) =>
+          text.toLowerCase().includes(query),
+        ),
     );
   });
   // Topics in name order, each with its findings, then everything ruled out.
@@ -83,7 +88,7 @@
   let ruledOut = $derived(shown.filter((item) => item.status === 'ruled_out'));
 
   // Editing: a draft of one finding; saving checks that nobody changed it meanwhile.
-  type Draft = Omit<Finding, 'version' | 'updated' | 'by' | 'citations'> & {
+  type Draft = Omit<Finding, 'version' | 'updated' | 'by' | 'citations' | 'source'> & {
     citations: { run: string; update: string; note: string }[];
     version: number | null;
   };
@@ -158,7 +163,9 @@
   let validDraft = $derived(
     !!draft &&
       !!draft.title.trim() &&
-      draft.citations.every((citation) => !citation.update.trim() || Number.isFinite(Number(citation.update))),
+      draft.citations.every(
+        (citation) => !citation.update.trim() || Number.isFinite(Number(citation.update)),
+      ),
   );
   let runItems = $derived(runs.map((run) => ({ id: run.id, text: run.display_name })));
 
@@ -207,14 +214,19 @@
     </header>
     <!-- markdown-it escapes raw HTML (html: false), so its output is safe to insert. -->
     <div class="finding-body">{@html markdown.render(finding.body)}</div>
-    {#if finding.citations.length}<ul class="finding-citations" aria-label={$t('findings.citations')}>
+    {#if finding.citations.length}<ul
+        class="finding-citations"
+        aria-label={$t('findings.citations')}
+      >
         {#each finding.citations as citation, position (position)}{@const cited = runById.get(
             citation.run,
-          )}<li>
+          )}
+          <li>
             {#if cited}<a
                 class="bx--link"
                 href={runURL(cited)}
-                onclick={(event) => interceptLink(event, () => onRun(cited))}>{cited.display_name}</a
+                onclick={(event) => interceptLink(event, () => onRun(cited))}
+                >{cited.display_name}</a
               >{:else}<span class="lineage-muted">{citation.run}</span>{/if}{citation.update ===
             undefined
               ? ''
@@ -227,6 +239,7 @@
       {$t('findings.meta', { version: finding.version, date: $date(finding.updated) })}{finding.by
         ? ' · ' + finding.by
         : ''}
+      <LedgerSource source={finding.source} />
     </p>
   </article>
 {/snippet}

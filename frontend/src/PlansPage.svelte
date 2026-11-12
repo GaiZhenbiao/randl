@@ -14,6 +14,8 @@
   import Edit from 'carbon-icons-svelte/lib/Edit.svelte';
   import StarFilled from 'carbon-icons-svelte/lib/StarFilled.svelte';
   import Choice from './Choice.svelte';
+  import LedgerSource from './LedgerSource.svelte';
+
   import { tool, apiMessage } from './api';
   import { t, number, date, type Message } from './i18n';
   import { filterChoice, interceptLink, resultCount, runURL, statusLabel } from './ui';
@@ -56,7 +58,10 @@
 
   // Queues: host, then slot; running runs first, then planned runs by queue position.
   let queues = $derived.by(() => {
-    const groups = new Map<string, { host: string; slot: string; running: typeof occupants; planned: Plan[] }>();
+    const groups = new Map<
+      string,
+      { host: string; slot: string; running: typeof occupants; planned: Plan[] }
+    >();
     const group = (host: string, slot: string) => {
       const key = host + '\u0000' + slot;
       let entry = groups.get(key);
@@ -66,8 +71,18 @@
     for (const run of occupants) group(run.host, run.slot).running.push(run);
     for (const plan of plans ?? [])
       if (plan.status === 'planned') group(plan.host, plan.slot).planned.push(plan);
+    // A plan's place: its queue position, else just behind what it is queued after (a running
+    // run, or another plan); plans placed neither way go last.
+    const byId = new Map((plans ?? []).map((plan) => [plan.id, plan]));
+    const rank = (plan: Plan, seen = new Set<string>()): number => {
+      if (plan.queue !== null) return plan.queue;
+      if (!plan.after || seen.has(plan.id)) return Infinity;
+      seen.add(plan.id);
+      const before = byId.get(plan.after.replace(/^plan:/, ''));
+      return before ? rank(before, seen) + 0.5 : 0.5;
+    };
     for (const entry of groups.values())
-      entry.planned.sort((a, b) => (a.queue ?? Infinity) - (b.queue ?? Infinity) || a.created - b.created);
+      entry.planned.sort((a, b) => rank(a) - rank(b) || a.created - b.created);
     return [...groups.values()].sort(
       (a, b) => a.host.localeCompare(b.host) || a.slot.localeCompare(b.slot),
     );
@@ -169,7 +184,9 @@
     !!draft &&
       !!(draft.id.trim() || draft.name.trim()) &&
       !configError &&
-      [draft.parentUpdate, draft.queue].every((text) => !text.trim() || Number.isFinite(Number(text))),
+      [draft.parentUpdate, draft.queue].every(
+        (text) => !text.trim() || Number.isFinite(Number(text)),
+      ),
   );
   async function save(status?: Plan['status']) {
     if (!draft) return;
@@ -225,9 +242,11 @@
   <li class="plan-card">
     <header class="finding-header">
       <h4>{plan.name}</h4>
-      {#if plan.queue !== null}<Tag size="sm">{$t('lineage.plan.queue', { position: plan.queue })}</Tag
+      {#if plan.queue !== null}<Tag size="sm"
+          >{$t('lineage.plan.queue', { position: plan.queue })}</Tag
         >{/if}
-      {#if plan.status === 'cancelled'}<Tag size="sm" type="gray">{$t('plans.status.cancelled')}</Tag
+      {#if plan.status === 'cancelled'}<Tag size="sm" type="gray"
+          >{$t('plans.status.cancelled')}</Tag
         >{/if}
       <span class="finding-actions"
         ><Button
@@ -246,7 +265,9 @@
       {#if plan.parent}<div>
           <dt>{$t('lineage.plan.parent')}</dt>
           <dd>
-            {@render runLink(plan.parent)}{plan.parentUpdate === null ? '' : ' @' + $number(plan.parentUpdate)}
+            {@render runLink(plan.parent)}{plan.parentUpdate === null
+              ? ''
+              : ' @' + $number(plan.parentUpdate)}
           </dd>
         </div>{/if}
       {#if plan.baseline}<div>
@@ -257,12 +278,22 @@
           <dt>{$t('lineage.plan.rule')}</dt>
           <dd class="lineage-hypothesis">{plan.rule}</dd>
         </div>{/if}
+      {#if plan.after}<div>
+          <dt>{$t('lineage.plan.after')}</dt>
+          <dd>
+            {plan.after.startsWith('plan:')
+              ? plan.after.slice(5)
+              : ''}{#if !plan.after.startsWith('plan:')}{@render runLink(plan.after)}{/if}
+          </dd>
+        </div>{/if}
     </dl>
+    <p class="lineage-muted"><LedgerSource source={plan.source} /></p>
     <p class="lineage-muted">
       <button
         type="button"
         class="lineage-link"
-        onclick={() => onPage('lineage', { run: 'plan:' + plan.id })}>{$t('plans.showInLineage')}</button
+        onclick={() => onPage('lineage', { run: 'plan:' + plan.id })}
+        >{$t('plans.showInLineage')}</button
       >
     </p>
   </li>
@@ -284,9 +315,12 @@
     {:else}
       {#if recipe.current}<p class="recipe-current">
           {@render runLink(recipe.current.run)}
-          <span class="lineage-muted">{$t('lineage.recipe.since', { date: $date(recipe.current.since, true) })}</span>
+          <span class="lineage-muted"
+            >{$t('lineage.recipe.since', { date: $date(recipe.current.since, true) })}</span
+          >
         </p>
         <p class="lineage-hypothesis">{recipe.current.reason}</p>
+        <p class="lineage-muted"><LedgerSource source={recipe.current.source} /></p>
       {:else}<p class="lineage-muted">{$t('lineage.recipe.none')}</p>{/if}
       {#if promoting}<div class="form-stack recipe-form">
           <Choice
@@ -334,7 +368,10 @@
     {:else if !queues.length}<p class="empty-table">{$t('plans.empty')}</p>
     {:else}<div class="plan-queues">
         {#each queues as queue (queue.host + '/' + queue.slot)}<section class="plan-queue">
-            <h3>{[queue.host, queue.slot].filter(Boolean).join(' · ') || $t('plans.queues.unassigned')}</h3>
+            <h3>
+              {[queue.host, queue.slot].filter(Boolean).join(' · ') ||
+                $t('plans.queues.unassigned')}
+            </h3>
             {#if queue.running.length}<ul class="plan-running">
                 {#each queue.running as run (run.id)}<li>
                     <span class="plan-running-state">{statusLabel('running', $t)}</span>
@@ -388,13 +425,18 @@
           labelText={$t('lineage.plan.parent')}
           selectionClearedText={$t('common.combobox.selectionCleared')}
           filterResultsText={(count) => resultCount(count, $t)}
-          translateWithId={(id) => $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+          translateWithId={(id) =>
+            $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
           items={runItems}
           selectedId={draft.parent || undefined}
           on:select={(event) => (draft!.parent = String(event.detail.selectedId))}
           on:clear={() => (draft!.parent = '')}
         />
-        <TextInput labelText={$t('plans.edit.parentUpdate')} inputmode="numeric" bind:value={draft.parentUpdate} />
+        <TextInput
+          labelText={$t('plans.edit.parentUpdate')}
+          inputmode="numeric"
+          bind:value={draft.parentUpdate}
+        />
       </div>
       <TextInput labelText={$t('plans.edit.change')} bind:value={draft.change} />
       <TextArea labelText={$t('lineage.panel.hypothesis')} rows={3} bind:value={draft.hypothesis} />
@@ -403,7 +445,8 @@
         labelText={$t('lineage.plan.baseline')}
         selectionClearedText={$t('common.combobox.selectionCleared')}
         filterResultsText={(count) => resultCount(count, $t)}
-        translateWithId={(id) => $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+        translateWithId={(id) =>
+          $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
         items={runItems}
         selectedId={draft.baseline || undefined}
         on:select={(event) => (draft!.baseline = String(event.detail.selectedId))}
@@ -413,7 +456,11 @@
       <div class="plan-form-row">
         <TextInput labelText={$t('plans.edit.host')} bind:value={draft.host} />
         <TextInput labelText={$t('plans.edit.slot')} bind:value={draft.slot} />
-        <TextInput labelText={$t('plans.edit.queue')} inputmode="numeric" bind:value={draft.queue} />
+        <TextInput
+          labelText={$t('plans.edit.queue')}
+          inputmode="numeric"
+          bind:value={draft.queue}
+        />
       </div>
       <TextArea
         labelText={$t('lineage.plan.config')}
@@ -424,12 +471,16 @@
         bind:value={draft.config}
       />
       {#if draft.created}<div class="lineage-actions">
-          {#if draft.status === 'planned'}<Button kind="ghost" size="small" on:click={() => save('cancelled')}
-              >{$t('plans.edit.cancelPlan')}</Button
+          {#if draft.status === 'planned'}<Button
+              kind="ghost"
+              size="small"
+              on:click={() => save('cancelled')}>{$t('plans.edit.cancelPlan')}</Button
             >{:else}<Button kind="ghost" size="small" on:click={() => save('planned')}
               >{$t('plans.edit.restorePlan')}</Button
             >{/if}
-          <Button kind="danger-ghost" size="small" on:click={remove}>{$t('plans.edit.delete')}</Button>
+          <Button kind="danger-ghost" size="small" on:click={remove}
+            >{$t('plans.edit.delete')}</Button
+          >
         </div>{/if}
     </div>
   </Modal>{/if}

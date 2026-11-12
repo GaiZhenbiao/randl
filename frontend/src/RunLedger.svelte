@@ -3,13 +3,22 @@
   // and in the Lineage panel.
   import { Button, InlineNotification, TextArea, TextInput } from 'carbon-components-svelte';
   import { tool, apiMessage } from './api';
+  import LedgerSource from './LedgerSource.svelte';
+  import type { Source } from './lineage-graph';
   import { t, number, date, type Message } from './i18n';
   let {
     run,
     project,
     onFinding,
   }: { run: string; project: string; onFinding: (id: string) => void } = $props();
-  type Entry = { id: string; time: number; update: number | null; text: string; by: string };
+  type Entry = {
+    id: string;
+    time: number;
+    update: number | null;
+    text: string;
+    by: string;
+    source: Source | null;
+  };
   type Cited = { id: string; title: string; status: string };
   let entries = $state<Entry[] | null>(null),
     findings = $state<Cited[] | null>(null),
@@ -76,11 +85,12 @@
   {:else}<ol class="lineage-journal">
       {#each entries as entry (entry.id)}<li>
           <span class="lineage-muted"
-            >{$date(entry.time)}{entry.update === null ? '' : ' · @' + $number(entry.update)}{entry.by
-              ? ' · ' + entry.by
-              : ''}</span
+            >{$date(entry.time)}{entry.update === null
+              ? ''
+              : ' · @' + $number(entry.update)}{entry.by ? ' · ' + entry.by : ''}</span
           >
           <p class="lineage-hypothesis">{entry.text}</p>
+          <LedgerSource source={entry.source} />
         </li>{/each}
     </ol>{/if}
   <div class="form-stack lineage-journal-add">
