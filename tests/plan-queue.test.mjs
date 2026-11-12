@@ -533,6 +533,138 @@ test('GPUs a running run logs are busy, whatever the agent reports free', async 
   );
 });
 
+test('a run marked stopped and then resumed by its SDK runs again, with its plan and its GPUs', async (t) => {
+  const { server, directory, call, plan } = await fixture(t);
+  const compute = (gpus) => ({
+    host: 'k',
+    gpu_count: 2,
+    segments: [{ host: 'k', gpu_ids: gpus, gpu_count: 2, from_update: 0, to_update: null }],
+  });
+  const row = (step, at) =>
+    JSON.stringify({ _step: step, _timestamp: at, update: step * 10, loss: 1 / (step + 1) });
+  const run = await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'paused',
+    config: { lineage: { value: { compute: compute([4, 5]) } } },
+  });
+  const start = Date.now() / 1000;
+  await server.db.call('ingest', run.id, {
+    files: { 'wandb-history.jsonl': { offset: 0, content: [row(0, start - 100)] } },
+    complete: true,
+  });
+  // Paused on purpose: marked stopped while its process is gone.
+  await call('run_state_set', { id: run.id, state: 'stopped', reason: 'Paused for v661' });
+  await call('plan_save', {
+    project: 'e/p',
+    id: 'paused-resume',
+    resources: { gpus: 2, min_memory_gb: 48 },
+    resume_run: run.id,
+    queue: 1,
+  });
+  const claim = await call('plan_claim', {
+    project: 'e/p',
+    host: 'k',
+    free_gpus: [4, 5],
+    by: 'bridge',
+  });
+  assert.deepEqual(
+    [claim.plan.id, claim.plan.resume_run, claim.gpu_ids],
+    ['paused-resume', run.id, [4, 5]],
+  );
+  // The trainer resumes the same run (W&B resume="allow"): its init reports no state, it re-logs
+  // its config with the new plan, and rows arrive after the mark.
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'paused',
+    config: { lineage: { value: { plan: 'paused-resume', compute: compute([4, 5]) } } },
+  });
+  await server.db.call('ingest', run.id, {
+    files: { 'wandb-history.jsonl': { offset: 1, content: [row(1, Date.now() / 1000 + 1)] } },
+  });
+  const resumed = await server.db.call('run', run.id);
+  assert.deepEqual(
+    [resumed.state, resumed.state_reason, resumed.state_by, resumed.state_at],
+    ['running', null, null, null],
+  );
+  const entry = (await server.db.call('auditList')).find((item) => item.tool === 'run_resumed');
+  assert.equal(entry.arguments.reason ?? JSON.parse(entry.arguments).reason, 'Paused for v661');
+  const bound = await plan('paused-resume');
+  assert.deepEqual([bound.status, bound.run], ['started', run.id]);
+  // Its GPUs are busy: the next plan gets the other two.
+  await call('plan_save', {
+    project: 'e/p',
+    id: 'next',
+    resources: { gpus: 2, min_memory_gb: 48 },
+  });
+  const next = await call('plan_claim', {
+    project: 'e/p',
+    host: 'k',
+    free_gpus: [4, 5, 6, 7],
+    by: 'bridge',
+    dryRun: true,
+  });
+  assert.deepEqual([next.plan.id, next.gpu_ids], ['next', [6, 7]]);
+
+  // A run still marked stopped that has reported since the mark holds its GPUs, and is
+  // running again after a restart.
+  const raw = new Database(join(directory, 'randl.sqlite3'));
+  const now = Date.now() / 1000;
+  raw
+    .prepare(
+      "UPDATE runs SET state='killed',state_reason='Paused',state_at=?,heartbeat=? WHERE id=?",
+    )
+    .run(now - 1000, now - 5, run.id);
+  raw.close();
+  assert.equal(
+    (await call('plan_claim', { project: 'e/p', host: 'k', free_gpus: [4, 5], by: 'other' }))
+      .status,
+    'empty',
+  );
+  await server.app.close();
+  const restarted = await createServer(directory);
+  t.after(() => restarted.app.close());
+  const repaired = await restarted.db.call('run', run.id);
+  assert.deepEqual([repaired.state, repaired.state_reason], ['running', null]);
+});
+
+test('a run marked stopped keeps the mark when a finished upload or an old row arrives', async (t) => {
+  const { server, call } = await fixture(t);
+  const run = await server.db.call('upsert', { entity: 'e', project: 'p', name: 'done-run' });
+  const start = Date.now() / 1000;
+  await server.db.call('ingest', run.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: 0,
+        content: [JSON.stringify({ _step: 0, _timestamp: start - 50, x: 1 })],
+      },
+    },
+    complete: true,
+  });
+  await call('run_state_set', { id: run.id, state: 'stopped', reason: 'Superseded' });
+  // A row logged before the mark, streamed late, and a final upload of a later one.
+  await server.db.call('ingest', run.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: 1,
+        content: [JSON.stringify({ _step: 1, _timestamp: start - 40, x: 2 })],
+      },
+    },
+  });
+  await server.db.call('ingest', run.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: 2,
+        content: [JSON.stringify({ _step: 2, _timestamp: Date.now() / 1000 + 1, x: 3 })],
+      },
+    },
+    complete: true,
+  });
+  const after = await server.db.call('run', run.id);
+  assert.deepEqual([after.state, after.state_reason], ['killed', 'Superseded']);
+});
+
 test('older plans with a slot become GPU requests; the queue moves as one', async (t) => {
   const { server, call, plan } = await fixture(t);
   // A slot that last ran on two GPUs: its plans ask for two on that host.

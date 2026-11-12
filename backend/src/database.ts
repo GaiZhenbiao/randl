@@ -199,8 +199,10 @@ export class Store {
       if(this.db.inTransaction)this.db.exec('ROLLBACK');
       this.db.close();throw error;
     }
-    // Plans are brought up to date with their runs at startup, as on every read.
+    // Runs marked stopped that a resumed process has logged to since run again, and plans are
+    // brought up to date with their runs, at startup as on every read.
     this.db.transaction(() => {
+      this.reviveResumed();
       for (const { project } of this.db
         .prepare('SELECT DISTINCT project FROM planned_runs')
         .all() as Row[])
@@ -1245,9 +1247,11 @@ export class Store {
     const reports: { raw: unknown; at: number }[] = [];
     this.history.transaction(() => {
       if (before.snapshot_at != null) before = this.resumeSnapshot(id, now);
-      // A run marked stopped (run_state_set) takes late history as data, not as a resume; a
-      // real resume comes through the SDK's init, which sets it running.
+      // A run marked stopped (run_state_set) takes late history as data, not as a resume. Rows
+      // logged after the mark, in a stream that is not a final upload, are a resumed run (an SDK
+      // resume need not report its state): it runs again and the mark is cleared.
       const marked = before.state === 'killed' && before.state_at != null;
+      let revived = false;
       const runKey = this.history.ensureRunKey(id);
       for (const [file, item] of Object.entries(payload.files || {}) as [string, Row][]) {
         const fileKey = this.history.ensureFileId(file);
@@ -1271,6 +1275,13 @@ export class Store {
             const row = JSON.parse(line),
               system = file === 'wandb-events.jsonl',
               step = historyStep(row, position, system);
+            if (
+              marked &&
+              !payload.complete &&
+              typeof row._timestamp === 'number' &&
+              row._timestamp > before.state_at
+            )
+              revived = true;
             if (!system) {
               resumed = before.state !== 'running' && !marked;
               if (row._runtime !== undefined)
@@ -1312,6 +1323,11 @@ export class Store {
         resumed = true;
         changed = true;
         this.db.prepare("UPDATE runs SET state='running',revision=revision+1 WHERE id=?").run(id);
+      }
+      if (revived) {
+        resumed = true;
+        changed = true;
+        this.revive(id, before, now, 'stream');
       }
       if (resumed)
         this.db
@@ -2497,7 +2513,7 @@ export class Store {
     const [entity, name] = String(project).split('/');
     const runs = this.db
       .prepare(
-        "SELECT id,display_name,state,json_extract(config,'$.lineage.value.plan') plan,json_extract(config,'$.lineage.value.compute') compute FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL",
+        "SELECT id,display_name,state,heartbeat,state_at,json_extract(config,'$.lineage.value.plan') plan,json_extract(config,'$.lineage.value.compute') compute FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL",
       )
       .all(entity, name) as Row[];
     const byId = new Map(runs.map((run) => [run.id, run])),
@@ -2621,10 +2637,20 @@ export class Store {
   static requestOf(plan: Row): GpuRequest {
     return plan.resources ?? { gpus: 1, same_host: true };
   }
-  /** The GPUs running runs hold (host/gpu → run), from the open segment of their compute block. */
-  static runningGpus(runs: Row[]) {
+  /**
+   * The GPUs running runs hold (host/gpu → run), from the open segment of their compute block.
+   * A run marked stopped, or taken as crashed, that has still reported within the last five
+   * minutes (after the mark) holds them too: its process may be running. A run that finished
+   * or failed has let them go.
+   */
+  static runningGpus(runs: Row[], now = Date.now() / 1000) {
     const held = new Map<string, Row>();
-    for (const run of runs.filter((item) => item.state === 'running' && item.compute))
+    const alive = (run: Row) =>
+      run.state === 'running' ||
+      (['killed', 'crashed'].includes(run.state) &&
+        (run.heartbeat ?? 0) > now - 300 &&
+        (run.state_at == null || run.heartbeat > run.state_at));
+    for (const run of runs.filter((item) => item.compute && alive(item)))
       try {
         const compute = JSON.parse(run.compute),
           segment = compute?.segments?.at?.(-1),
@@ -3752,6 +3778,41 @@ export class Store {
   pluginDelete(id: string) {
     this.db.prepare('DELETE FROM plugins WHERE id=?').run(id);
     return { id };
+  }
+  /**
+   * Runs a run marked stopped again: a resumed process is logging to it. Clears the mark and
+   * records the resume in the audit log.
+   */
+  private revive(id: string, before: Row, now: number, via: string) {
+    this.db
+      .prepare(
+        "UPDATE runs SET state='running',state_reason=NULL,state_by=NULL,state_at=NULL,finished=NULL,exit_code=NULL,runtime_at=?,resumed_at=?,revision=revision+1 WHERE id=?",
+      )
+      .run(now, now, id);
+    this.audit({
+      tool: 'run_resumed',
+      arguments: {
+        id,
+        via,
+        previous: 'stopped',
+        reason: before.state_reason ?? null,
+        stoppedAt: before.state_at ?? null,
+        by: 'randl',
+      },
+    });
+  }
+  /**
+   * At startup: a run marked stopped whose process has logged since (a heartbeat after the
+   * mark, within the last ten minutes) is running again.
+   */
+  reviveResumed(now = Date.now() / 1000) {
+    const rows = this.db
+      .prepare(
+        "SELECT * FROM runs WHERE state='killed' AND state_at IS NOT NULL AND heartbeat > state_at + 60 AND heartbeat > ? AND deleted_at IS NULL",
+      )
+      .all(now - 600) as Row[];
+    for (const row of rows) this.revive(row.id, row, now, 'startup');
+    return rows.map((row) => row.id);
   }
   audit(a: Row) {
     this.db
