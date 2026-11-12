@@ -61,9 +61,30 @@ function renameKey(content: string, from: string, to: string) {
   if (!content.includes(JSON.stringify(from))) return undefined;
   const record = JSON.parse(content);
   if (!Object.hasOwn(record, from) || Object.hasOwn(record, to)) return undefined;
-  return JSON.stringify(
-    Object.fromEntries(Object.entries(record).map(([name, value]) => [name === from ? to : name, value])),
+  return JSON.stringify(renameRecord(record, from, to));
+}
+function renameRecord(record: Row, from: string, to: string) {
+  return Object.fromEntries(
+    Object.entries(record).map(([name, value]) => [name === from ? to : name, value]),
   );
+}
+/** Increasing offsets as [first, last] runs, so a long history's rename log stays small. */
+function offsetRanges(offsets: number[]) {
+  const ranges: [number, number][] = [];
+  for (const offset of offsets)
+    if (ranges.length && ranges.at(-1)![1] === offset - 1) ranges.at(-1)![1] = offset;
+    else ranges.push([offset, offset]);
+  return ranges;
+}
+/** True once `ms` have passed since it last returned true: when a job should yield. */
+function slicer(ms = 15) {
+  let start = performance.now();
+  return () => {
+    const now = performance.now();
+    if (now - start < ms) return false;
+    start = now;
+    return true;
+  };
 }
 /** Whether a chart result is a job to be advanced, rather than a finished chart. */
 export const isJob = (value: unknown): value is Generator<void, Row> =>
@@ -371,7 +392,7 @@ export class Store {
     const records = renames.map(() => 0),
       both = renames.map(() => 0);
     if (file !== undefined) {
-      let count = 0;
+      const due = slicer();
       for (const line of this.history.lines(key, file)) {
         let record: Row | undefined;
         renames.forEach(({ from, to }, index) => {
@@ -381,7 +402,7 @@ export class Store {
           records[index]++;
           if (Object.hasOwn(record, to)) both[index]++;
         });
-        if (++count % 4096 === 0) yield;
+        if (due()) yield;
       }
     }
     const plan = renames.map(({ from, to }, index): Row => {
@@ -425,75 +446,43 @@ export class Store {
         { refused: refused.length },
         409,
       );
-    const results: Row[] = [];
-    for (const item of plan)
-      results.push(
-        item.status === 'renamed' || item.status === 'merged'
-          ? {
-              ...item,
-              ...(yield* this.renameMetric(args.id, item.from, item.to, !!args.merge, args.by ?? '')),
-            }
-          : item,
+    // One pass over the stored history applies every rename; then each one's index, points
+    // and summary change in its own transaction.
+    const applied = plan.filter((item) => item.status === 'renamed' || item.status === 'merged'),
+      offsets = applied.map(() => [] as number[]);
+    if (file !== undefined && applied.length)
+      yield* this.history.rewriteLines(key, file, (content, offset) => {
+        let record: Row | undefined;
+        applied.forEach(({ from, to }, index) => {
+          if (!content.includes(JSON.stringify(from))) return;
+          record ??= JSON.parse(content) as Row;
+          if (!Object.hasOwn(record, from) || Object.hasOwn(record, to)) return;
+          record = renameRecord(record, from, to);
+          offsets[index].push(offset);
+        });
+        return record && JSON.stringify(record);
+      });
+    const done = new Map<Row, Row>();
+    for (const [index, item] of applied.entries()) {
+      done.set(
+        item,
+        this.applyRename(args.id, item.from, item.to, item.status === 'merged', offsets[index], args.by ?? ''),
       );
-    return { id: args.id, renames: results };
+      yield;
+    }
+    return { id: args.id, renames: plan.map((item) => ({ ...item, ...done.get(item) })) };
   }
-  private *renameMetric(
+  /** A rename's index, points, media, summary and settings, after its records were rewritten. */
+  private applyRename(
     id: string,
     from: string,
     to: string,
-    merge: boolean,
+    target: boolean,
+    offsets: number[],
     by: string,
-  ): Generator<void, Row> {
-    if (from === to)
-      throw managementError('METRIC_RENAME_SAME', 'Choose a different name.', { metric: from }, 400);
-    const { row, key } = this.editableRun(id),
-      summary = JSON.parse(row.summary);
-    const source = this.hasMetric(key, summary, from),
-      target = this.hasMetric(key, summary, to);
-    if (!source) return { from, to, status: target ? 'unchanged' : 'missing' };
-    if (target && !merge)
-      throw managementError(
-        'METRIC_EXISTS',
-        `${to} already exists on this run; merge them to combine.`,
-        { metric: to },
-        409,
-      );
-    const fromId = this.history.metricId(from),
-      file = this.history.fileId('wandb-history.jsonl');
-    if (target) {
-      // A merge must not lose a value: no step or record may hold both keys.
-      const toId = this.history.metricId(to);
-      if (fromId !== undefined && toId !== undefined) {
-        const steps = new Set(this.history.series(key, toId).steps);
-        if (this.history.series(key, fromId).steps.some((step) => steps.has(step)))
-          throw managementError(
-            'METRIC_MERGE_CONFLICT',
-            `${from} and ${to} both have values at the same step.`,
-            { metric: to },
-            409,
-          );
-      }
-      if (file !== undefined) {
-        let count = 0;
-        for (const line of this.history.lines(key, file)) {
-          if (line.content.includes(JSON.stringify(to))) {
-            const record = JSON.parse(line.content);
-            if (Object.hasOwn(record, from) && Object.hasOwn(record, to))
-              throw managementError(
-                'METRIC_MERGE_CONFLICT',
-                `${from} and ${to} are both in history record ${line.offset}.`,
-                { metric: to },
-                409,
-              );
-          }
-          if (++count % 4096 === 0) yield;
-        }
-      }
-    }
-    const offsets =
-      file === undefined
-        ? []
-        : yield* this.history.rewriteLines(key, file, (content) => renameKey(content, from, to));
+  ): Row {
+    const { key } = this.editableRun(id),
+      fromId = this.history.metricId(from);
     return this.db.transaction(() => {
       const fresh = this.editableRun(id).row,
         summary = JSON.parse(fresh.summary),
@@ -540,14 +529,14 @@ export class Store {
           from,
           to,
           target ? 1 : 0,
-          JSON.stringify(offsets),
+          JSON.stringify(offsetRanges(offsets)),
           moved && JSON.stringify(moved),
           JSON.stringify(before),
           by,
           Date.now() / 1000,
         ).lastInsertRowid;
       this.historyEdited(id, true);
-      return { from, to, status: target ? 'merged' : 'renamed', undo: Number(undo) };
+      return { undo: Number(undo) };
     })();
   }
   /** Reverses one logged rename (`run_metrics_rename_undo`); repeating it changes nothing. */
@@ -566,11 +555,12 @@ export class Store {
         { metric: record.source },
         409,
       );
-    const offsets = new Set<number>(JSON.parse(record.offsets)),
+    const ranges = JSON.parse(record.offsets) as [number, number][],
+      renamed = (offset: number) => ranges.some(([first, last]) => offset >= first && offset <= last),
       file = this.history.fileId('wandb-history.jsonl');
     if (file !== undefined)
       yield* this.history.rewriteLines(key, file, (content, offset) =>
-        offsets.has(offset) ? renameKey(content, record.target, record.source) : undefined,
+        renamed(offset) ? renameKey(content, record.target, record.source) : undefined,
       );
     return this.db.transaction(() => {
       const fresh = this.editableRun(record.run).row,
@@ -646,8 +636,8 @@ export class Store {
     rows.forEach((row, index) => {
       if (row.step !== undefined) byStep.set(row.step, [...(byStep.get(row.step) ?? []), index]);
     });
-    let last = -1,
-      count = 0;
+    let last = -1;
+    const due = slicer();
     for (const line of this.history.lines(key, file)) {
       last = line.offset;
       let record: Row | undefined;
@@ -664,7 +654,7 @@ export class Store {
         )
           hits[index].push({ offset: line.offset, record: parse() });
       });
-      if (++count % 4096 === 0) yield;
+      if (due()) yield;
     }
     // Plan every row against the records as earlier rows leave them.
     const edited = new Map<number, Row>(),
