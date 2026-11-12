@@ -814,10 +814,6 @@
                   title={$t('runs.pin.pinned')}><PinFilled size={12} /></span
                 >{/if}<span class="run-display-name">{run.display_name}</span
               >{#if run.state === 'running'}<span class="running-name-dot" aria-hidden="true"
-                ></span>{:else if run.state === 'killed'}<span
-                  class="run-state"
-                  data-state="killed"
-                  aria-hidden="true"
                 ></span>{/if}</strong
             ><small>{statusLabel(run.state, $t)} · {run.name}</small></a
           >

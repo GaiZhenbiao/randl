@@ -3368,7 +3368,13 @@ aside {
 .run-state[data-state='crashed'] {
   background: var(--cds-support-01);
 }
-/* Stopped on purpose: a purple square, the stop symbol, wherever a run's state shows. */
+/* Run lists mark only live runs; ended runs keep this space so their states line up. */
+.run-state-space {
+  width: 6px;
+  flex: 0 0 6px;
+}
+/* Stopped on purpose: a purple square, the stop symbol, where a run's state is a field (its
+   page, an overview's counts by state). */
 .run-state[data-state='killed'] {
   border-radius: 1px;
   background: var(--run-stopped);

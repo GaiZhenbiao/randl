@@ -146,27 +146,61 @@ try {
   );
   checks.push('Keyboard focus on a cut name shows it whole');
 
-  // A run marked stopped shows the stopped square and its reason wherever its state shows.
+  // A run marked stopped keeps its state and reason in words; only running runs are marked
+  // in run lists and on Lineage cards.
   await call('run_state_set', {
     id: childId,
     state: 'stopped',
     reason: 'Holds fell after u1500',
     by: 'test',
   });
+  await server.db.call('upsert', {
+    entity: 'test',
+    project: 'names',
+    name: 'live',
+    displayName: 'v703_live',
+    state: 'running',
+  });
   await page.goto(`${origin}/test/names/runs`);
   const childRow = page.getByRole('row', { name: /v701_child/ });
   await expect(childRow).toContainText('Stopped');
-  await expect(childRow.locator('.run-state[data-state="killed"]')).toHaveCount(1);
+  await expect(childRow.locator('.run-state')).toHaveCount(0);
+  await expect(
+    page
+      .getByRole('row', { name: /v702_long|v700_/ })
+      .first()
+      .locator('.run-state'),
+  ).toHaveCount(0);
+  const liveRow = page.getByRole('row', { name: /v703_live/ });
+  await expect(liveRow.locator('.run-state[data-state="running"]')).toHaveCount(1);
+  // State labels line up whether or not a row is marked.
+  const labelX = async (row) =>
+    await row.locator('.run-state-label').evaluate((element) => {
+      const text = [...element.childNodes].find((node) => node.nodeType === Node.TEXT_NODE);
+      const range = document.createRange();
+      range.selectNodeContents(text);
+      return range.getBoundingClientRect().left;
+    });
+  assert.ok(Math.abs((await labelX(liveRow)) - (await labelX(childRow))) < 1);
+  await page.goto(`${origin}/test/names/workspace`);
+  const runList = page.locator('.run-name');
+  await expect(runList.filter({ hasText: 'v703_live' }).locator('.running-name-dot')).toHaveCount(
+    1,
+  );
+  await expect(runList.filter({ hasText: 'v701_child' })).toHaveCount(1);
+  await expect(
+    runList.filter({ hasText: 'v701_child' }).locator('.running-name-dot, .run-state'),
+  ).toHaveCount(0);
   await page.goto(`${origin}/test/names/runs/child`);
   await expect(page.locator('.run-state-tag')).toHaveText('Stopped');
   await expect(page.locator('main')).toContainText('Holds fell after u1500');
   await page.goto(`${origin}/test/names/lineage?run=test%2Fnames%2Fchild`);
   await expect(page.locator('.lineage-details')).toContainText('Holds fell after u1500');
-  await expect(
-    page.locator('.lineage-card', { hasText: 'v701' }).locator('.run-state[data-state="killed"]'),
-  ).toHaveCount(1);
+  const childCard = page.locator('.lineage-card', { hasText: 'v701' });
+  await expect(childCard.locator('.lineage-card-state')).toHaveText('Stopped');
+  await expect(childCard.locator('.run-state')).toHaveCount(0);
   checks.push(
-    'A run marked stopped shows its square and reason in the table, run page and Lineage',
+    'Only running runs are marked in run lists and Lineage cards; stopped ones say so in words',
   );
 
   assert.deepEqual(errors, []);

@@ -527,7 +527,11 @@
             ><span class="table-link-text">{cell.value}</span></a
           >
         </div>{:else if cell.key === 'state'}<span class="table-cell-text run-state-label" title={String(cell.value ?? '')}
-          ><span class="run-state" data-state={run.state} aria-hidden="true"></span>{cell.value}</span
+          ><span
+            class={run.state === 'running' ? 'run-state' : 'run-state-space'}
+            data-state={run.state === 'running' ? 'running' : undefined}
+            aria-hidden="true"
+          ></span>{cell.value}</span
         >{:else}<span class="table-cell-text" title={String(cell.value ?? '')}>{cell.value}</span
         >{/if}</svelte:fragment
     ></DataTable
