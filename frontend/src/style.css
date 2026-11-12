@@ -2030,7 +2030,10 @@ aside {
   gap: 8px;
   font-size: 14px;
 }
-.lineage-story .lineage-hypothesis {
+.lineage-story > p + h3 {
+  margin-top: 16px;
+}
+.lineage-story .bx--tag + .lineage-hypothesis {
   margin-left: 4px;
 }
 .lineage-body {
