@@ -6,13 +6,18 @@ import { Store } from '../backend/dist/database.js';
 import { createServer } from '../backend/dist/server.js';
 import { launchBrowser, listen } from './helpers.mjs';
 
-// Hover budgets on a large workspace at a high-density display: 600 runs with 45 shown,
-// twelve line panels (some smoothed with their original traces), measured as main-thread
-// task time per hover from the browser's own counters. Hovering a run in the list highlights
-// it in every chart, and moving over a chart moves every chart's cursor; both used to redraw
-// each chart's canvas on every step, including charts off screen.
+// Hover budgets on a large workspace at a high-density display: 600 runs with 45 shown, each
+// with a lineage block the size real ones have, and twelve line panels (some smoothed with
+// their original traces). Measured twice: main-thread work per step from the browser's own
+// counters, and, with the GPU compositing path (SwiftShader), the time from a pointer move to
+// the second frame after it, which is where redrawing chart canvases shows. Hovering a run in
+// the list highlights it in every chart and moving over a chart moves every chart's cursor;
+// both used to redraw each chart's canvas at device resolution on every step.
 const RUN_LIST_BUDGET_MS = Number(process.env.RUN_LIST_BUDGET_MS ?? 25),
   CHART_MOVE_BUDGET_MS = Number(process.env.CHART_MOVE_BUDGET_MS ?? 55),
+  RUN_LIST_LATENCY_MS = Number(process.env.RUN_LIST_LATENCY_MS ?? 150),
+  CHART_LATENCY_MS = Number(process.env.CHART_LATENCY_MS ?? 300),
+  HEAP_BUDGET_MB = Number(process.env.HEAP_BUDGET_MB ?? 60),
   RUNS = 600,
   SHOWN = 45,
   POINTS = Number(process.env.HOVER_POINTS ?? 300);
@@ -26,7 +31,37 @@ store.db.transaction(() => {
       project: 'hover',
       name: `run-${String(index).padStart(4, '0')}`,
       displayName: `v${index}_latched_const1e6_yaw02_lacmd_box_lsfloor35_seed${51000 + index}`,
-      config: { seed: { value: index } },
+      // A lineage block as backfilled ones are: changes, compute segments and text.
+      config: {
+        seed: { value: index },
+        lineage: {
+          value: {
+            parent: { run_name: `v${index - 1}`, update: 500000 + index },
+            changes: Object.fromEntries(
+              Array.from({ length: 40 }, (_, key) => [
+                `rl.algorithm.setting_${key}`,
+                { from: key / 10, to: key / 10 + 0.5 },
+              ]),
+            ),
+            compute: {
+              host: 'host' + (index % 3),
+              gpu_count: 2,
+              segments: [
+                {
+                  from_update: 0,
+                  to_update: null,
+                  host: 'host' + (index % 3),
+                  gpu_count: 2,
+                  gpu_ids: [0, 1],
+                  gpu_model: 'RTX 4090 48GB',
+                },
+              ],
+            },
+            hypothesis: 'A longer horizon steadies the critic. '.repeat(30),
+            result: 'Holds rose at matched updates. '.repeat(30),
+          },
+        },
+      },
     });
     store.db
       .prepare("UPDATE runs SET state='finished',created=? WHERE id=?")
@@ -86,74 +121,108 @@ try {
       plotSettings: { showOriginal: true, tooltipColoredNames: true },
     },
   });
-  browser = await launchBrowser();
-  const page = await browser.newPage({
-    viewport: { width: 1600, height: 1000 },
-    deviceScaleFactor: 2,
-  });
-  page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto(`${base}/test/hover/workspace?view=${view.id}`);
-  await page.waitForSelector('.run-name');
-  await page.waitForFunction(
-    () => document.querySelectorAll('.panel canvas, .chart canvas').length >= 4,
-    null,
-    {
-      timeout: 30000,
-    },
-  );
-  await page.waitForTimeout(3000);
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send('Performance.enable');
-  const taskTime = async () =>
-    (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'TaskDuration').value;
-  const frames = () =>
-    page.evaluate(
-      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  const measureIn = async (browser) => {
+    const page = await browser.newPage({
+      viewport: { width: 1600, height: 1000 },
+      deviceScaleFactor: 2,
+    });
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${base}/test/hover/workspace?view=${view.id}`);
+    await page.waitForSelector('.run-name');
+    await page.waitForFunction(
+      () => document.querySelectorAll('.panel canvas, .chart canvas').length >= 4,
+      null,
+      { timeout: 30000 },
     );
-  const rows = page.locator('.run-name');
-  const boxes = [];
-  for (let index = 0; index < 20; index++) boxes.push(await rows.nth(index).boundingBox());
-  // A sweep as a reader makes one: a step every frame, then the work it left behind once the
-  // pointer rests, spread over its steps.
-  const measure = async (steps, move) => {
-    for (let index = 0; index < 3; index++) await move(index);
-    await page.waitForTimeout(300);
-    const before = await taskTime();
-    for (let index = 0; index < steps; index++) {
-      await move(index);
-      await frames();
-    }
-    await page.waitForTimeout(300);
-    return (((await taskTime()) - before - 0) * 1000) / steps;
+    await page.waitForTimeout(3000);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Performance.enable');
+    await cdp.send('HeapProfiler.collectGarbage');
+    const heap = (await cdp.send('Runtime.getHeapUsage')).usedSize / 1048576;
+    const taskTime = async () =>
+      (await cdp.send('Performance.getMetrics')).metrics.find((m) => m.name === 'TaskDuration')
+        .value;
+    const frames = () =>
+      page.evaluate(
+        () =>
+          new Promise((done) =>
+            requestAnimationFrame(() => requestAnimationFrame(() => done(performance.now()))),
+          ),
+      );
+    const rows = page.locator('.run-name');
+    const boxes = [];
+    for (let index = 0; index < 20; index++) boxes.push(await rows.nth(index).boundingBox());
+    // A sweep as a reader makes one: a step every frame, then the work it left behind once the
+    // pointer rests, spread over its steps; and the median time to the second frame per step.
+    const measure = async (steps, move) => {
+      for (let index = 0; index < 3; index++) await move(index);
+      await page.waitForTimeout(300);
+      const before = await taskTime(),
+        latencies = [];
+      for (let index = 0; index < steps; index++) {
+        const start = await page.evaluate(() => performance.now());
+        await move(index);
+        latencies.push((await frames()) - start);
+      }
+      await page.waitForTimeout(300);
+      latencies.sort((a, b) => a - b);
+      return {
+        work: (((await taskTime()) - before) * 1000) / steps,
+        latency: latencies[Math.floor(latencies.length / 2)],
+      };
+    };
+    const runList = await measure(20, (index) =>
+      page.mouse.move(boxes[index].x + 24, boxes[index].y + boxes[index].height / 2),
+    );
+    const chart = await page.locator('.panel canvas, .chart canvas').first().boundingBox();
+    const chartMove = await measure(24, (index) =>
+      page.mouse.move(
+        chart.x + 60 + index * ((chart.width - 120) / 24),
+        chart.y + chart.height / 2,
+      ),
+    );
+    await page.close();
+    return { heap, runList, chartMove };
   };
-  const runList = await measure(20, (index) =>
-    page.mouse.move(boxes[index].x + 24, boxes[index].y + boxes[index].height / 2),
-  );
-  const chart = await page.locator('.panel canvas, .chart canvas').first().boundingBox();
-  if (process.env.HOVER_PROFILE) {
-    await cdp.send('Profiler.enable');
-    await cdp.send('Profiler.start');
-  }
-  const chartMove = await measure(24, (index) =>
-    page.mouse.move(chart.x + 60 + index * ((chart.width - 120) / 24), chart.y + chart.height / 2),
-  );
-  if (process.env.HOVER_PROFILE) {
-    const { profile } = await cdp.send('Profiler.stop');
-    (await import('node:fs')).writeFileSync(process.env.HOVER_PROFILE, JSON.stringify(profile));
-  }
+  const round = (value) => Math.round(value * 10) / 10;
+  browser = await launchBrowser();
+  const plain = await measureIn(browser);
+  await browser.close();
+  browser = await launchBrowser({
+    args: ['--enable-gpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+  });
+  const gpu = await measureIn(browser);
   const report = {
-    runListHoverMs: Math.round(runList * 10) / 10,
-    chartMoveMs: Math.round(chartMove * 10) / 10,
-    budgets: { runList: RUN_LIST_BUDGET_MS, chartMove: CHART_MOVE_BUDGET_MS },
+    heapMB: round(plain.heap),
+    runListHoverMs: round(plain.runList.work),
+    chartMoveMs: round(plain.chartMove.work),
+    gpuRunListLatencyMs: round(gpu.runList.latency),
+    gpuChartLatencyMs: round(gpu.chartMove.latency),
+    budgets: {
+      heap: HEAP_BUDGET_MB,
+      runList: RUN_LIST_BUDGET_MS,
+      chartMove: CHART_MOVE_BUDGET_MS,
+      runListLatency: RUN_LIST_LATENCY_MS,
+      chartLatency: CHART_LATENCY_MS,
+    },
   };
   console.log(JSON.stringify(report, null, 2));
+  assert.ok(plain.heap <= HEAP_BUDGET_MB, `the workspace holds ${round(plain.heap)} MB of heap`);
   assert.ok(
-    runList <= RUN_LIST_BUDGET_MS,
-    `run-list hover took ${runList.toFixed(1)} ms of main-thread work`,
+    plain.runList.work <= RUN_LIST_BUDGET_MS,
+    `run-list hover took ${round(plain.runList.work)} ms of main-thread work`,
   );
   assert.ok(
-    chartMove <= CHART_MOVE_BUDGET_MS,
-    `chart move took ${chartMove.toFixed(1)} ms of main-thread work`,
+    plain.chartMove.work <= CHART_MOVE_BUDGET_MS,
+    `chart move took ${round(plain.chartMove.work)} ms of main-thread work`,
+  );
+  assert.ok(
+    gpu.runList.latency <= RUN_LIST_LATENCY_MS,
+    `run-list hover took ${round(gpu.runList.latency)} ms to its second frame`,
+  );
+  assert.ok(
+    gpu.chartMove.latency <= CHART_LATENCY_MS,
+    `chart move took ${round(gpu.chartMove.latency)} ms to its second frame`,
   );
   assert.deepEqual(errors, []);
 } finally {

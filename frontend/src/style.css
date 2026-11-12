@@ -4022,6 +4022,23 @@ aside {
   pointer-events: none;
   z-index: 2;
 }
+/* A run hovered elsewhere, over a line chart: a veil over the plot and the run's lines. */
+.chart-linked-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.chart-linked-veil {
+  fill: var(--cds-ui-01);
+  opacity: 0.72;
+}
+.chart-linked-line {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
 .plot-inspector-cursor {
   position: absolute;
   width: 1px;

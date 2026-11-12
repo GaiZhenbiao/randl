@@ -443,6 +443,7 @@ export function addMarks(option: any, ctx: PanelContext) {
     },
   };
 }
+let overlays = 0;
 export function renderer(
   host: Host,
   build: (ctx: PanelContext) => any,
@@ -456,6 +457,115 @@ export function renderer(
     renderer: 'canvas',
     devicePixelRatio: Math.min(devicePixelRatio, 2),
   });
+  // A hovered run, here or elsewhere (the run list, another chart), is shown over a line chart
+  // rather than by ECharts: a veil over the plot and the run's lines on top, in SVG. ECharts'
+  // emphasis redraws the whole canvas at device resolution, in every chart, on each change of
+  // the hovered run; this redraws none. Other charts keep ECharts' emphasis.
+  const svg = 'http://www.w3.org/2000/svg',
+    overlay = document.createElementNS(svg, 'svg'),
+    overlayId = ++overlays;
+  overlay.setAttribute('class', 'chart-linked-overlay');
+  overlay.setAttribute('aria-hidden', 'true');
+  overlay.style.display = 'none';
+  canvas.after(overlay);
+  // The clip and the veil stay; only the lines change as the hovered run does.
+  const clip = document.createElementNS(svg, 'clipPath'),
+    clipRect = document.createElementNS(svg, 'rect'),
+    veil = document.createElementNS(svg, 'rect'),
+    lines = document.createElementNS(svg, 'g');
+  clip.id = 'chart-linked-clip-' + overlayId;
+  clip.append(clipRect);
+  veil.setAttribute('class', 'chart-linked-veil');
+  lines.setAttribute('clip-path', `url(#${clip.id})`);
+  overlay.append(clip, veil, lines);
+  let overlayIndices: number[] = [],
+    overlayFrame = '',
+    plainLines = false;
+  function drawOverlay(indices: number[]) {
+    overlayIndices = indices;
+    if (!indices.length) {
+      if (overlay.style.display !== 'none') {
+        lines.replaceChildren();
+        overlay.style.display = 'none';
+      }
+      return;
+    }
+    const model = (chart as any).getModel(),
+      rect = model.getComponent('grid', 0)?.coordinateSystem?.getRect?.();
+    if (!rect) return;
+    const width = chart.getWidth(),
+      height = chart.getHeight(),
+      frame = [rect.x, rect.y, rect.width, rect.height, width, height].join(' ');
+    if (overlayFrame !== frame) {
+      overlayFrame = frame;
+      overlay.setAttribute('viewBox', `0 0 ${width} ${height}`);
+      overlay.setAttribute('width', String(width));
+      overlay.setAttribute('height', String(height));
+      for (const target of [clipRect, veil]) {
+        target.setAttribute('x', String(rect.x));
+        target.setAttribute('y', String(rect.y));
+        target.setAttribute('width', String(rect.width));
+        target.setAttribute('height', String(rect.height));
+      }
+    }
+    let drawn = 0;
+    for (const index of indices.slice(0, 24)) {
+      const series = model.getSeriesByIndex(index);
+      if (!series || model.isSeriesFiltered(series) || !series.coordinateSystem) continue;
+      const data = series.getData(),
+        system = series.coordinateSystem,
+        style = data.getVisual('style') ?? {},
+        dims = data.mapDimensionsAll('x').concat(data.mapDimensionsAll('y')),
+        count = data.count(),
+        // Many points per pixel column keep only their first, lowest, highest and last.
+        dense = count > rect.width * 3,
+        columns = new Map<number, number[]>();
+      let d = '',
+        open = false;
+      for (let i = 0; i < count; i++) {
+        const x = data.get(dims[0], i) as number,
+          y = data.get(dims[1], i) as number;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          open = false;
+          continue;
+        }
+        const [px, py] = system.dataToPoint([x, y]);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) continue;
+        if (dense) {
+          const key = Math.round(px),
+            column = columns.get(key);
+          if (column) {
+            column[2] = Math.min(column[2], py);
+            column[3] = Math.max(column[3], py);
+            column[4] = py;
+          } else columns.set(key, [px, py, py, py, py]);
+          continue;
+        }
+        d += (open ? 'L' : 'M') + px.toFixed(1) + ' ' + py.toFixed(1);
+        open = true;
+      }
+      if (dense)
+        for (const [px, first, low, high, last] of columns.values()) {
+          const x = px.toFixed(1);
+          d += (d ? 'L' : 'M') + x + ' ' + first.toFixed(1);
+          if (high - low > 0.5)
+            d += 'L' + x + ' ' + low.toFixed(1) + 'L' + x + ' ' + high.toFixed(1);
+          d += 'L' + x + ' ' + last.toFixed(1);
+        }
+      if (!d) continue;
+      const path =
+        (lines.children[drawn] as SVGPathElement | undefined) ??
+        lines.appendChild(document.createElementNS(svg, 'path'));
+      if (path.getAttribute('d') !== d) path.setAttribute('d', d);
+      path.setAttribute('class', 'chart-linked-line');
+      path.dataset.key = String(series.get('randlKey') ?? series.name);
+      path.setAttribute('stroke', String(style.stroke ?? style.fill ?? '#0f62fe'));
+      path.setAttribute('stroke-width', String((series.get(['lineStyle', 'width']) ?? 2) + 1));
+      drawn++;
+    }
+    while (lines.children.length > drawn) lines.lastChild!.remove();
+    if (overlay.style.display === 'none') overlay.style.display = '';
+  }
   const legend = scrollLegend(
     host.element,
     (name) => chart.dispatchAction({ type: 'legendToggleSelect', name }),
@@ -638,6 +748,16 @@ export function renderer(
       : localHighlight && focusedSeries >= 0 && seriesRuns[focusedSeries]?.some((id) => ids.has(id))
         ? [focusedSeries]
         : seriesRuns.flatMap((runs, index) => (runs.some((id) => ids.has(id)) ? [index] : []));
+    // A highlight on a line chart is drawn over it (drawOverlay), leaving the canvas.
+    if (plainLines && !datum.length) {
+      if (highlightSignature) {
+        chart.dispatchAction({ type: 'downplay' });
+        highlightSignature = '';
+      }
+      drawOverlay(seriesIndex.filter((index) => !silentSeries[index]));
+      return;
+    }
+    drawOverlay([]);
     const signature =
       datum.length || seriesIndex.length ? JSON.stringify([datum, seriesIndex]) : '';
     if (signature === highlightSignature) return;
@@ -679,6 +799,10 @@ export function renderer(
         if (inspectHistory) option.tooltip.show = false;
       }
       silentSeries = (option.series || []).map((item: any) => !!item.silent);
+      // Plain lines take the overlay; areas and stacks dim their fills by ECharts' emphasis.
+      plainLines =
+        inspectHistory &&
+        (option.series || []).every((item: any) => !item.areaStyle && item.stack === undefined);
       seriesDatumRuns = (option.series || []).map((item: any) => item.randlDatumRunIds || []);
       seriesTypes = (option.series || []).map((item: any) => item.type);
       const focusedKey = seriesKeys[focusedSeries];
@@ -832,14 +956,13 @@ export function renderer(
       highlighted = ids;
       localHighlight = local;
       inspector.highlightRuns(ids, local);
-      // Emphasis redraws the whole canvas. The chart under the pointer shows it at once; a
-      // linked chart, whose readout and dot already follow, redraws once the hovered run has
-      // stayed the same for a moment, so sweeping a chart or the run list does not redraw
-      // every chart on every step.
+      // A line chart shows a highlight at once, over its canvas (drawOverlay). Other charts'
+      // emphasis redraws the whole canvas, so a linked one, whose readout and dot already
+      // follow, redraws once the hovered run has stayed the same for a moment.
       clearTimeout(emphasisTimer);
       emphasisTimer = undefined;
       if (!ready) return;
-      if (local || !ids.length || !highlightSignature) applyHighlights(ids);
+      if (local || !ids.length || !highlightSignature || plainLines) applyHighlights(ids);
       else
         emphasisTimer = setTimeout(() => {
           emphasisTimer = undefined;
@@ -862,6 +985,7 @@ export function renderer(
     },
     resize: () => {
       chart.resize();
+      if (overlayIndices.length) drawOverlay(overlayIndices);
       legend.resize();
       inspector.refresh();
     },

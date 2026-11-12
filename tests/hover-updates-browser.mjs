@@ -183,13 +183,14 @@ try {
         visible: document.querySelectorAll('.plot-inspector:not([hidden])').length,
         dots: document.querySelectorAll('.plot-inspector-point:not([hidden])').length,
         hidden: [...probe.events],
-        emphasis: chart
-          .getModel()
-          .getSeries()
-          .filter((s) =>
-            chart.getViewOfSeriesModel(s)._polyline?.currentStates.includes('emphasis'),
-          )
-          .map((s) => s.option.randlKey),
+        // A line chart shows the inspected series over its canvas, not by ECharts emphasis.
+        emphasis: [
+          ...chart
+            .getDom()
+            .parentElement.querySelectorAll(
+              '.chart-linked-overlay:not([style*="display: none"]) .chart-linked-line',
+            ),
+        ].map((path) => path.dataset.key),
         width: chart.getWidth(),
       };
     };
@@ -210,9 +211,10 @@ try {
         probe.missingFrames++;
       const chart = probe.charts.primary.chart;
       const emphasized = chart
-        .getModel()
-        .getSeries()
-        .filter((s) => chart.getViewOfSeriesModel(s)._polyline?.currentStates.includes('emphasis'));
+        .getDom()
+        .parentElement.querySelectorAll(
+          '.chart-linked-overlay:not([style*="display: none"]) .chart-linked-line',
+        );
       // Incoming runs can change the nearest series. ECharts applies that action
       // on its next frame; emphasis must never disappear during the handoff.
       if (emphasized.length !== 1) probe.emphasisFrames++;

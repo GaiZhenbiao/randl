@@ -189,11 +189,22 @@ try {
           .find((v) => v?.getInstanceByDom)
           .getInstanceByDom(host);
       const result = [];
+      // Line charts show a hovered run over their canvas: its series emphasized, the rest
+      // behind a veil (blurred), with no ECharts state.
+      const overlay = host.parentElement.querySelector(
+          '.chart-linked-overlay:not([style*="display: none"])',
+        ),
+        shown = overlay
+          ? new Set([...overlay.querySelectorAll('.chart-linked-line')].map((p) => p.dataset.key))
+          : null;
       instance.getModel().eachSeries((model) => {
         const states = new Set();
         instance.getViewOfSeriesModel(model).group.traverse((el) => {
           for (const state of el.currentStates || []) states.add(state);
         });
+        // Original traces (no run ids) stay out of it, as with ECharts' emphasis.
+        if (shown && model.option.randlRunIds)
+          states.add(shown.has(model.option.randlKey ?? model.name) ? 'emphasis' : 'blur');
         result.push({ runIds: model.option.randlRunIds, states: [...states].sort() });
       });
       return result;
