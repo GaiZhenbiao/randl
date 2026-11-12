@@ -542,9 +542,8 @@
   let pathSet = $derived(new Set(path));
   /** The chosen runs in the graph's order (creation). */
   let pickedRuns = $derived(
-    graph?.nodes
-      .filter((node) => picked.has(node.id) && !node.planned)
-      .map((node) => node.id) ?? [],
+    graph?.nodes.filter((node) => picked.has(node.id) && !node.planned).map((node) => node.id) ??
+      [],
   );
 
   // Arrow keys move along links: left to the parent, right to the first child, up and down
