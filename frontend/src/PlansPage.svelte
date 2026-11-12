@@ -18,6 +18,7 @@
   import Choice from './Choice.svelte';
   import LedgerSource from './LedgerSource.svelte';
   import PanelCard from './Panel.svelte';
+  import PageRail from './PageRail.svelte';
 
   import { tool, apiMessage } from './api';
   import { t, number, date, locale, type Message } from './i18n';
@@ -33,7 +34,10 @@
     dark,
     onRun,
     onPage,
+    rail,
   }: {
+    /** The header rail for the page's controls (PageRail.svelte), on wide screens. */
+    rail?: HTMLElement;
     project: string;
     runs: Run[];
     plugins: Plugin[];
@@ -513,6 +517,13 @@
   </li>
 {/snippet}
 
+<PageRail target={rail} label={$t('plans.controls')}>
+  <span class="page-rail-end"
+    ><Button size={rail ? 'small' : 'field'} icon={Add} on:click={() => edit()}
+      >{$t('plans.edit.new')}</Button
+    ></span
+  >
+</PageRail>
 <div class="project-page-content plans-page">
   {#if error}<InlineNotification
       lowContrast
@@ -623,7 +634,6 @@
   <section class="plans-section" aria-labelledby="plans-queues-title">
     <div class="plans-heading">
       <h2 id="plans-queues-title">{$t('plans.queues.title')}</h2>
-      <Button size="small" icon={Add} on:click={() => edit()}>{$t('plans.edit.new')}</Button>
     </div>
     {#if plans === null}<p class="lineage-muted">{$t('common.status.loading')}</p>
     {:else if !lanes.length}<p class="empty-table">{$t('plans.empty')}</p>

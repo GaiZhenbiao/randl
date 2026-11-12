@@ -16,6 +16,7 @@ const {
   nodeWidth,
   pathToRoot,
   visibleRuns,
+  wordDiff,
 } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 
 const node = (id, extra = {}) => ({
@@ -169,4 +170,31 @@ test('planned runs are drawn even without a parent in the graph', () => {
   const result = visibleRuns(planned, indexGraph(planned), filters);
   assert.ok(result.shown.includes('plan:p'));
   assert.ok(!result.shown.includes('lone'));
+});
+
+test('config values diff word by word', () => {
+  const show = (parts) =>
+    parts
+      .map(({ text, kind }) =>
+        kind === 'same' ? text : kind === 'added' ? `{+${text}+}` : `[-${text}-]`,
+      )
+      .join('');
+  // A path changes in one folder; numbers change whole, with their sign and exponent.
+  assert.equal(
+    show(wordDiff('"/warm/v621_u00543000/update_0"', '"/warm/v647_u00568000/update_0"')),
+    '"/warm/[-v621_u00543000-]{+v647_u00568000+}/update_0"',
+  );
+  assert.equal(
+    show(wordDiff('[-1.6,-1.6,-1.8]', '[-1.6,-1.2,-1.8]')),
+    '[-1.6,[--1.6-]{+-1.2+},-1.8]',
+  );
+  assert.equal(show(wordDiff('1e-6', '3e-6')), '[-1e-6-]{+3e-6+}');
+  assert.equal(
+    show(wordDiff('"latched box"', '"latched box frustum"')),
+    '"latched box{+ frustum+}"',
+  );
+  // Nothing but punctuation in common: one removal and one addition.
+  assert.equal(show(wordDiff('"a"', '"b"')), '[-"a"-]{+"b"+}');
+  assert.equal(show(wordDiff('', '5')), '{+5+}');
+  assert.equal(show(wordDiff('x '.repeat(500), 'y '.repeat(500), 100)).length, 2000 + 8);
 });

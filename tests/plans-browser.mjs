@@ -170,6 +170,16 @@ try {
   ];
   assert.ok(past.height > 40, 'a two-GPU bar spans two rows');
   assert.ok(Math.abs(planned.x - (remaining.x + remaining.width)) < 4);
+  // The panel's title and its legend sit 8 px in from its border, as in the workspace.
+  const insets = await page.locator('.plans-occupancy .chart').evaluate((element) => {
+    const box = element.getBoundingClientRect(),
+      range = document.createRange();
+    range.selectNodeContents(element.querySelector('.chart-title'));
+    return [range, element.querySelector('.occupancy-legend')].map((item) =>
+      Math.round(item.getBoundingClientRect().left - box.left),
+    );
+  });
+  assert.deepEqual(insets, [9, 9]);
   checks.push('The timeline shows GPU rows by host, bars by kind, the now line and the queue');
 
   // It scrolls sideways; the buttons and Ctrl+wheel zoom in time.

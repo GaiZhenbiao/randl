@@ -199,7 +199,8 @@ such as `+grown head` and the changed config keys that set the run apart (those 
 the fewest links come first); hovering shows the whole label, and a legend explains the line
 styles. Select a card for what changed, its hypothesis, result and verdict, relations, config
 bases, compute segments, the metric along its lineage, and every config difference from its
-parent or from another run you pick.
+parent or from another run you pick, as a word diff under each key (the run's name, state,
+verdict and **Open run** stay at the top as the panel scrolls).
 
 The controls sit in the page header on wide screens (a single row below it on narrow ones): the name filter; **Filters** (group, tag, host, collapse rejected
 branches, show runs without lineage; the button counts the active ones); **View** (arrange cards
@@ -214,8 +215,9 @@ screens, one finger pans and two pinch. **Fit all** and
 **Focus running runs** are in the toolbar. The arrangement, colouring and the two checkboxes are
 remembered per project in this browser.
 
-To compare runs, drag a box around them on the canvas (Ctrl- or ⌘-drag adds to the selection,
-as Shift-, Ctrl- or ⌘-click does), or use **Select path from
+To compare runs, drag a box around them on the canvas (the runs it covers are selected as it
+moves; Ctrl- or ⌘-drag adds to the selection, as Shift-, Ctrl- or ⌘-click does; a click on
+empty canvas clears it), or use **Select path from
 root** or **Select branch** for the open run, then **Compare** (it shows how many): the project's
 workspace view shows exactly those runs as solos (which override visibility until you clear
 them) in its existing panels. The open run and the selection are kept in the URL (`?run=`,
@@ -323,10 +325,13 @@ of them are audited with their `by`.
 Beside the runs, each project keeps what was learned from them and what comes next:
 
 - **Findings** (the **Findings** page): Markdown notes by topic, each citing the runs (and
-  updates) it rests on, with a **Ruled out** list. Every edit keeps the previous version,
-  shown under **Earlier versions**; a save names the version it started from, so two editors
-  cannot overwrite each other. A run's Overview tab and its Lineage panel list the findings
-  citing it.
+  updates) it rests on, current or ruled out. The page lists them by title, topic, status,
+  cited runs, last update and author, searched and filtered by topic and status from the
+  header and sorted by any column; the open finding reads beside the list. Arrow keys move
+  through the list, Space checks findings to change their status or delete them together,
+  and `/` searches. Every edit keeps the previous version, shown under **Earlier versions**;
+  a save names the version it started from, so two editors cannot overwrite each other. A
+  run's Overview tab and its Lineage panel list the findings citing it.
 - **Best recipe** (the **Plans** page and the Lineage panel): the run the project builds on,
   since when and why, with every earlier promotion kept. Its card on the Lineage page carries a
   star.

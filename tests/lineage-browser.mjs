@@ -231,7 +231,7 @@ try {
   const details = page.locator('.lineage-details');
   const parentDiff = details.locator('section', { hasText: 'Config changes from parent' });
   await expect(details.locator('h2')).toHaveText('v102_head');
-  await expect(details.locator('.lineage-story h3')).toHaveText([
+  await expect(details.locator('.lineage-story dt')).toHaveText([
     'What changed',
     'Hypothesis',
     'Result',
@@ -249,16 +249,27 @@ try {
   await expect(details).toContainText('Updates 2,000–2,500');
   await expect(details).toContainText('polaris · polaris_012');
   await expect(details).toContainText('1× RTX 4090 24GB (3)');
-  await expect(parentDiff.locator('.lineage-diff-row dt')).toHaveText(['model.head']);
-  await expect(parentDiff.locator('.lineage-diff-row').first()).toContainText('Not set');
+  // Config changes read as word diffs under their key, its path muted.
+  const diffKeys = parentDiff.locator('.config-diff-key');
+  await expect(diffKeys).toHaveText(['model.head']);
+  await expect(diffKeys.first().locator('.config-diff-path')).toHaveText('model.');
+  await expect(parentDiff.locator('.config-diff-row').first()).toContainText('Not set');
   await parentDiff.getByText('Show 1 ignored key').click();
-  await expect(parentDiff.locator('.lineage-diff-row dt')).toHaveText([
-    'model.head',
-    'rl.checkpoint.save_dir',
-  ]);
+  await expect(diffKeys).toHaveText(['model.head', 'rl.checkpoint.save_dir']);
+  const pathRow = parentDiff.locator('.config-diff-row', { hasText: 'save_dir' });
+  await expect(pathRow.locator('.diff-removed')).toHaveText(['v100_root']);
+  await expect(pathRow.locator('.diff-added')).toHaveText(['v102_head']);
+  await expect(pathRow.locator('.diff-same').first()).toContainText('/ckpt/');
+  // The header stays in view while the panel scrolls.
+  const header = details.locator('.lineage-details-header');
+  const top = (await header.boundingBox()).y;
+  await details.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await expect.poll(async () => (await header.boundingBox()).y).toBe(top);
+  await expect(details.getByRole('link', { name: 'Open run' })).toBeInViewport();
+  await details.evaluate((element) => element.scrollTo(0, 0));
   assert.match(page.url(), /\?run=test%2Flineage%2Fv102_head&select=v102_head$/);
   checks.push(
-    'The details panel shows change, hypothesis, result, verdict, relation and the parent diff',
+    'The details panel shows change, hypothesis, result, verdict, relation and a word-level parent diff under a pinned header',
   );
 
   // Keyboard: Left moves to the parent card, Escape closes the panel and keeps focus.
@@ -325,6 +336,35 @@ try {
   assert.equal(await listColor('test/lineage/v101_lr'), lineageColors.v101);
   checks.push('Chosen runs (clicks, path) open soloed in the workspace with the same colours');
 
+  // A panel's title and legend sit as far in from its edge on the Lineage page as the legend
+  // does in the workspace: the inset belongs to the panel, not to the page around it. (Touch
+  // screens show the workspace's reorder grip in front of its titles, so titles are compared
+  // with legends.)
+  const inset = (chart) =>
+    chart.evaluate((element) => {
+      const box = element.getBoundingClientRect(),
+        range = document.createRange();
+      range.selectNodeContents(element.querySelector('.chart-title'));
+      const legend = element.querySelector('.chart-legend-item').getBoundingClientRect();
+      return {
+        title: Math.round(range.getBoundingClientRect().left - box.left),
+        legend: Math.round(legend.left - box.left),
+      };
+    });
+  const panel = page.locator('.chart', { has: page.locator('.chart-legend-item') }).first();
+  await expect(panel).toBeVisible();
+  const inWorkspace = await inset(panel);
+  assert.ok(inWorkspace.legend >= 8, 'legend inset in the workspace: ' + inWorkspace.legend);
+  await page.goBack();
+  await expect(details.locator('.chart .chart-legend-item').first()).toBeVisible();
+  assert.deepEqual(await inset(details.locator('.chart').first()), {
+    title: inWorkspace.legend,
+    legend: inWorkspace.legend,
+  });
+  await page.goForward();
+  await expect(page).toHaveURL(/\/test\/lineage\/workspace/);
+  checks.push('Panels keep the title and legend inset of the workspace on the Lineage page');
+
   // Back from the workspace: the runs table and a run page each open the lineage on runs.
   await page.goto(`${origin}/test/lineage/runs`);
   for (const name of ['v101_lr', 'v103_below'])
@@ -379,6 +419,30 @@ try {
   // Without Ctrl a new box replaces the selection.
   await drag(...(await around(['v100'])));
   await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
+  // While the box is dragged, covered cards show as chosen and leave when it no longer covers
+  // them; nothing is committed until release, and Ctrl keeps the existing selection.
+  const [from, to] = await around(['v101', 'v102']),
+    [, justV101] = await around(['v101']);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 5 });
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(2);
+  await expect(card('v100')).not.toHaveClass(/picked/);
+  await page.mouse.move(justV101.x, justV101.y, { steps: 5 });
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
+  await expect(card('v101')).toHaveClass(/picked/);
+  assert.equal(new URL(page.url()).searchParams.get('select'), 'v100_root');
+  await page.mouse.up();
+  await expect(page).toHaveURL(/select=v101_lr/);
+  await page.keyboard.down('Control');
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(to.x, to.y, { steps: 5 });
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(2);
+  await page.mouse.up();
+  await page.keyboard.up('Control');
+  await drag(...(await around(['v100'])));
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
   // Holding Shift shows a grab cursor, and Shift+drag pans without selecting.
   const viewport = page.locator('.lineage-viewport');
   await page.keyboard.down('Shift');
@@ -392,7 +456,9 @@ try {
     .poll(async () => (await transform()).slice(0, 2))
     .toEqual([startX + 60, startY + 40]);
   await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
-  checks.push('Dragging draws a selection box (Ctrl adds); Shift+drag pans with a grab cursor');
+  checks.push(
+    'Dragging draws a selection box that selects live (Ctrl adds); Shift+drag pans with a grab cursor',
+  );
 
   // A plain click on empty canvas closes the run panel and clears the selection; a Shift click
   // (the start of a pan) does not.

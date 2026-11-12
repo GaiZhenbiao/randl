@@ -82,10 +82,14 @@ try {
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => message.type() === 'error' && errors.push(message.text()));
 
-  // Findings: grouped by topic, Markdown rendered, citations linked; edited with history.
+  // Findings: a list by topic and status; the reading pane renders Markdown and links the
+  // cited runs; edits keep versions.
   await page.goto(`${origin}/test/ledger/findings`);
-  const finding = page.locator('.finding', { hasText: 'Wider heads hold more boxes' });
-  await expect(page.locator('.findings-topic h2')).toHaveText(['Model']);
+  const row = (title) => page.locator('.findings-table tbody tr', { hasText: title });
+  await expect(row('Wider heads hold more boxes')).toContainText('Model');
+  await row('Wider heads hold more boxes').click();
+  await expect(page).toHaveURL(/finding=wide-heads/);
+  const finding = page.locator('.findings-reader .finding');
   await expect(finding.locator('strong')).toHaveText('0.2');
   await expect(finding.getByRole('link', { name: 'v2_arm' })).toBeVisible();
   await expect(finding.locator('.ledger-source')).toHaveText('From handbook, lines 1–3');
@@ -106,13 +110,16 @@ try {
   await create.getByLabel('Topic').fill('Optimizer');
   await create.getByText('Ruled out', { exact: true }).click();
   await create.getByRole('button', { name: 'Save finding' }).click();
-  await expect(page.locator('.findings-topic h2')).toHaveText(['Model', 'Ruled out']);
+  await expect(row('Cosine schedules stall')).toContainText('Ruled out');
+  await expect(finding.locator('h2')).toHaveText('Cosine schedules stall');
   assert.equal(
     (await call('finding_get', { project: 'test/ledger', id: 'cosine-schedules-stall' })).finding
       .status,
     'ruled_out',
   );
-  checks.push('Findings show by topic with Markdown and cited runs; edits keep versions');
+  checks.push(
+    'Findings list by topic and status; the reader shows Markdown and cited runs; edits keep versions',
+  );
 
   // Plans: set the best recipe and plan a run on a slot's queue.
   await page.goto(`${origin}/test/ledger/plans`);
@@ -176,7 +183,7 @@ try {
   await expect(page.locator('.lineage-journal')).toContainText('Collisions fell after u200.');
   await page.getByRole('button', { name: 'Wider heads hold more boxes' }).click();
   await expect(page).toHaveURL(/\/test\/ledger\/findings\?finding=wide-heads/);
-  await expect(page.locator('.finding.focused')).toContainText('Wider heads');
+  await expect(page.locator('.findings-reader .finding')).toContainText('Wider heads');
   checks.push('The run page shows its journal and links to the findings citing it');
 
   assert.deepEqual(errors, []);

@@ -3,6 +3,7 @@
   // along its lineage, and config diffs against its parent and a run the reader picks.
   import { Button, InlineNotification, Tag, Toggle } from 'carbon-components-svelte';
   import Close from 'carbon-icons-svelte/lib/Close.svelte';
+  import Launch from 'carbon-icons-svelte/lib/Launch.svelte';
   import WarningAlt from 'carbon-icons-svelte/lib/WarningAlt.svelte';
   import Choice from './Choice.svelte';
   import JsonValue from './JsonValue.svelte';
@@ -21,6 +22,7 @@
     type Json,
     type LineageGraph,
     type LineageNode,
+    wordDiff,
   } from './lineage-graph';
   let {
     node,
@@ -99,8 +101,14 @@
   );
   let lineChart = $derived(plugins.find((plugin) => plugin.id === 'line'));
   const shortName = (other: LineageNode | undefined) => other?.display_name.split('_')[0] ?? '';
-  const show = (value: Json | undefined) =>
-    value === undefined ? $t('lineage.diff.missing') : JSON.stringify(value);
+  const text = (value: Json | undefined) => (value === undefined ? '' : JSON.stringify(value));
+  /** A dotted key split into its path (shown muted) and its last part. */
+  const keyParts = (key: string) => {
+    const at = key.lastIndexOf('.');
+    return at < 0 ? ['', key] : [key.slice(0, at + 1), key.slice(at + 1)];
+  };
+  const verdictTag = (verdict: string) =>
+    verdict === 'adopted' ? 'green' : verdict === 'rejected' ? 'red' : 'blue';
 </script>
 
 {#snippet diffTable(diff: Diff, fromName: string)}
@@ -114,22 +122,28 @@
     />
   {:else}{@const ignored = diff.changes.filter((change) => change.ignored).length}{@const rows =
       diff.changes.filter((change) => showIgnored || !change.ignored)}
-    <p class="lineage-muted">
-      {$t('lineage.diff.count', { count: diff.changes.length - ignored })}
+    <p class="lineage-muted config-diff-summary">
+      {$t('lineage.diff.count', { count: diff.changes.length - ignored })} ·
+      <span class="config-diff-legend removed">{fromName}</span> →
+      <span class="config-diff-legend added">{shortName(node)}</span>
     </p>
-    {#if rows.length}<dl class="lineage-diff">
-        {#each rows as change (change.key)}<div class="lineage-diff-row">
-            <dt class:lineage-ignored={change.ignored}>{change.key}</dt>
-            <dd>
-              <span class="lineage-diff-run">{fromName}</span>
-              <code class="lineage-value">{show(change.from)}</code>
-            </dd>
-            <dd>
-              <span class="lineage-diff-run">{shortName(node)}</span>
-              <code class="lineage-value">{show(change.to)}</code>
-            </dd>
-          </div>{/each}
-      </dl>{/if}
+    {#if rows.length}<ul class="config-diff">
+        {#each rows as change (change.key)}{@const [path, leaf] = keyParts(change.key)}
+          <li class="config-diff-row" class:ignored={change.ignored}>
+            <span class="config-diff-key" title={change.key}
+              ><span class="config-diff-path">{path}</span><strong>{leaf}</strong></span
+            >
+            <code class="config-diff-value"
+              >{#if change.from === undefined}<span class="config-diff-missing"
+                  >{$t('lineage.diff.missing')} →</span
+                >{/if}{#each wordDiff(text(change.from), text(change.to)) as part, position (position)}<span
+                  class="diff-{part.kind}">{part.text}</span
+                >{/each}{#if change.to === undefined}<span class="config-diff-missing"
+                  >→ {$t('lineage.diff.missing')}</span
+                >{/if}</code
+            >
+          </li>{/each}
+      </ul>{/if}
     {#if ignored}<Toggle
         size="sm"
         labelText={$t('lineage.diff.showIgnored', { count: ignored })}
@@ -141,208 +155,222 @@
 {/snippet}
 
 <aside class="lineage-details" aria-labelledby="lineage-details-title">
+  <!-- The header stays in place while the rest of the panel scrolls. -->
   <header class="lineage-details-header">
-    <h2 id="lineage-details-title">{node.display_name}</h2>
-    <Button
-      kind="ghost"
-      size="small"
-      icon={Close}
-      iconDescription={$t('lineage.panel.close')}
-      tooltipPosition="left"
-      on:click={onClose}
-    />
-  </header>
-  <p class="lineage-details-meta">
-    <span>{statusLabel(node.state, $t)}</span>
-    {#if node.verdict}<Tag
-        size="sm"
-        type={node.verdict === 'adopted' ? 'green' : node.verdict === 'rejected' ? 'red' : 'blue'}
-        >{$t(verdictLabels[node.verdict])}</Tag
-      >{/if}
-    {#if node.group}<span>{$t('lineage.panel.group', { group: node.group })}</span>{/if}
-    {#each node.tags.filter((tag) => !tag.startsWith('verdict:')) as tag (tag)}<Tag size="sm"
-        >{tag}</Tag
-      >{/each}
-  </p>
-  {#if run}<p>
-      <a
-        class="bx--link"
-        href={runURL(run)}
-        onclick={(event) => interceptLink(event, () => onRun(run))}>{$t('lineage.panel.openRun')}</a
-      >
-    </p>{/if}
-
-  {#if !node.planned}<section>
-    <h3>{$t('lineage.panel.parent')}</h3>
-    {#if parentEdge && parent}<p>
-        <button type="button" class="lineage-link" onclick={() => onSelect(parent.id)}
-          >{parent.display_name}</button
-        >
-      </p>
-      <p class="lineage-muted">
-        {parentEdge.update === null
-          ? $t(relationLabel(parentEdge.relation))
-          : $t('lineage.panel.relationAt', {
-              relation: $t(relationLabel(parentEdge.relation)),
-              update: $number(parentEdge.update),
-            })}
-        · {parentEdge.explicit ? $t('lineage.panel.explicit') : $t('lineage.panel.matched')}
-      </p>
-      {#if parentEdge.traits.length}<p class="lineage-traits">
-          {#each parentEdge.traits as trait (trait)}<Tag size="sm" type="outline">{trait}</Tag
-            >{/each}
-        </p>{/if}
-      {#if parentEdge.ambiguous}<p class="lineage-warning">
-          <WarningAlt size={16} />{$t('lineage.panel.ambiguous')}
-        </p>{/if}
-    {:else if node.unresolved}<p class="lineage-warning">
-        <WarningAlt size={16} />{$t('lineage.panel.unresolved', {
-          source: node.unresolved.source,
-        })}
-      </p>
-    {:else}<p class="lineage-muted">{$t('lineage.panel.noParent')}</p>{/if}
-    {#if node.bases.length}<h3>{$t('lineage.panel.bases')}</h3>
-      <ul class="lineage-children">
-        {#each node.bases as base (base.kind + base.reference)}<li>
-            {#if base.id}<button
-                type="button"
-                class="lineage-link"
-                onclick={() => onSelect(base.id!)}>{base.reference}</button
-              >{:else}<code>{base.reference}</code>{/if}
-          </li>{/each}
-      </ul>{/if}
-  </section>{/if}
-
-  {#if node.compute?.segments.length}<section>
-      <h3>{$t('lineage.compute.title')}</h3>
-      <dl class="lineage-diff">
-        {#each node.compute.segments as segment, position (position)}<div class="lineage-diff-row">
-            <dt>
-              {segment.to_update === null
-                ? $t('lineage.compute.open', {
-                    from: segment.from_update === null ? '–' : $number(segment.from_update),
-                  })
-                : $t('lineage.compute.range', {
-                    from: segment.from_update === null ? '–' : $number(segment.from_update),
-                    to: $number(segment.to_update),
-                  })}
-            </dt>
-            <dd>
-              <span class="lineage-diff-run">{$t('lineage.compute.host')}</span>
-              <span>{[segment.host, segment.slot].filter(Boolean).join(' · ') || '–'}</span>
-            </dd>
-            <dd>
-              <span class="lineage-diff-run">{$t('lineage.compute.gpus')}</span>
-              <span
-                >{[
-                  segment.gpu_count === null ? '' : segment.gpu_count + '×',
-                  segment.gpu_model,
-                  segment.gpu_ids?.length ? '(' + segment.gpu_ids.join(', ') + ')' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ') || '–'}</span
-              >
-            </dd>
-          </div>{/each}
-      </dl>
-    </section>{/if}
-
-  {#if node.change || node.hypothesis || node.result || node.verdict || node.recipe !== null}<section
-      class="lineage-story"
-    >
-      {#if node.change}<h3>{$t('lineage.panel.change')}</h3>
-        <p class="lineage-hypothesis">{node.change}</p>{/if}
-      {#if node.hypothesis}<h3>{$t('lineage.panel.hypothesis')}</h3>
-        <p class="lineage-hypothesis">{node.hypothesis}</p>{/if}
-      {#if node.result}<h3>{$t('lineage.panel.result')}</h3>
-        <p class="lineage-hypothesis">{node.result}</p>{/if}
-      {#if node.verdict}<h3>{$t('lineage.panel.verdict')}</h3>
-        <p>
-          <Tag
+    <div class="lineage-details-heading">
+      <h2 id="lineage-details-title">{node.display_name}</h2>
+      <p class="lineage-details-meta">
+        <span class="lineage-state state-{node.state}">{statusLabel(node.state, $t)}</span>
+        {#if node.verdict}<Tag size="sm" type={verdictTag(node.verdict)}
+            >{$t(verdictLabels[node.verdict])}</Tag
+          >{/if}
+        {#if node.group}<span>{$t('lineage.panel.group', { group: node.group })}</span>{/if}
+        {#each node.tags.filter((tag) => !tag.startsWith('verdict:')) as tag (tag)}<Tag
             size="sm"
-            type={node.verdict === 'adopted'
-              ? 'green'
-              : node.verdict === 'rejected'
-                ? 'red'
-                : 'blue'}>{$t(verdictLabels[node.verdict])}</Tag
-          >{#if node.verdictReason}<span class="lineage-hypothesis">{node.verdictReason}</span>{/if}
-        </p>{/if}
-      {#if node.recipe !== null}<h3>{$t('lineage.panel.recipe')}</h3>
-        <JsonValue value={node.recipe} />{/if}
-    </section>{/if}
-
-  <LineageLedger {node} {graph} {picked} {onSelect} {onPage} {onChanged} />
-
-  {#if !node.planned}<section>
-    <h3>{graph.settings.metric || $t('lineage.panel.metric')}</h3>
-    {#if graph.settings.metric}<p>
-        {$t('lineage.panel.values', {
-          latest: formatMetric(node.latest, graph.settings.scale, $number),
-          best: formatMetric(node.best, graph.settings.scale, $number),
-        })}
+            type="outline">{tag}</Tag
+          >{/each}
       </p>
-      {#if pathRuns.length && lineChart}<div class="lineage-chart">
-          <PanelCard
-            height={220}
-            panel={{
-              id: 'lineage-' + node.id,
-              plugin: 'line',
-              metric: graph.settings.metric,
-              metrics: [graph.settings.metric],
-              title: $t('lineage.panel.chartTitle'),
-            }}
-            runs={pathRuns}
-            {dark}
-            {colors}
-            plugin={lineChart}
-            readonly
-            onedit={() => {}}
-            onremove={() => {}}
-            onduplicate={() => {}}
-            onmove={() => {}}
-          />
-        </div>{/if}
-    {:else}<p class="lineage-muted">{$t('lineage.panel.noMetric')}</p>{/if}
-  </section>
+    </div>
+    <div class="lineage-details-actions">
+      {#if run}<a
+          class="bx--btn bx--btn--ghost bx--btn--sm lineage-open-run"
+          href={runURL(run)}
+          onclick={(event) => interceptLink(event, () => onRun(run))}
+          >{$t('lineage.panel.openRun')}<Launch size={16} class="bx--btn__icon" /></a
+        >{/if}
+      <Button
+        kind="ghost"
+        size="small"
+        icon={Close}
+        iconDescription={$t('lineage.panel.close')}
+        tooltipPosition="left"
+        on:click={onClose}
+      />
+    </div>
+  </header>
 
-  {#if parentEdge && parent}<section>
-      <h3>{$t('lineage.diff.parent.title')}</h3>
-      {#if parentEdge.changeSource === 'lineage'}<p class="lineage-muted">
-          {$t('lineage.diff.logged', { count: parentEdge.changeCount })}
-        </p>{/if}
-      {@render diffTable(parentDiff.value, shortName(parent))}
-    </section>{/if}
+  <div class="lineage-details-body">
+    {#if node.change || node.hypothesis || node.result || node.verdict || node.recipe !== null}<section
+        class="lineage-story"
+      >
+        <dl class="lineage-fields">
+          {#if node.change}<div>
+              <dt>{$t('lineage.panel.change')}</dt>
+              <dd class="lineage-lead">{node.change}</dd>
+            </div>{/if}
+          {#if node.hypothesis}<div>
+              <dt>{$t('lineage.panel.hypothesis')}</dt>
+              <dd class="lineage-hypothesis">{node.hypothesis}</dd>
+            </div>{/if}
+          {#if node.result}<div>
+              <dt>{$t('lineage.panel.result')}</dt>
+              <dd class="lineage-hypothesis">{node.result}</dd>
+            </div>{/if}
+          {#if node.verdict}<div>
+              <dt>{$t('lineage.panel.verdict')}</dt>
+              <dd>
+                <Tag size="sm" type={verdictTag(node.verdict)}
+                  >{$t(verdictLabels[node.verdict])}</Tag
+                >{#if node.verdictReason}<span class="lineage-hypothesis">{node.verdictReason}</span
+                  >{/if}
+              </dd>
+            </div>{/if}
+          {#if node.recipe !== null}<div>
+              <dt>{$t('lineage.panel.recipe')}</dt>
+              <dd><JsonValue value={node.recipe} /></dd>
+            </div>{/if}
+        </dl>
+      </section>{/if}
 
-  <section>
-    <h3>{$t('lineage.diff.compare.title')}</h3>
-    <Choice
-      id="lineage-compare"
-      labelText={$t('lineage.diff.compare.label')}
-      placeholder={$t('lineage.diff.compare.placeholder')}
-      selectionClearedText={$t('common.combobox.selectionCleared')}
-      filterResultsText={(count) => resultCount(count, $t)}
-      translateWithId={(id) => $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
-      translateWithIdSelection={() => $t('common.combobox.clear')}
-      shouldFilterItem={filterChoice}
-      items={compareItems}
-      selectedId={compareWith || undefined}
-      on:select={(event) => (compareWith = String(event.detail.selectedId))}
-      on:clear={() => (compareWith = '')}
-    />
-    {#if compareWith}{@render diffTable(
-        pickedDiff.value,
-        shortName(index.nodes.get(compareWith)),
-      )}{/if}
-  </section>{/if}
-
-  {#if children.length}<section>
-      <h3>{$t('lineage.panel.children', { count: children.length })}</h3>
-      <ul class="lineage-children">
-        {#each children as child (child.id)}<li>
-            <button type="button" class="lineage-link" onclick={() => onSelect(child.id)}
-              >{child.display_name}</button
+    {#if !node.planned}<section>
+        <h3>{$t('lineage.panel.parent')}</h3>
+        {#if parentEdge && parent}<p>
+            <button type="button" class="lineage-link" onclick={() => onSelect(parent.id)}
+              >{parent.display_name}</button
             >
-          </li>{/each}
-      </ul>
-    </section>{/if}
+          </p>
+          <p class="lineage-muted">
+            {parentEdge.update === null
+              ? $t(relationLabel(parentEdge.relation))
+              : $t('lineage.panel.relationAt', {
+                  relation: $t(relationLabel(parentEdge.relation)),
+                  update: $number(parentEdge.update),
+                })}
+            · {parentEdge.explicit ? $t('lineage.panel.explicit') : $t('lineage.panel.matched')}
+          </p>
+          {#if parentEdge.traits.length}<p class="lineage-traits">
+              {#each parentEdge.traits as trait (trait)}<Tag size="sm" type="outline">{trait}</Tag
+                >{/each}
+            </p>{/if}
+          {#if parentEdge.ambiguous}<p class="lineage-warning">
+              <WarningAlt size={16} />{$t('lineage.panel.ambiguous')}
+            </p>{/if}
+        {:else if node.unresolved}<p class="lineage-warning">
+            <WarningAlt size={16} />{$t('lineage.panel.unresolved', {
+              source: node.unresolved.source,
+            })}
+          </p>
+        {:else}<p class="lineage-muted">{$t('lineage.panel.noParent')}</p>{/if}
+        {#if node.bases.length}<h4>{$t('lineage.panel.bases')}</h4>
+          <ul class="lineage-children">
+            {#each node.bases as base (base.kind + base.reference)}<li>
+                {#if base.id}<button
+                    type="button"
+                    class="lineage-link"
+                    onclick={() => onSelect(base.id!)}>{base.reference}</button
+                  >{:else}<code>{base.reference}</code>{/if}
+              </li>{/each}
+          </ul>{/if}
+        {#if children.length}<h4>{$t('lineage.panel.children', { count: children.length })}</h4>
+          <ul class="lineage-children">
+            {#each children as child (child.id)}<li>
+                <button type="button" class="lineage-link" onclick={() => onSelect(child.id)}
+                  >{child.display_name}</button
+                >
+              </li>{/each}
+          </ul>{/if}
+      </section>
+
+      <section>
+        <h3>{graph.settings.metric || $t('lineage.panel.metric')}</h3>
+        {#if graph.settings.metric}<p class="lineage-values">
+            {$t('lineage.panel.values', {
+              latest: formatMetric(node.latest, graph.settings.scale, $number),
+              best: formatMetric(node.best, graph.settings.scale, $number),
+            })}
+          </p>
+          {#if pathRuns.length && lineChart}<div class="lineage-chart">
+              <PanelCard
+                height={220}
+                panel={{
+                  id: 'lineage-' + node.id,
+                  plugin: 'line',
+                  metric: graph.settings.metric,
+                  metrics: [graph.settings.metric],
+                  title: $t('lineage.panel.chartTitle'),
+                }}
+                runs={pathRuns}
+                {dark}
+                {colors}
+                plugin={lineChart}
+                readonly
+                onedit={() => {}}
+                onremove={() => {}}
+                onduplicate={() => {}}
+                onmove={() => {}}
+              />
+            </div>{/if}
+        {:else}<p class="lineage-muted">{$t('lineage.panel.noMetric')}</p>{/if}
+      </section>{/if}
+
+    <LineageLedger {node} {graph} {picked} {onSelect} {onPage} {onChanged} />
+
+    {#if !node.planned}{#if parentEdge && parent}<section>
+          <h3>{$t('lineage.diff.parent.title')}</h3>
+          {#if parentEdge.changeSource === 'lineage'}<p class="lineage-muted">
+              {$t('lineage.diff.logged', { count: parentEdge.changeCount })}
+            </p>{/if}
+          {@render diffTable(parentDiff.value, shortName(parent))}
+        </section>{/if}
+
+      <section>
+        <h3>{$t('lineage.diff.compare.title')}</h3>
+        <Choice
+          id="lineage-compare"
+          labelText={$t('lineage.diff.compare.label')}
+          placeholder={$t('lineage.diff.compare.placeholder')}
+          selectionClearedText={$t('common.combobox.selectionCleared')}
+          filterResultsText={(count) => resultCount(count, $t)}
+          translateWithId={(id) =>
+            $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+          translateWithIdSelection={() => $t('common.combobox.clear')}
+          shouldFilterItem={filterChoice}
+          items={compareItems}
+          selectedId={compareWith || undefined}
+          on:select={(event) => (compareWith = String(event.detail.selectedId))}
+          on:clear={() => (compareWith = '')}
+        />
+        {#if compareWith}{@render diffTable(
+            pickedDiff.value,
+            shortName(index.nodes.get(compareWith)),
+          )}{/if}
+      </section>{/if}
+
+    {#if node.compute?.segments.length}<section>
+        <h3>{$t('lineage.compute.title')}</h3>
+        <table class="lineage-compute">
+          <thead>
+            <tr>
+              <th scope="col">{$t('lineage.compute.updates')}</th>
+              <th scope="col">{$t('lineage.compute.host')}</th>
+              <th scope="col">{$t('lineage.compute.gpus')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each node.compute.segments as segment, position (position)}<tr>
+                <td>
+                  {segment.to_update === null
+                    ? $t('lineage.compute.open', {
+                        from: segment.from_update === null ? '–' : $number(segment.from_update),
+                      })
+                    : $t('lineage.compute.range', {
+                        from: segment.from_update === null ? '–' : $number(segment.from_update),
+                        to: $number(segment.to_update),
+                      })}
+                </td>
+                <td>{[segment.host, segment.slot].filter(Boolean).join(' · ') || '–'}</td>
+                <td>
+                  {[
+                    segment.gpu_count === null ? '' : segment.gpu_count + '×',
+                    segment.gpu_model,
+                    segment.gpu_ids?.length ? '(' + segment.gpu_ids.join(', ') + ')' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ') || '–'}
+                </td>
+              </tr>{/each}
+          </tbody>
+        </table>
+      </section>{/if}
+  </div>
 </aside>

@@ -2,6 +2,7 @@
   // The Lineage page (README "Lineage"): runs as cards, linked from the run whose checkpoint
   // each started from. The server derives the graph; this page filters, lays out and explains
   // it, and hands chosen runs to the workspace for comparison.
+  import PageRail from './PageRail.svelte';
   import { onMount, tick, untrack } from 'svelte';
   import {
     Button,
@@ -79,11 +80,6 @@
     /** The header element the controls move into on wide screens; without it they form a row. */
     rail?: HTMLElement;
   } = $props();
-  /** Moves an element into another one (the header) for as long as it is shown. */
-  function portal(node: HTMLElement, target: HTMLElement) {
-    target.append(node);
-    return { destroy: () => node.remove() };
-  }
 
   // The page's choices for a project, kept in this browser.
   type ColorBy = 'run' | 'host';
@@ -391,6 +387,7 @@
     const at = local(event);
     if (lasso) {
       lasso = { ...lasso, x2: at.x, y2: at.y };
+      previewLasso();
       return;
     }
     const previous = pointers.get(event.pointerId);
@@ -412,6 +409,28 @@
     }
     pointers.set(event.pointerId, at);
   }
+  // While a box is dragged, the cards it covers show as chosen (added to the selection with
+  // Ctrl or Cmd); the selection itself changes on release. The set changes only when the
+  // covered cards do, so moving within them redraws nothing.
+  let boxed = $state.raw<Set<string> | null>(null),
+    boxedKey = '';
+  function previewLasso() {
+    if (!lasso || !layout) return;
+    // A box shrunk back to a click covers nothing yet.
+    if (Math.abs(lasso.x2 - lasso.x1) <= 4 && Math.abs(lasso.y2 - lasso.y1) <= 4) {
+      boxed = null;
+      boxedKey = '';
+      return;
+    }
+    const toCanvas = (x: number, y: number) => ({ x: (x - tx) / scale, y: (y - ty) / scale }),
+      a = toCanvas(lasso.x1, lasso.y1),
+      b = toCanvas(lasso.x2, lasso.y2),
+      inside = cardsIn(layout.positions, { x1: a.x, y1: a.y, x2: b.x, y2: b.y }),
+      key = (lasso.add ? '+' : '') + inside.join('\u0000');
+    if (key === boxedKey) return;
+    boxedKey = key;
+    boxed = new Set(lasso.add ? [...picked, ...inside] : inside);
+  }
   function pointerUp(event: PointerEvent) {
     if (lasso && layout) {
       const box = lasso,
@@ -419,6 +438,8 @@
         a = toCanvas(box.x1, box.y1),
         b = toCanvas(box.x2, box.y2);
       lasso = null;
+      boxed = null;
+      boxedKey = '';
       if (Math.abs(box.x2 - box.x1) > 4 || Math.abs(box.y2 - box.y1) > 4) {
         const inside = cardsIn(layout.positions, { x1: a.x, y1: a.y, x2: b.x, y2: b.y });
         pick(box.add ? [...picked, ...inside] : inside);
@@ -734,9 +755,7 @@
 {/snippet}
 
 <div class="lineage-page">
-  {#if rail}<div class="lineage-rail-controls" use:portal={rail}>
-      {@render toolbar()}
-    </div>{:else}{@render toolbar()}{/if}
+  <PageRail target={rail}>{@render toolbar()}</PageRail>
   {#if menu && menuAnchor}<ContextPopover
       anchor={menuAnchor}
       title={menu === 'filters'
@@ -914,7 +933,7 @@
                 x={position.x}
                 y={position.y}
                 selected={selected === id}
-                picked={picked.has(id)}
+                picked={(boxed ?? picked).has(id)}
                 recipe={graph.recipe?.run === id}
                 onPath={pathSet.has(id)}
                 context={visible.context.has(id)}

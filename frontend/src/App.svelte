@@ -1702,7 +1702,9 @@
    * visibility until cleared), then opens the workspace.
    */
   /** Where the Lineage page puts its controls: the header's page bar. */
-  let lineageRail = $state<HTMLDivElement>();
+  // Pages whose controls sit in the header rail (PageRail.svelte) while the window is wide.
+  const railPages = new Set(['lineage', 'plans', 'findings']);
+  let pageRail = $state<HTMLDivElement>();
   async function compareInWorkspace(ids: string[]) {
     if (!view || !selection(view.body.visible, ids, message('lineage.compare.done', { count: ids.length })))
       return;
@@ -2596,9 +2598,9 @@
         add={false}
         onDefaults={() => openDefaults()}
         onAdd={() => openPanel()}
-      />{/if}{:else if page === 'lineage'}<div
-      class="lineage-rail"
-      bind:this={lineageRail}
+      />{/if}{:else if railPages.has(page) && project}<div
+      class="page-rail"
+      bind:this={pageRail}
     ></div>{:else if page === 'runs'}{@render viewControls()}{@render saveStatus()}{:else if page === 'run' && currentRun}<div
       class="run-actions"
     >
@@ -3156,6 +3158,7 @@
     <main
       class:runs-page={page === 'runs'}
       class:lineage-main={page === 'lineage' && !routeError}
+      class:findings-main={page === 'findings' && !routeError}
       tabindex="-1"
       use:observeCanvas
       id="main"
@@ -3283,14 +3286,16 @@
           onRun={(run) => details(run)}
           onCompare={compareInWorkspace}
           onPage={(next, params) => void openPage(next, params)}
-          rail={width >= 1056 ? lineageRail : undefined}
+          rail={width >= 1056 ? pageRail : undefined}
         />{:else if page === 'findings' && project}{#key project}<FindingsPage
             {project}
             runs={projectRuns}
+            rail={width >= 1056 ? pageRail : undefined}
             onRun={(run) => details(run)}
           />{/key}{:else if page === 'plans' && project}{#key project}<PlansPage
             {project}
             runs={projectRuns}
+            rail={width >= 1056 ? pageRail : undefined}
             {plugins}
             {dark}
             onRun={(run) => details(run)}

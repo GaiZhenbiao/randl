@@ -414,49 +414,105 @@ export function boundsOf(positions: Map<string, Position>, ids: string[]) {
 export function withPlans(graph: LineageGraph): LineageGraph {
   if (!graph.plans.length) return graph;
   const ids = new Set(graph.nodes.map((node) => node.id));
-  const nodes = graph.plans.map(
-    (plan): LineageNode => ({
-      id: 'plan:' + plan.id,
-      name: plan.id,
-      display_name: plan.name,
-      state: 'planned',
-      group: '',
-      tags: [],
-      created: plan.created,
-      verdict: null,
-      hypothesis: plan.hypothesis || null,
-      change: plan.change || null,
-      result: null,
-      verdictReason: null,
-      recipe: null,
-      jobType: '',
-      latest: null,
-      best: null,
-      recent: null,
-      plan: plan.id,
-      examines: [],
-      files: [],
-      unresolved: null,
-      bases: [],
-      compute: plan.host ? { host: plan.host, gpu_count: null, segments: [] } : null,
-      planned: plan,
-    }),
-  );
+  const nodes = graph.plans.map((plan): LineageNode => ({
+    id: 'plan:' + plan.id,
+    name: plan.id,
+    display_name: plan.name,
+    state: 'planned',
+    group: '',
+    tags: [],
+    created: plan.created,
+    verdict: null,
+    hypothesis: plan.hypothesis || null,
+    change: plan.change || null,
+    result: null,
+    verdictReason: null,
+    recipe: null,
+    jobType: '',
+    latest: null,
+    best: null,
+    recent: null,
+    plan: plan.id,
+    examines: [],
+    files: [],
+    unresolved: null,
+    bases: [],
+    compute: plan.host ? { host: plan.host, gpu_count: null, segments: [] } : null,
+    planned: plan,
+  }));
   const edges = graph.plans
     .filter((plan) => plan.parent && ids.has(plan.parent))
-    .map(
-      (plan): LineageEdge => ({
-        source: plan.parent!,
-        target: 'plan:' + plan.id,
-        relation: 'planned',
-        traits: [],
-        update: plan.parentUpdate,
-        explicit: true,
-        ambiguous: false,
-        changedKeys: [],
-        changeCount: 0,
-        changeSource: 'lineage',
-      }),
-    );
+    .map((plan): LineageEdge => ({
+      source: plan.parent!,
+      target: 'plan:' + plan.id,
+      relation: 'planned',
+      traits: [],
+      update: plan.parentUpdate,
+      explicit: true,
+      ambiguous: false,
+      changedKeys: [],
+      changeCount: 0,
+      changeSource: 'lineage',
+    }));
   return { ...graph, nodes: [...graph.nodes, ...nodes], edges: [...graph.edges, ...edges] };
+}
+
+export type DiffPart = { text: string; kind: 'same' | 'removed' | 'added' };
+/** Words, numbers (with their exponent and sign), separators and spaces of a value's text. */
+export function diffTokens(text: string) {
+  return text.match(/[+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?|[A-Za-z_][\w]*|\s+|[^\w\s]/gi) ?? [];
+}
+/**
+ * A word-level diff of two values' text, as GitHub's word diff: unchanged words once, removed
+ * and added words where they differ. Values too long to compare word by word are one removal
+ * and one addition.
+ */
+export function wordDiff(before: string, after: string, limit = 400): DiffPart[] {
+  const a = diffTokens(before),
+    b = diffTokens(after);
+  if (a.length * b.length > limit * limit)
+    return [
+      { text: before, kind: 'removed' },
+      { text: after, kind: 'added' },
+    ].filter((part) => part.text) as DiffPart[];
+  // The longest common subsequence of tokens, walked back to front.
+  const width = b.length + 1,
+    lengths = new Uint16Array((a.length + 1) * width);
+  for (let i = a.length - 1; i >= 0; i--)
+    for (let j = b.length - 1; j >= 0; j--)
+      lengths[i * width + j] =
+        a[i] === b[j]
+          ? lengths[(i + 1) * width + j + 1] + 1
+          : Math.max(lengths[(i + 1) * width + j], lengths[i * width + j + 1]);
+  const parts: DiffPart[] = [],
+    push = (text: string, kind: DiffPart['kind']) => {
+      const last = parts.at(-1);
+      if (last?.kind === kind) last.text += text;
+      else parts.push({ text, kind });
+    };
+  let i = 0,
+    j = 0;
+  while (i < a.length || j < b.length) {
+    if (i < a.length && j < b.length && a[i] === b[j]) {
+      push(a[i++], 'same');
+      j++;
+      // Removals come before additions where either keeps the common words.
+    } else if (
+      i < a.length &&
+      (j === b.length || lengths[(i + 1) * width + j] >= lengths[i * width + j + 1])
+    )
+      push(a[i++], 'removed');
+    else push(b[j++], 'added');
+  }
+  // A change that leaves only spaces or punctuation in common reads better whole.
+  const kept = parts
+    .filter((part) => part.kind === 'same')
+    .map((part) => part.text)
+    .join('');
+  if (!/[A-Za-z0-9]/.test(kept) && parts.some((part) => part.kind !== 'same'))
+    return [
+      { text: before, kind: 'removed' },
+      { text: after, kind: 'added' },
+    ].filter((part) => part.text) as DiffPart[];
+  return parts;
 }

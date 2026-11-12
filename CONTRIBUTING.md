@@ -65,6 +65,29 @@ npm run randl -- serve --port 8743 --data-dir /path/to/scratch-data
   scratch files in the ignored `tmp/` directory.
 - Update README.md, DEPLOYMENT.md or PLUGINS.md when commands or contracts change.
 
+### Page controls
+
+A project page's controls (search, filters, view menus, its primary action and the info
+button) go in the header rail, after the page's name, through `PageRail.svelte`:
+
+```svelte
+<PageRail target={rail} label={$t('findings.controls')}>
+  <Search size={rail ? 'sm' : 'lg'} … />
+  <Select inline hideLabel … />
+  <span class="page-rail-end"><Button size={rail ? 'small' : 'field'} …>New finding</Button></span>
+</PageRail>
+```
+
+- `App.svelte` lists such pages in `railPages` and passes `rail` while the window is at
+  least 1056 px wide; narrower, the same controls form one row under the header that
+  scrolls sideways instead of wrapping.
+- Keep the row short: put secondary choices in a popover (Lineage's **Filters**, **View**
+  and **Info**), hide labels whose options name themselves, and put trailing actions in a
+  `page-rail-end` element. Check the fit at 1056 px in French and Spanish.
+- Use small controls in the rail and field-size ones in the row. The page's name keeps its
+  width; the search field shrinks first.
+- Give the group a `label` unless its controls already form a labelled toolbar.
+
 ## Tests
 
 ```sh

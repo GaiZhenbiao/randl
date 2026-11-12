@@ -1978,17 +1978,40 @@ aside {
   padding-inline: 16px;
 }
 /* The Lineage page: a pannable graph of run cards beside a details panel. */
-/* On wide screens the controls sit in the header's page bar instead of a row of their own. */
-.lineage-rail,
-.lineage-rail-controls {
+/* Page controls (PageRail.svelte, CONTRIBUTING.md "Page controls"): in the header rail after
+   the title on wide screens, else one row under the header that scrolls sideways. */
+.page-rail,
+.page-rail-controls {
   display: flex;
   flex: 1 1 auto;
+  align-items: center;
   min-width: 0;
 }
-.lineage-rail-controls .lineage-toolbar {
-  flex: 1 1 auto;
-  padding: 0 0 0 16px;
-  border-bottom: 0;
+.page-rail-controls {
+  gap: 8px;
+  padding-left: 16px;
+}
+.page-rail-row {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 16px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--cds-ui-03);
+  scrollbar-width: thin;
+}
+.page-rail-row > *,
+.page-rail-controls > * {
+  flex-shrink: 0;
+}
+.page-rail-end {
+  margin-left: auto;
+}
+/* With page controls beside it, the page's name keeps its width; the search field gives way. */
+header:has(.page-rail-controls) .page-title h1 {
+  flex-shrink: 0;
 }
 .layered-shell > main.lineage-main {
   display: flex;
@@ -2001,13 +2024,16 @@ aside {
   flex-direction: column;
   min-height: 0;
 }
+.page-rail-row > .lineage-toolbar,
+.page-rail-controls > .lineage-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .lineage-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
   min-width: 0;
-  padding: 4px 16px;
-  border-bottom: 1px solid var(--cds-ui-03);
 }
 .lineage-toolbar > .bx--btn {
   flex-shrink: 0;
@@ -2283,34 +2309,244 @@ aside {
 .lineage-card-collapsed {
   margin-left: auto;
 }
+/* The run details panel: a header pinned while the body scrolls; sections separated by rules,
+   each headed by a small label, Carbon's productive type scale. */
 .lineage-details {
   display: flex;
   flex-direction: column;
-  gap: 24px;
   min-width: 0;
   overflow: auto;
-  padding: 16px;
+  overscroll-behavior: contain;
   border-left: 1px solid var(--cds-ui-03);
   background: var(--cds-ui-01);
 }
 .lineage-details-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
   display: flex;
   align-items: flex-start;
   gap: 8px;
+  padding: 16px 8px 12px 16px;
+  border-bottom: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.lineage-details-heading {
+  flex: 1;
+  min-width: 0;
 }
 .lineage-details-header h2 {
-  flex: 1;
+  margin-bottom: 6px;
   font-size: 16px;
   line-height: 22px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+.lineage-details-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+}
+.lineage-open-run.bx--btn {
+  gap: 8px;
+  padding-right: 12px;
+  text-decoration: none;
+}
+.lineage-open-run .bx--btn__icon {
+  position: static;
+  margin: 0;
+}
+.lineage-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lineage-state::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cds-text-02);
+  content: '';
+}
+.lineage-state.state-running::before {
+  background: var(--cds-interactive-04);
+}
+.lineage-state.state-finished::before {
+  background: var(--cds-support-02);
+}
+.lineage-state.state-crashed::before,
+.lineage-state.state-failed::before {
+  background: var(--cds-support-01);
+}
+.lineage-details-body {
+  display: flex;
+  flex-direction: column;
+}
+.lineage-details-body > section,
+.lineage-details-body > * > section,
+.lineage-details-body > section.run-ledger {
+  padding: 16px;
+  border-bottom: 1px solid var(--cds-ui-03);
+}
+.lineage-details-body > section:last-child {
+  border-bottom: 0;
+}
 .lineage-details h3 {
-  margin-bottom: 8px;
-  font-size: 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
   font-weight: 600;
-  line-height: 18px;
+  line-height: 16px;
+  letter-spacing: 0.32px;
+  color: var(--cds-text-02);
   overflow-wrap: anywhere;
+}
+.lineage-details h4 {
+  margin: 16px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cds-text-02);
+}
+.lineage-details section {
+  font-size: 14px;
+  line-height: 20px;
+}
+.lineage-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lineage-fields dt {
+  margin-bottom: 2px;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.32px;
+  color: var(--cds-text-02);
+}
+.lineage-fields dd {
+  overflow-wrap: anywhere;
+}
+.lineage-fields dd.lineage-lead {
+  font-size: 16px;
+  line-height: 22px;
+}
+.lineage-fields .bx--tag {
+  margin-left: 0;
+}
+.lineage-fields .bx--tag + .lineage-hypothesis {
+  display: block;
+  margin: 4px 0 0;
+}
+.lineage-details .run-ledger {
+  margin-top: 0;
+}
+.lineage-details .lineage-journal-add {
+  margin-top: 16px;
+}
+.diff-removed + .diff-added {
+  margin-left: 2px;
+}
+.lineage-values {
+  margin-bottom: 8px;
+  font-variant-numeric: tabular-nums;
+}
+/* Word-level config diffs: the key's path muted and its last part strong, then the value with
+   removed words struck on red and added words on green. */
+.config-diff-summary {
+  margin-bottom: 8px;
+}
+.config-diff-legend {
+  padding: 0 4px;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.config-diff-legend.removed,
+.diff-removed {
+  color: var(--diff-removed-text);
+  background: var(--diff-removed-bg);
+}
+.config-diff-legend.added,
+.diff-added {
+  color: var(--diff-added-text);
+  background: var(--diff-added-bg);
+}
+.lineage-details {
+  --diff-removed-bg: #ffd7d9;
+  --diff-removed-text: #750e13;
+  --diff-added-bg: #a7f0ba;
+  --diff-added-text: #044317;
+}
+[theme='g90'] .lineage-details,
+[theme='g100'] .lineage-details {
+  --diff-removed-bg: #750e13;
+  --diff-removed-text: #ffd7d9;
+  --diff-added-bg: #044317;
+  --diff-added-text: #a7f0ba;
+}
+.diff-removed {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.config-diff {
+  border-top: 1px solid var(--cds-ui-03);
+}
+.config-diff-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--cds-ui-03);
+}
+.config-diff-key {
+  font-size: 12px;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+.config-diff-path {
+  color: var(--cds-text-02);
+}
+.config-diff-key strong {
+  font-weight: 600;
+}
+.config-diff-row.ignored .config-diff-key strong {
+  font-weight: 400;
+  color: var(--cds-text-02);
+}
+.config-diff-value {
+  max-height: 7.5em;
+  overflow: auto;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.config-diff-value > span {
+  border-radius: 2px;
+}
+.config-diff-missing {
+  margin: 0 4px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-style: italic;
+  color: var(--cds-text-02);
+}
+.lineage-compute {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  line-height: 16px;
+}
+.lineage-compute th {
+  padding: 6px 8px 6px 0;
+  font-weight: 600;
+  text-align: left;
+  color: var(--cds-text-02);
+  border-bottom: 1px solid var(--cds-ui-03);
+}
+.lineage-compute td {
+  padding: 6px 8px 6px 0;
+  vertical-align: top;
+  border-bottom: 1px solid var(--cds-ui-03);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
 }
 .lineage-details section > p + p {
   margin-top: 4px;
@@ -3839,9 +4075,10 @@ aside {
   user-select: none;
 }
 .panel-title-drag-region .chart-title {
-  padding-left: 0;
+  padding-left: 8px;
 }
-/* Only a panel with a reorder handle shifts its title to reveal the handle on hover. */
+/* A panel with a reorder handle shifts its title to reveal the handle on hover; one without
+   (on the Plans, Lineage and run pages) keeps the same inset as the workspace's. */
 .panel-title-drag-region:has(.panel-drag-handle) .chart-title {
   padding-left: 8px;
   transition: padding-left 100ms;
@@ -5903,21 +6140,290 @@ aside {
   margin-bottom: 8px;
 }
 /* Findings and Plans pages. */
-.findings-page .page-toolbar,
 .plans-heading {
   display: flex;
   align-items: center;
   gap: 16px;
   margin-bottom: 16px;
 }
-.findings-page .page-toolbar .bx--search {
+/* Findings: a sortable list beside a reading pane, each scrolling on its own. */
+.layered-shell > main.findings-main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.findings-page {
+  display: flex;
   flex: 1 1 auto;
-  max-width: 480px;
+  flex-direction: column;
+  min-height: 0;
 }
-.findings-topic {
-  margin-bottom: 32px;
+.findings-page > .bx--inline-notification {
+  margin: 8px 16px 0;
 }
-.findings-topic > h2,
+.findings-status,
+.findings-page > .empty-table {
+  padding: 16px;
+}
+.findings-search {
+  flex: 0 1 280px;
+  min-width: 160px;
+}
+.page-rail-controls .findings-search,
+.page-rail-row .findings-search {
+  flex-shrink: 1;
+}
+.page-rail-row .bx--select--inline,
+.page-rail-controls .bx--select--inline {
+  flex-shrink: 0;
+}
+.findings-layout {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+.findings-page.reading .findings-layout {
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+}
+.findings-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  container-type: inline-size;
+}
+.findings-list-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 40px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--cds-ui-03);
+}
+/* Carbon's batch actions: the bar turns into the actions while findings are checked. */
+.findings-list-bar.active {
+  color: var(--cds-text-04, #fff);
+  background: var(--cds-interactive-01);
+}
+[theme='g90'] .findings-list-bar.active,
+[theme='g100'] .findings-list-bar.active {
+  background: #0043ce;
+}
+.findings-list-bar.active .bx--btn--ghost {
+  color: var(--cds-text-04, #fff);
+}
+.findings-list-bar.active .bx--btn--ghost:hover {
+  background: color-mix(in srgb, #000 16%, transparent);
+}
+.findings-list-bar.active .bx--btn--ghost .bx--btn__icon path {
+  fill: currentColor;
+}
+.findings-bulk-count {
+  margin-right: auto;
+  font-size: 14px;
+}
+.findings-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.findings-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.findings-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--cds-ui-03);
+  height: 32px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+.findings-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--cds-text-01);
+  background: none;
+  cursor: pointer;
+}
+.findings-sort:hover {
+  background: var(--cds-hover-selected-ui, var(--cds-hover-ui));
+}
+.findings-sort:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
+}
+.findings-sort svg {
+  fill: currentColor;
+}
+.findings-table td {
+  height: 40px;
+  padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--cds-ui-03);
+}
+.findings-table tbody tr {
+  cursor: pointer;
+}
+.findings-table tbody tr:hover {
+  background: var(--cds-hover-ui);
+}
+.findings-table tbody tr.checked {
+  background: var(--cds-selected-ui);
+}
+.findings-table tbody tr[aria-selected='true'] {
+  background: var(--cds-selected-ui);
+  box-shadow: inset 3px 0 0 var(--cds-interactive-04);
+}
+.findings-table tbody tr:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
+}
+.findings-table tbody tr.ruled-out .findings-col-title {
+  color: var(--cds-text-02);
+}
+.findings-col-check {
+  width: 48px;
+  padding-left: 16px !important;
+}
+.findings-col-title {
+  width: auto;
+}
+.findings-col-topic {
+  width: 18%;
+}
+.findings-col-status {
+  width: 120px;
+}
+.findings-col-citations {
+  width: 72px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+th.findings-col-citations .findings-sort {
+  justify-content: flex-end;
+}
+.findings-col-updated {
+  width: 120px;
+  font-variant-numeric: tabular-nums;
+}
+.findings-col-by {
+  width: 14%;
+}
+.findings-check {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  vertical-align: middle;
+  accent-color: var(--cds-interactive-04);
+  cursor: pointer;
+}
+.findings-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--cds-support-02);
+}
+.findings-status-dot.status-ruled_out {
+  background: var(--cds-support-01);
+}
+/* Narrow lists drop the columns a glance needs least. */
+@container (max-width: 720px) {
+  .findings-col-by,
+  .findings-col-topic {
+    display: none;
+  }
+}
+@container (max-width: 480px) {
+  .findings-col-updated,
+  .findings-col-citations {
+    display: none;
+  }
+}
+.findings-reader {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border-left: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+}
+.findings-reader .finding.focused {
+  margin: 0;
+  padding: 16px 24px 24px;
+  border: 0;
+  box-shadow: none;
+}
+.findings-reader .finding-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  margin: -16px -24px 0;
+  padding: 16px 16px 8px 24px;
+  background: var(--cds-ui-01);
+}
+.findings-reader .finding-header h2 {
+  flex: 1;
+  min-width: 0;
+  font-size: 20px;
+  line-height: 28px;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.finding-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 16px;
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.finding-meta .bx--tag {
+  margin: 0;
+}
+.finding-cited {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--cds-ui-03);
+}
+.finding-cited h3 {
+  margin-bottom: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cds-text-02);
+}
+@media (max-width: 1055px) {
+  /* The reading pane takes the page; closing it returns to the list. */
+  .findings-page.reading .findings-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .findings-page.reading .findings-list {
+    display: none;
+  }
+  .findings-reader {
+    border-left: 0;
+  }
+}
 .plans-section > h2,
 .plans-heading > h2 {
   display: flex;
@@ -6330,7 +6836,7 @@ aside {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem 1rem;
-  padding: 0 0 0.5rem;
+  padding: 4px 0 8px 8px;
 }
 .occupancy-legend {
   display: flex;
@@ -6373,7 +6879,7 @@ aside {
   outline-offset: -2px;
 }
 .occupancy-note {
-  margin: 0 0 0.5rem;
+  margin: 0 8px 0.5rem;
   font-size: 0.75rem;
   line-height: 1.4;
   color: var(--cds-text-02);
