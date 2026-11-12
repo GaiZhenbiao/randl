@@ -52,6 +52,29 @@ try {
     title: 'Wider heads hold more boxes',
     body: 'The wide head adds **0.2** at update 300.',
     citations: [{ run: arm, update: 300, note: 'against v1' }],
+    source: { document: 'handbook', lines: [1, 3], quote: 'Wide heads hold more.' },
+  });
+  // An imported evaluation of v2, with one uploaded file and one kept on its host.
+  await call('evidence_save', {
+    project: 'test/ledger',
+    id: 'eval-v2',
+    name: 'Evaluation of v2',
+    job_type: 'evaluation',
+    created: '2026-10-05T12:00:00Z',
+    examines: [arm],
+    files: [
+      { name: 'report.json', upload: true },
+      { name: 'episode.mp4', host: 'hostA', path: '/evals/v2/episode.mp4', bytes: 2048 },
+    ],
+  });
+  // Queued after a plan that is first on the slot.
+  await call('plan_save', {
+    project: 'test/ledger',
+    id: 'v4-later',
+    name: 'v4_later',
+    host: 'hostA',
+    slot: 'a1',
+    after: 'plan:v3_next',
   });
 
   browser = await launchBrowser();
@@ -65,6 +88,7 @@ try {
   await expect(page.locator('.findings-topic h2')).toHaveText(['Model']);
   await expect(finding.locator('strong')).toHaveText('0.2');
   await expect(finding.getByRole('link', { name: 'v2_arm' })).toBeVisible();
+  await expect(finding.locator('.ledger-source')).toHaveText('From handbook, lines 1–3');
   await finding.getByRole('button', { name: 'Edit finding' }).click();
   const editor = page.getByRole('dialog', { name: 'Edit finding' });
   await editor.getByLabel('Text').fill('The wide head adds **0.2**, confirmed twice.');
@@ -108,8 +132,9 @@ try {
   await plan.getByLabel('Slot').fill('a1');
   await plan.getByLabel('Queue position').fill('1');
   await plan.getByRole('button', { name: 'Save plan' }).click();
-  await expect(page.locator('.plan-queue', { hasText: 'hostA · a1' })).toContainText('v3_next');
-  checks.push('The Plans page sets the best recipe and queues planned runs per slot');
+  const queue = page.locator('.plan-queue', { hasText: 'hostA · a1' });
+  await expect(queue.locator('.plan-card h4')).toHaveText(['v3_next', 'v4_later']);
+  checks.push('The Plans page sets the best recipe and queues planned runs per slot, in order');
 
   // Lineage: the recipe star, the dashed planned node, its plan, a journal entry and a comparison.
   await page.goto(`${origin}/test/ledger/lineage`);
@@ -131,11 +156,19 @@ try {
   await expect(details.locator('.lineage-journal')).toContainText('Collisions fell after u200.');
   await page.getByRole('button', { name: 'Fit all' }).click();
   await card('v1').click({ modifiers: ['Shift'] });
+  const evidence = details.locator('section', { hasText: 'Evidence' });
+  await expect(evidence.getByRole('button', { name: 'Evaluation of v2' })).toBeVisible();
   const compare = details.locator('.lineage-compare');
   await expect(compare.locator('tbody tr')).toHaveCount(1);
   await expect(compare.locator('tbody td').nth(1)).toHaveText('3');
   await expect(compare.locator('tbody td').nth(2)).toHaveText('-0.1333');
-  checks.push('Lineage shows the recipe, planned runs, journals, findings and matched comparisons');
+  await evidence.getByRole('button', { name: 'Evaluation of v2' }).click();
+  const files = details.locator('section', { hasText: 'Files' });
+  await expect(files.getByRole('link', { name: 'report.json' })).toBeVisible();
+  await expect(files).toContainText('episode.mp4 · hostA:/evals/v2/episode.mp4 · 2 KiB');
+  checks.push(
+    'Lineage shows the recipe, planned runs, journals, findings, evidence files and matched comparisons',
+  );
 
   // The run page shows the journal; its finding opens the Findings page at that finding.
   await page.goto(`${origin}/test/ledger/runs/v2_arm/overview`);

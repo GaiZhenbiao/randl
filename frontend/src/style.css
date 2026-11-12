@@ -6064,3 +6064,8 @@ aside {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+.ledger-source {
+  display: block;
+  font-size: 12px;
+  color: var(--cds-text-02);
+}

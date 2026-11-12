@@ -339,14 +339,20 @@ Beside the runs, each project keeps what was learned from them and what comes ne
   update or step, by their author. Entries are only ever added, and are separate from the run's
   notes.
 - **Evidence**: evaluations, diagnostics and calibration studies are runs with their own
-  `job_type` and files, naming the runs they examine in `lineage.examines`; the examined run's
-  Lineage panel lists them, and findings can cite them.
+  `job_type`, naming the runs they examine in `lineage.examines`; the examined run's Lineage
+  panel lists them and their files, and findings can cite them. `evidence_save` imports one
+  made earlier, dated when it was made, with files either uploaded to the run
+  (`PUT /upload/<entity>/<project>/<id>/<name>`) or kept as references to a host and path.
 - **Comparisons**: Lineage cards show the mean of the metric's last N values (**Recent mean
   over** in Lineage settings), and the panel of the open run compares the selected runs with it
   at matching updates: how many points match, and the mean and last difference.
 
 Each record is one tool call, also a CLI command, with a caller-chosen ID so repeating it
-changes nothing; changes are audited with their `by`:
+changes nothing; changes are audited with their `by`. Findings, journal entries, recipe
+promotions, plans and evidence may carry a `source` (`{document, lines: [first, last], quote}`),
+shown as where the record came from; plans may say what they are queued `after` (a run or
+`plan:<id>`) instead of a position; and `dryRun` reports created, updated or unchanged without
+writing:
 
 ```sh
 randl findings save --project chuanhu/AeroSeeker_Forest --id wide-heads --topic Model \
@@ -358,8 +364,8 @@ randl journal add --run RUN --update 554000 --text "Collisions fell after the LR
 ```
 
 The tools are `finding_save`, `finding_get`, `finding_delete`, `findings_list`, `recipe_set`,
-`recipe_get`, `plan_save`, `plan_delete`, `plans_list`, `journal_add`, `journal_list` and
-`runs_compare`. The Assistant is not given the ledger tools.
+`recipe_get`, `plan_save`, `plan_delete`, `plans_list`, `journal_add`, `journal_list`,
+`evidence_save` and `runs_compare`. The Assistant is not given the ledger tools.
 
 ### Project overview and server status
 

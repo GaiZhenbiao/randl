@@ -45,6 +45,7 @@ export type LineageRun = {
   created: number;
   /** The SDK's job type; evaluations and diagnostics are evidence about other runs. */
   jobType: string;
+  files: EvidenceFile[];
   /** The stored `lineage` config block, if any. */
   lineage: Record<string, Json> | null;
   /** Values of the parent keys, in the order of the settings. */
@@ -78,12 +79,21 @@ export type LineageNode = {
   plan: string | null;
   /** The runs this one examines (`lineage.examines`), as evaluations and diagnostics do. */
   examines: string[];
+  /** An imported evidence run's files (`evidence.files`): uploaded, or a host and path. */
+  files: EvidenceFile[];
   /** A parent named by the run that matched no run in the project. */
   unresolved: Unresolved | null;
   /** The config bases the run's `lineage.extends` lists; `id` is the matching run, if any. */
   bases: { kind: string; reference: string; id: string | null }[];
   /** Where the run trained: `lineage.compute` as logged (host, gpu_count, segments). */
   compute: Compute | null;
+};
+export type EvidenceFile = {
+  name: string;
+  path?: string;
+  host?: string;
+  bytes?: number;
+  upload?: boolean;
 };
 export type ComputeSegment = {
   from_update: number | null;
@@ -453,6 +463,7 @@ export function lineageNode(
     recent: null,
     ...values,
     plan: text(run.lineage?.plan),
+    files: run.files,
     examines: (Array.isArray(run.lineage?.examines) ? run.lineage.examines : [])
       .map(text)
       .filter((reference): reference is string => !!reference)

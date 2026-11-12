@@ -46,6 +46,16 @@ const configPatch = {
 const ledgerId = { type: 'string', minLength: 1, maxLength: 200, pattern: '^[^/]+$' };
 const author = { type: 'string', maxLength: 200 };
 const orNull = (value: Args) => ({ anyOf: [value, { type: 'null' }] });
+/** Where a record came from: lines of a document, optionally quoted. */
+const source = schema(
+  {
+    document: { type: 'string', minLength: 1, maxLength: 500 },
+    lines: { type: 'array', items: { type: 'integer', minimum: 0 }, minItems: 2, maxItems: 2 },
+    quote: { type: 'string', maxLength: 5000 },
+  },
+  ['document'],
+);
+const dryRun = { type: 'boolean' };
 /** Seconds since the epoch or an ISO date. */
 const when = { anyOf: [{ type: 'number' }, { type: 'string', maxLength: 64 }] };
 /** A metric key a rename may use; `_` keys belong to the SDK. */
@@ -434,6 +444,8 @@ export const toolCatalog = [
           ),
         },
         version: { type: 'integer', minimum: 0 },
+        source,
+        dryRun,
         by: author,
       },
       ['project', 'id'],
@@ -462,6 +474,8 @@ export const toolCatalog = [
         run: string,
         reason: { type: 'string', minLength: 1, maxLength: 5000 },
         since: when,
+        source,
+        dryRun,
         by: author,
       },
       ['project', 'run', 'reason'],
@@ -494,7 +508,10 @@ export const toolCatalog = [
         host: { type: 'string', maxLength: 200 },
         slot: { type: 'string', maxLength: 200 },
         queue: orNull({ type: 'integer' }),
+        after: orNull({ type: 'string', maxLength: 512 }),
         status: { type: 'string', enum: ['planned', 'cancelled'] },
+        source,
+        dryRun,
         by: author,
       },
       ['project', 'id'],
@@ -505,6 +522,43 @@ export const toolCatalog = [
     description: 'Delete a planned run.',
     agent: false,
     parameters: schema({ project: string, id: ledgerId, by: author }, ['project', 'id']),
+  },
+  {
+    name: 'evidence_save',
+    description:
+      "Import an evaluation, diagnostic or calibration as a finished run of its own, dated created (seconds or ISO), with the runs it examines (full run ids), summary numbers, config, notes, source, and its files: those marked upload are sent afterwards with PUT /upload/<entity>/<project>/<id>/<name>; the rest are kept as references to a host and path. The id is the run's id within the project; the same request again changes nothing. dryRun only reports created, updated or unchanged.",
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        id: ledgerId,
+        name: { type: 'string', maxLength: 256 },
+        job_type: { type: 'string', enum: ['evaluation', 'diagnostic', 'calibration'] },
+        created: when,
+        examines: { ...strings, maxItems: 500 },
+        summary: { type: 'object', maxProperties: 1000 },
+        config: { type: 'object', propertyNames: { pattern: '^[^_]' }, maxProperties: 500 },
+        notes: { type: 'string', maxLength: 100000 },
+        source,
+        files: {
+          type: 'array',
+          maxItems: 10000,
+          items: schema(
+            {
+              name: { type: 'string', minLength: 1, maxLength: 1024 },
+              path: { type: 'string', maxLength: 4096 },
+              host: { type: 'string', maxLength: 200 },
+              bytes: { type: 'integer', minimum: 0 },
+              upload: { type: 'boolean' },
+            },
+            ['name'],
+          ),
+        },
+        dryRun,
+        by: author,
+      },
+      ['project', 'id', 'job_type', 'created'],
+    ),
   },
   {
     name: 'journal_list',
@@ -525,6 +579,8 @@ export const toolCatalog = [
         update: { type: 'number' },
         step: { type: 'number' },
         key: ledgerId,
+        source,
+        dryRun,
         by: author,
       },
       ['run', 'text'],
@@ -784,12 +840,14 @@ export class Tools {
       }
       case 'run_metrics_rename':
         result = await this.db.call('metricsRename', a);
+        if (a.dryRun) return result;
         break;
       case 'run_metrics_rename_undo':
         result = await this.db.call('metricsRenameUndo', a);
         break;
       case 'run_history_write':
         result = await this.db.call('historyWrite', a);
+        if (a.dryRun) return result;
         break;
       case 'findings_list':
         await this.db.call('projectGet', a.project);
@@ -811,6 +869,7 @@ export class Tools {
       case 'recipe_set':
       case 'plan_save':
       case 'plan_delete':
+      case 'evidence_save':
         await this.db.call('projectGet', a.project);
         result = await this.db.call(
           {
@@ -819,12 +878,16 @@ export class Tools {
             recipe_set: 'recipeSet',
             plan_save: 'planSave',
             plan_delete: 'planDelete',
+            evidence_save: 'evidenceSave',
           }[name]!,
           a,
         );
+        // A dry run changes nothing, so it is not audited.
+        if (a.dryRun) return result;
         break;
       case 'journal_add':
         result = { ...(await this.db.call('journalAdd', a)), id: a.run };
+        if (a.dryRun) return result;
         break;
       case 'runs_compare':
         return this.db.call('runsCompare', { x: 'update', ...a });
@@ -953,6 +1016,7 @@ export class Tools {
               'run_metrics_rename_undo',
               'run_history_write',
               'journal_add',
+              'evidence_save',
             ].includes(name)
           ? [result.id]
           : removedRuns,

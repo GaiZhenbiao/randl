@@ -24,6 +24,7 @@ export type LineageNode = {
   recent: number | null;
   plan: string | null;
   examines: string[];
+  files: EvidenceFile[];
   /** Set on the stand-in node of a planned run that has not started. */
   planned?: Plan;
   unresolved: { source: string; update: number | null } | null;
@@ -62,6 +63,14 @@ export type LineageSettings = {
   ignoreKeys: string[];
   window: number;
 };
+export type Source = { document: string; lines?: [number, number]; quote?: string };
+export type EvidenceFile = {
+  name: string;
+  path?: string;
+  host?: string;
+  bytes?: number;
+  upload?: boolean;
+};
 export type Plan = {
   id: string;
   name: string;
@@ -75,6 +84,9 @@ export type Plan = {
   host: string;
   slot: string;
   queue: number | null;
+  /** The run or plan this one is queued after. */
+  after: string | null;
+  source: Source | null;
   status: 'planned' | 'cancelled';
   /** The run that carried the plan out, if any. */
   run: string | null;
@@ -82,7 +94,14 @@ export type Plan = {
   updated: number;
   by: string;
 };
-export type RecipeEvent = { id: number; run: string; since: number; reason: string; by: string };
+export type RecipeEvent = {
+  id: number;
+  run: string;
+  since: number;
+  reason: string;
+  source: Source | null;
+  by: string;
+};
 export type LineageGraph = {
   project: string;
   settings: LineageSettings;
@@ -412,6 +431,7 @@ export function withPlans(graph: LineageGraph): LineageGraph {
       recent: null,
       plan: plan.id,
       examines: [],
+      files: [],
       unresolved: null,
       bases: [],
       compute: plan.host ? { host: plan.host, gpu_count: null, segments: [] } : null,

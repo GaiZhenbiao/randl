@@ -20,7 +20,7 @@ import { metricDefinitions, definitionFor, environmentMetadata } from './run-met
 import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runtime.js';
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
-import { Ledger } from './ledger.js';
+import { Ledger, seconds } from './ledger.js';
 import {
   RunMatcher,
   acyclic,
@@ -2457,6 +2457,55 @@ export class Store {
       });
     return { plans, running };
   }
+  /**
+   * Imports an evaluation, diagnostic or calibration as a finished run of its own
+   * (`evidence_save`), dated when it was made: `lineage.examines` names the runs it examines,
+   * `evidence.files` lists its files (uploaded ones live with the run; the rest are references
+   * to a host and path). The same request again changes nothing.
+   */
+  evidenceSave(a: Row) {
+    const id = a.project + '/' + a.id,
+      [entity, project] = String(a.project).split('/'),
+      created = seconds(a.created),
+      wrap = (values: Row) =>
+        Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value }]));
+    const next = {
+      display_name: a.name ?? a.id,
+      job_type: a.job_type,
+      created,
+      notes: a.notes ?? '',
+      summary: JSON.stringify(a.summary ?? {}),
+      config: JSON.stringify({
+        ...wrap(a.config ?? {}),
+        lineage: { value: { examines: a.examines ?? [], ...(a.source ? { source: a.source } : {}) } },
+        evidence: { value: { files: a.files ?? [] } },
+      }),
+    };
+    const old = this.db
+      .prepare(
+        'SELECT display_name,job_type,created,notes,summary,config,deleted_at FROM runs WHERE id=?',
+      )
+      .get(id) as Row | undefined;
+    if (old && !old.deleted_at && (Object.keys(next) as (keyof typeof next)[]).every((key) => old[key] === next[key]))
+      return { id, status: 'unchanged' };
+    const status = old ? 'updated' : 'created';
+    if (a.dryRun) return { id, status, dryRun: true };
+    this.history.transaction(() => {
+      if (!old)
+        this.db
+          .prepare(
+            "INSERT INTO runs(id,entity,project,name,display_name,state,created,updated,started,heartbeat,finished,runtime_at,color_index) SELECT ?,?,?,?,?,'finished',?,?,?,?,?,?,coalesce(max(color_index)+1,0) FROM runs WHERE entity=? AND project=?",
+          )
+          .run(id, entity, project, a.id, next.display_name, created, created, created, created, created, created, entity, project);
+      this.db
+        .prepare(
+          'UPDATE runs SET display_name=?,job_type=?,created=?,started=?,finished=?,notes=?,summary=?,config=?,deleted_at=NULL,revision=revision+1 WHERE id=?',
+        )
+        .run(next.display_name, next.job_type, created, created, created, next.notes, next.summary, next.config, id);
+      this.history.ensureRunKey(id);
+    });
+    return { id, status };
+  }
   journalAdd(a: Row) {
     if (!this.db.prepare('SELECT 1 FROM runs WHERE id=? AND deleted_at IS NULL').get(a.run))
       throw managementError('RUN_NOT_FOUND', 'Run not found', { run: a.run }, 404);
@@ -2681,7 +2730,7 @@ export class Store {
       keys = [...settings.parentKeys, ...settings.identityKeys];
     const rows = this.db
       .prepare(
-        `SELECT id,name,display_name,state,group_name,job_type,tags,created,revision,json_extract(config,'$.lineage.value') lineage,${keys
+        `SELECT id,name,display_name,state,group_name,job_type,tags,created,revision,json_extract(config,'$.lineage.value') lineage,json_extract(config,'$.evidence.value.files') files,${keys
           .map((_, index) => `json_extract(config,?) k${index}`)
           .join(',')}${keys.length ? ',' : ''}json_extract(summary,?) latest FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL ORDER BY created`,
       )
@@ -2710,6 +2759,10 @@ export class Store {
         tags: JSON.parse(row.tags || '[]'),
         created: row.created,
         jobType: row.job_type || '',
+        // json_extract returns valid JSON; a config logged by other code may hold anything there.
+        files: [JSON.parse(row.files ?? '[]')]
+          .flat()
+          .filter((file) => file && typeof file === 'object' && typeof file.name === 'string'),
         lineage,
         parents: settings.parentKeys.map((_, index) => path(row['k' + index])),
         identities: settings.identityKeys.map((_, index) =>
