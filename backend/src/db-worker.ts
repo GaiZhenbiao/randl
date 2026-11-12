@@ -50,6 +50,7 @@ const allowed = new Set([
   'plans',
   'journalAdd',
   'journal',
+  'runsCompare',
   'runFields',
   'lineage',
   'configDiff',

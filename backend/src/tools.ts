@@ -294,6 +294,7 @@ export const toolCatalog = [
         parentKeys: lineageKeys,
         identityKeys: lineageKeys,
         ignoreKeys: lineageKeys,
+        window: { type: 'integer', minimum: 1, maximum: 100 },
       },
       ['id'],
     ),
@@ -526,6 +527,20 @@ export const toolCatalog = [
         by: author,
       },
       ['run', 'text'],
+    ),
+  },
+  {
+    name: 'runs_compare',
+    description:
+      "Compare runs with a baseline run on one metric at matched points: where both logged the same value of x (a logged field such as update, the default, or _step). Returns each run's matched count, mean and last difference, and up to 200 matched points.",
+    parameters: schema(
+      {
+        baseline: string,
+        runs: { ...strings, minItems: 1, maxItems: 100 },
+        metric: string,
+        x: string,
+      },
+      ['baseline', 'runs', 'metric'],
     ),
   },
   {
@@ -810,6 +825,8 @@ export class Tools {
       case 'journal_add':
         result = { ...(await this.db.call('journalAdd', a)), id: a.run };
         break;
+      case 'runs_compare':
+        return this.db.call('runsCompare', { x: 'update', ...a });
       case 'runs_config_diff': {
         const run = await this.db.call('run', a.to);
         if (!run) throw managementError('RUN_NOT_FOUND', 'Run not found');

@@ -245,3 +245,73 @@ test('the CLI saves findings, sets the recipe, plans runs and adds journal entri
     1,
   );
 });
+
+test('the lineage graph carries the recipe, open plans, evidence and recent means', async (t) => {
+  const { server, call } = await fixture(t);
+  const log = (id, rows) =>
+    server.db.call('ingest', id, {
+      files: {
+        'wandb-history.jsonl': { offset: 0, content: rows.map((row) => JSON.stringify(row)) },
+      },
+    });
+  const audit = 'audit/x';
+  // Audits at updates 100..500: base at 0.1..0.5, arm 0.05 above where both audited.
+  await log(
+    'e/p/base',
+    [1, 2, 3, 4, 5].map((i) => ({ _step: i * 10, update: i * 100, [audit]: i / 10 })),
+  );
+  await log(
+    'e/p/arm',
+    [2, 3, 4, 6].map((i) => ({ _step: i * 7, update: i * 100, [audit]: i / 10 + 0.05 })),
+  );
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'carried',
+    displayName: 'v2',
+    config: { lineage: { value: { plan: 'p-carried', parent: null } } },
+  });
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'eval',
+    displayName: 'eval of arm',
+    config: { lineage: { value: { examines: ['arm'] } } },
+  });
+  await call('project_lineage_settings_update', { id: 'e/p', metric: audit, window: 2 });
+  await call('recipe_set', { project: 'e/p', run: 'e/p/arm', reason: 'best' });
+  await call('plan_save', { project: 'e/p', id: 'p-open', name: 'v3', parent: 'e/p/arm' });
+  await call('plan_save', { project: 'e/p', id: 'p-carried', name: 'v2-planned' });
+  await call('plan_save', { project: 'e/p', id: 'p-named', name: 'base' });
+  const graph = await call('project_lineage', { id: 'e/p' });
+  assert.equal(graph.recipe.run, 'e/p/arm');
+  assert.deepEqual(
+    graph.plans.map((plan) => plan.id),
+    ['p-open'],
+    'carried-out plans drop out',
+  );
+  const node = (id) => graph.nodes.find((item) => item.id === id);
+  assert.ok(Math.abs(node('e/p/base').recent - 0.45) < 1e-9, 'mean of the last 2 audits');
+  assert.deepEqual(node('e/p/eval').examines, ['e/p/arm']);
+  assert.equal(node('e/p/carried').plan, 'p-carried');
+
+  const compared = await call('runs_compare', {
+    baseline: 'e/p/base',
+    runs: ['e/p/arm'],
+    metric: audit,
+  });
+  const [arm] = compared.runs;
+  assert.equal(arm.matched, 3);
+  assert.ok(Math.abs(arm.meanDiff - 0.05) < 1e-9);
+  assert.deepEqual(
+    arm.points.map((point) => point.x),
+    [200, 300, 400],
+  );
+  const bySteps = await call('runs_compare', {
+    baseline: 'e/p/base',
+    runs: ['e/p/arm'],
+    metric: audit,
+    x: '_step',
+  });
+  assert.equal(bySteps.runs[0].matched, 0, 'steps differ between the runs');
+});

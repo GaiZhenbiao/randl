@@ -16,6 +16,8 @@ export type LineageSettings = {
   identityKeys: string[];
   /** Config keys left out of diffs; `*` matches any characters. */
   ignoreKeys: string[];
+  /** How many of the metric's last values the recent mean on each card averages. */
+  window: number;
 };
 export const lineageDefaults: LineageSettings = {
   metric: '',
@@ -24,6 +26,7 @@ export const lineageDefaults: LineageSettings = {
   parentKeys: ['rl.checkpoint.initialize_from', 'rl.checkpoint.resume'],
   identityKeys: ['rl.checkpoint.save_dir', 'rl.checkpoint.run_name'],
   ignoreKeys: ['*save_dir', '*run_name', '*runs_root', '*_path', '*_dir', '*.name', '*.resume'],
+  window: 5,
 };
 /** At most this many changed keys travel on each edge; the side panel requests the full diff. */
 export const edgeChangeLimit = 12;
@@ -40,6 +43,8 @@ export type LineageRun = {
   group: string;
   tags: string[];
   created: number;
+  /** The SDK's job type; evaluations and diagnostics are evidence about other runs. */
+  jobType: string;
   /** The stored `lineage` config block, if any. */
   lineage: Record<string, Json> | null;
   /** Values of the parent keys, in the order of the settings. */
@@ -64,8 +69,15 @@ export type LineageNode = {
   /** Why the verdict was given (`lineage.verdict.reason`). */
   verdictReason: string | null;
   recipe: Json | null;
+  jobType: string;
   latest: number | null;
   best: number | null;
+  /** The mean of the metric's last `window` values. */
+  recent: number | null;
+  /** The planned run this run carries out (`lineage.plan`). */
+  plan: string | null;
+  /** The runs this one examines (`lineage.examines`), as evaluations and diagnostics do. */
+  examines: string[];
   /** A parent named by the run that matched no run in the project. */
   unresolved: Unresolved | null;
   /** The config bases the run's `lineage.extends` lists; `id` is the matching run, if any. */
@@ -411,7 +423,7 @@ export function basesOf(run: LineageRun, matcher: RunMatcher) {
 }
 export function lineageNode(
   run: LineageRun,
-  values: { latest: number | null; best: number | null },
+  values: { latest: number | null; best: number | null; recent?: number | null },
   matcher: RunMatcher,
 ): LineageNode {
   const tags = new Set(run.tags.map((tag) => tag.toLowerCase()));
@@ -437,7 +449,18 @@ export function lineageNode(
     result: text(run.lineage?.result),
     verdictReason: text(object(run.lineage?.verdict)?.reason),
     recipe: run.lineage?.recipe ?? null,
+    jobType: run.jobType,
+    recent: null,
     ...values,
+    plan: text(run.lineage?.plan),
+    examines: (Array.isArray(run.lineage?.examines) ? run.lineage.examines : [])
+      .map(text)
+      .filter((reference): reference is string => !!reference)
+      .map((reference) => {
+        const match = matcher.named(run, [reference], reference);
+        return match && match !== 'self' ? match.id : null;
+      })
+      .filter((id): id is string => !!id),
     unresolved: null,
     bases: basesOf(run, matcher),
     compute: computeOf(run.lineage),

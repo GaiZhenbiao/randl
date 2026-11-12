@@ -778,6 +778,28 @@ export class HistoryStore {
       ).get(r, m, r, m) as Row
     ).v;
   }
+  /** A series' last `count` values, oldest first, decoding only the blocks they are in. */
+  lastValues(run: Key, metric: Key, count: number): number[] {
+    const r = this.run(run),
+      m = this.metric(metric);
+    const values = (
+      this.sql('SELECT value FROM point_tail WHERE run=? AND metric=? ORDER BY step DESC LIMIT ?').all(
+        r,
+        m,
+        count,
+      ) as Row[]
+    ).map((row) => row.value as number);
+    if (values.length < count)
+      for (const block of this.sql(
+        'SELECT * FROM point_blocks WHERE run=? AND metric=? ORDER BY first DESC',
+      ).iterate(r, m) as Iterable<PointBlock & Row>) {
+        const decoded = decodePoints(block).values;
+        for (let index = decoded.length - 1; index >= 0 && values.length < count; index--)
+          values.push(decoded[index]);
+        if (values.length >= count) break;
+      }
+    return values.reverse();
+  }
   lastPoint(run: Key, metric: Key): Point | null {
     const r = this.run(run),
       m = this.metric(metric);

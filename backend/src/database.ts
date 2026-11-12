@@ -2640,7 +2640,7 @@ export class Store {
       keys = [...settings.parentKeys, ...settings.identityKeys];
     const rows = this.db
       .prepare(
-        `SELECT id,name,display_name,state,group_name,tags,created,revision,json_extract(config,'$.lineage.value') lineage,${keys
+        `SELECT id,name,display_name,state,group_name,job_type,tags,created,revision,json_extract(config,'$.lineage.value') lineage,${keys
           .map((_, index) => `json_extract(config,?) k${index}`)
           .join(',')}${keys.length ? ',' : ''}json_extract(summary,?) latest FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL ORDER BY created`,
       )
@@ -2668,6 +2668,7 @@ export class Store {
         group: row.group_name || '',
         tags: JSON.parse(row.tags || '[]'),
         created: row.created,
+        jobType: row.job_type || '',
         lineage,
         parents: settings.parentKeys.map((_, index) => path(row['k' + index])),
         identities: settings.identityKeys.map((_, index) =>
@@ -2687,13 +2688,21 @@ export class Store {
       created = new Map(runs.map((run) => [run.id, run.created])),
       nodes: LineageNode[] = [],
       found: LineageEdge[] = [];
+    const due = slicer();
     for (const [index, run] of runs.entries()) {
       const extent = extents.get(run.id),
-        latest = rows[index].latest;
-      const node = lineageNode(run, {
-        latest: typeof latest === 'number' && settings.metric ? latest : null,
-        best: extent ? (settings.goal === 'min' ? extent.min : extent.max) : null,
-      }, matcher);
+        latest = rows[index].latest,
+        recent = extent ? this.history.lastValues(run.id, settings.metric, settings.window) : [];
+      const node = lineageNode(
+        run,
+        {
+          latest: typeof latest === 'number' && settings.metric ? latest : null,
+          best: extent ? (settings.goal === 'min' ? extent.min : extent.max) : null,
+          recent: recent.length ? recent.reduce((sum, value) => sum + value, 0) / recent.length : null,
+        },
+        matcher,
+      );
+      if (due()) yield;
       nodes.push(node);
       const parent = resolveParent(run, matcher, settings);
       if (!parent) continue;
@@ -2759,17 +2768,69 @@ export class Store {
         .sort((a, b) => frequency.get(a)! - frequency.get(b)! || (a < b ? -1 : 1))
         .slice(0, edgeChangeLimit);
     }
+    // Planned runs not yet carried out: no run names the plan or has its name.
+    const planned = new Set(nodes.map((node) => node.plan).filter(Boolean)),
+      names = new Set(nodes.map((node) => node.display_name));
+    const plans = this.ledger
+      .plans(project)
+      .filter((plan) => plan.status === 'planned' && !planned.has(plan.id) && !names.has(plan.name));
     return {
       project,
       settings,
       nodes,
       edges,
+      plans,
+      recipe: this.ledger.recipe(project).current,
       counts: {
         runs: nodes.length,
         explicit: edges.filter((edge) => edge.explicit).length,
         matched: edges.filter((edge) => !edge.explicit).length,
         unresolved: nodes.filter((node) => node.unresolved).length,
       },
+    };
+  }
+  /**
+   * Runs against a baseline at matched values of a logged field (`runs_compare`): each run's
+   * metric paired with the baseline's where both logged the same `x` (`update` by default, or
+   * `_step`), with the count, mean and last difference.
+   */
+  runsCompare(a: Row) {
+    const pairs = (id: string) => {
+      const values = this.history.series(id, a.metric),
+        result = new Map<number, number>();
+      if (a.x === '_step') {
+        values.steps.forEach((step, index) => result.set(step, values.values[index]));
+        return result;
+      }
+      const xs = this.history.series(id, a.x),
+        byStep = new Map<number, number>();
+      xs.steps.forEach((step, index) => byStep.set(step, xs.values[index]));
+      values.steps.forEach((step, index) => {
+        const x = byStep.get(step);
+        if (x !== undefined) result.set(x, values.values[index]);
+      });
+      return result;
+    };
+    const base = pairs(a.baseline);
+    return {
+      baseline: a.baseline,
+      metric: a.metric,
+      x: a.x,
+      runs: (a.runs as string[]).map((run) => {
+        const matched = [...pairs(run)]
+          .filter(([x]) => base.has(x))
+          .sort((left, right) => left[0] - right[0])
+          .map(([x, value]) => ({ x, value, baseline: base.get(x)!, diff: value - base.get(x)! }));
+        return {
+          run,
+          matched: matched.length,
+          meanDiff: matched.length
+            ? matched.reduce((sum, point) => sum + point.diff, 0) / matched.length
+            : null,
+          last: matched.at(-1) ?? null,
+          points: matched.slice(-200),
+        };
+      }),
     };
   }
   /** Every config key whose value differs between two runs, marking those the ignore list hides. */
