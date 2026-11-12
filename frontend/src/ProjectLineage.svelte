@@ -338,6 +338,12 @@
     const onControl = !!(event.target as Element).closest('button, a');
     if (event.pointerType === 'mouse' && (event.button !== 0 || onControl)) return;
     const at = local(event);
+    // A drag on the canvas selects runs or pans, never text: no text selection starts, and any
+    // existing one (in the side panel, say) is cleared.
+    if (event.pointerType === 'mouse') {
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+    }
     if (event.pointerType === 'mouse' && !event.shiftKey) {
       lasso = { x1: at.x, y1: at.y, x2: at.x, y2: at.y, add: event.ctrlKey || event.metaKey };
       (event.currentTarget as Element).setPointerCapture(event.pointerId);
@@ -794,6 +800,7 @@
       class="lineage-viewport"
       class:pan-ready={shiftHeld}
       class:panning
+      class:dragging={!!lasso || panning}
       bind:this={viewport}
       role="presentation"
       onpointerdown={pointerDown}
