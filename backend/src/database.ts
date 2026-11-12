@@ -640,6 +640,8 @@ export class Store {
     type Wanted = {
       step?: number;
       match?: Record<string, string | number | boolean>;
+      /** Which of several matching records: the one with the smallest or largest `_step`. */
+      pick?: 'first' | 'last';
       values: Record<string, number>;
     };
     const { key } = this.editableRun(args.id),
@@ -705,9 +707,21 @@ export class Store {
       results: Row[] = [];
     const taken = new Set(steps);
     for (const [index, row] of rows.entries()) {
-      const found = hits[index];
+      let found = hits[index];
+      // A resumed run can log one update twice; `pick` chooses the record by its step.
+      if (row.match && found.length > 1 && row.pick) {
+        const steps = found.map(({ record, offset }) => historyStep(record, offset, false)),
+          chosen = steps.indexOf((row.pick === 'last' ? Math.max : Math.min)(...steps));
+        found = hits[index] = [found[chosen]];
+      }
       if (row.match && found.length > 1) {
-        results.push({ row: index, status: 'refused', reason: 'ambiguous', matches: found.length });
+        results.push({
+          row: index,
+          status: 'refused',
+          reason: 'ambiguous',
+          matches: found.length,
+          steps: found.map(({ record, offset }) => historyStep(record, offset, false)),
+        });
         continue;
       }
       if (!found.length) {

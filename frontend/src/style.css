@@ -2073,6 +2073,11 @@ aside {
 .lineage-viewport.panning {
   cursor: grabbing;
 }
+/* No text is selected while a box or a pan is being dragged. */
+.lineage-viewport.dragging,
+.lineage-viewport.dragging * {
+  user-select: none;
+}
 .lineage-empty {
   padding: 32px 16px;
   color: var(--cds-text-02);

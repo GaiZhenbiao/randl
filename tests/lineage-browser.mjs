@@ -372,6 +372,8 @@ try {
   };
   await drag(...(await around(['v101', 'v102'])));
   await expect(page.locator('.lineage-card.picked')).toHaveCount(2);
+  // Dragging across cards selects them, not their text.
+  assert.equal(await page.evaluate(() => window.getSelection().toString()), '');
   await drag(...(await around(['v100'])), 'Control');
   await expect(page.locator('.lineage-card.picked')).toHaveCount(3);
   // Without Ctrl a new box replaces the selection.
