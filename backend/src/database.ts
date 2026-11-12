@@ -236,6 +236,67 @@ export class Store {
     })();
     return this.run(args.id);
   }
+  /**
+   * Changes a stored run's config keys, tags or notes and nothing else: no state, runtime,
+   * history, summary or snapshot change (the `run_metadata_update` tool). `config` replaces
+   * top-level keys (null removes one); `configMerge` deep-merges objects into them (null
+   * removes a nested key). Values are stored in W&B's `{value}` layout. A request that
+   * changes nothing leaves the revision alone, so retries are harmless.
+   */
+  runMetadataUpdate(args: Row) {
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare('SELECT config,tags,notes FROM runs WHERE id=? AND deleted_at IS NULL')
+        .get(args.id) as Row | undefined;
+      if (!row) throw managementError('RUN_NOT_FOUND', 'Run not found', { run: args.id }, 404);
+      const config = JSON.parse(row.config),
+        unwrap = (key: string) => {
+          const stored = config[key];
+          return stored && typeof stored === 'object' && 'value' in stored ? stored.value : stored;
+        };
+      const merge = (target: any, patch: any): any => {
+        if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+        const result =
+          target && typeof target === 'object' && !Array.isArray(target) ? { ...target } : {};
+        for (const [key, value] of Object.entries(patch))
+          if (value === null) delete result[key];
+          else result[key] = merge(result[key], value);
+        return result;
+      };
+      for (const [key, value] of Object.entries(args.config ?? {}))
+        if (value === null) delete config[key];
+        else config[key] = { ...config[key], value };
+      for (const [key, value] of Object.entries(args.configMerge ?? {}))
+        config[key] = { ...config[key], value: merge(unwrap(key), value) };
+      let tags: string[] = args.tags ?? JSON.parse(row.tags);
+      const removed = new Set(args.removeTags ?? []);
+      tags = [...new Set([...tags, ...(args.addTags ?? [])].map((tag) => tag.trim()))].filter(
+        (tag) => tag && !removed.has(tag),
+      );
+      const next = {
+        config: JSON.stringify(config),
+        tags: JSON.stringify(tags),
+        notes: args.notes ?? row.notes,
+      };
+      const changed =
+        next.config !== row.config || next.tags !== row.tags || next.notes !== row.notes;
+      if (changed)
+        this.db
+          .prepare('UPDATE runs SET config=?,tags=?,notes=?,revision=revision+1 WHERE id=?')
+          .run(next.config, next.tags, next.notes, args.id);
+      return {
+        id: args.id,
+        changed,
+        config: Object.fromEntries(
+          Object.keys(config)
+            .filter((key) => !key.startsWith('_'))
+            .map((key) => [key, unwrap(key)]),
+        ),
+        tags,
+        notes: next.notes,
+      };
+    })();
+  }
   private presentRun(row:Row|undefined,now=Date.now()/1000){
     if(row&&row.state==='running'&&row.snapshot_at==null){row.runtime+=Math.max(0,now-(row.runtime_at??now));row.runtime_at=now;}else if(row&&!row.runtime_reported&&row.runtime===0)row.runtime=null;
     return row;
@@ -2085,7 +2146,7 @@ export class Store {
       const node = lineageNode(run, {
         latest: typeof latest === 'number' && settings.metric ? latest : null,
         best: extent ? (settings.goal === 'min' ? extent.min : extent.max) : null,
-      });
+      }, matcher);
       nodes.push(node);
       const parent = resolveParent(run, matcher, settings);
       if (!parent) continue;
@@ -2095,6 +2156,7 @@ export class Store {
           source: parent.id,
           target: run.id,
           relation: parent.relation,
+          traits: parent.traits,
           update: parent.update,
           explicit: parent.explicit,
           ambiguous: parent.ambiguous,

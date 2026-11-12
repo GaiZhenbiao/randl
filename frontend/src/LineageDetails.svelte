@@ -181,6 +181,10 @@
             })}
         · {parentEdge.explicit ? $t('lineage.panel.explicit') : $t('lineage.panel.matched')}
       </p>
+      {#if parentEdge.traits.length}<p class="lineage-traits">
+          {#each parentEdge.traits as trait (trait)}<Tag size="sm" type="outline">{trait}</Tag
+            >{/each}
+        </p>{/if}
       {#if parentEdge.ambiguous}<p class="lineage-warning">
           <WarningAlt size={16} />{$t('lineage.panel.ambiguous')}
         </p>{/if}
@@ -190,7 +194,51 @@
         })}
       </p>
     {:else}<p class="lineage-muted">{$t('lineage.panel.noParent')}</p>{/if}
+    {#if node.bases.length}<h3>{$t('lineage.panel.bases')}</h3>
+      <ul class="lineage-children">
+        {#each node.bases as base (base.kind + base.reference)}<li>
+            {#if base.id}<button
+                type="button"
+                class="lineage-link"
+                onclick={() => onSelect(base.id!)}>{base.reference}</button
+              >{:else}<code>{base.reference}</code>{/if}
+          </li>{/each}
+      </ul>{/if}
   </section>
+
+  {#if node.compute?.segments.length}<section>
+      <h3>{$t('lineage.compute.title')}</h3>
+      <dl class="lineage-diff">
+        {#each node.compute.segments as segment, position (position)}<div class="lineage-diff-row">
+            <dt>
+              {segment.to_update === null
+                ? $t('lineage.compute.open', {
+                    from: segment.from_update === null ? '–' : $number(segment.from_update),
+                  })
+                : $t('lineage.compute.range', {
+                    from: segment.from_update === null ? '–' : $number(segment.from_update),
+                    to: $number(segment.to_update),
+                  })}
+            </dt>
+            <dd>
+              <span class="lineage-diff-run">{$t('lineage.compute.host')}</span>
+              <span>{[segment.host, segment.slot].filter(Boolean).join(' · ') || '–'}</span>
+            </dd>
+            <dd>
+              <span class="lineage-diff-run">{$t('lineage.compute.gpus')}</span>
+              <span
+                >{[
+                  segment.gpu_count === null ? '' : segment.gpu_count + '×',
+                  segment.gpu_model,
+                  segment.gpu_ids?.length ? '(' + segment.gpu_ids.join(', ') + ')' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ') || '–'}</span
+              >
+            </dd>
+          </div>{/each}
+      </dl>
+    </section>{/if}
 
   {#if node.hypothesis || node.recipe !== null}<section>
       {#if node.hypothesis}<h3>{$t('lineage.panel.hypothesis')}</h3>

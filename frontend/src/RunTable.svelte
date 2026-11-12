@@ -35,6 +35,7 @@
   import TrashCan from 'carbon-icons-svelte/lib/TrashCan.svelte';
   import StopFilled from 'carbon-icons-svelte/lib/StopFilled.svelte';
   import TagIcon from 'carbon-icons-svelte/lib/Tag.svelte';
+  import DecisionTree from 'carbon-icons-svelte/lib/DecisionTree.svelte';
   import Download from 'carbon-icons-svelte/lib/Download.svelte';
   import ContextPopover from './ContextPopover.svelte';
   import ColumnPicker from './ColumnPicker.svelte';
@@ -62,6 +63,7 @@
     sort = '',
     onSortColumn,
     onManage,
+    onlineage,
     restorePosition = null,
     onrestored,
   }: {
@@ -69,6 +71,8 @@
     sort?: string;
     onSortColumn: (field: string) => void;
     onManage: (action: string, ids: string[], tags?: string[]) => Promise<void>;
+    /** Opens the Lineage page with these runs selected. */
+    onlineage: (ids: string[]) => void;
     restorePosition?: { top: number; run?: string } | null;
     onrestored: () => void;
     runs: Run[];
@@ -433,6 +437,13 @@
               selectedIds.has(run.id) && run.state === 'running' && run.snapshot_at == null && !run.stop_requested,
           )}
         on:click={() => manage('stop')}>{$t('runs.table.actions.stop')}</Button
+      >
+      <Button
+        kind="ghost"
+        size="small"
+        icon={narrow ? undefined : DecisionTree}
+        disabled={bulkBusy}
+        on:click={() => onlineage(selectedRuns)}>{$t('runs.table.actions.lineage')}</Button
       >
       <Button
         kind="danger-ghost"

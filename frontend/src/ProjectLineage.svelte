@@ -1,19 +1,26 @@
 <script lang="ts">
   // The Lineage page (README "Lineage"): runs as cards, linked from the run whose checkpoint
-  // each started from. The server derives the graph; this page filters, lays out and explains it.
+  // each started from. The server derives the graph; this page filters, lays out and explains
+  // it, and hands chosen runs to the workspace for comparison.
   import { onMount, tick, untrack } from 'svelte';
   import { Button, Dropdown, InlineNotification, Search, Checkbox } from 'carbon-components-svelte';
   import ZoomIn from 'carbon-icons-svelte/lib/ZoomIn.svelte';
   import ZoomOut from 'carbon-icons-svelte/lib/ZoomOut.svelte';
-  import CenterToFit from 'carbon-icons-svelte/lib/CenterToFit.svelte';
+  import FitToScreen from 'carbon-icons-svelte/lib/FitToScreen.svelte';
+  import InProgress from 'carbon-icons-svelte/lib/InProgress.svelte';
   import SettingsAdjust from 'carbon-icons-svelte/lib/SettingsAdjust.svelte';
+  import ChartLine from 'carbon-icons-svelte/lib/ChartLine.svelte';
   import { tool, apiMessage } from './api';
   import { t, number, type Message } from './i18n';
+  import { runPalette } from './run-colors';
   import type { Plugin, Run } from './types';
   import LineageDetails from './LineageDetails.svelte';
   import LineageSettingsModal from './LineageSettings.svelte';
   import LineageCard from './LineageCard.svelte';
   import {
+    boundsOf,
+    cardsIn,
+    descendants,
     edgePath,
     indexGraph,
     layoutGraph,
@@ -38,6 +45,7 @@
     colors,
     dark,
     onRun,
+    onCompare,
   }: {
     project: string;
     runs: Run[];
@@ -46,20 +54,58 @@
     colors: Record<string, string>;
     dark: boolean;
     onRun: (run: Run) => void;
+    /** Opens the workspace with exactly these runs shown. */
+    onCompare: (ids: string[]) => void;
   } = $props();
 
+  // The page's choices for a project, kept in this browser.
+  type ColorBy = 'run' | 'host';
+  const prefsKey = untrack(() => 'randl.lineage:' + project);
+  function readPrefs(): { axis?: Axis; colorBy?: ColorBy; filters?: Partial<Filters> } {
+    try {
+      return JSON.parse(localStorage.getItem(prefsKey) || '{}');
+    } catch {
+      return {};
+    }
+  }
+  const prefs = readPrefs();
+  const params = new URL(location.href).searchParams,
+    prefix = untrack(() => project + '/');
   let graph = $state.raw<LineageGraph | null>(null),
     error = $state<Message>(''),
     filters = $state<Filters>({
       search: '',
       group: '',
       tag: '',
-      collapseRejected: false,
-      showIsolated: false,
+      host: '',
+      collapseRejected: prefs.filters?.collapseRejected ?? false,
+      showIsolated: prefs.filters?.showIsolated ?? false,
     }),
-    axis = $state<Axis>('depth'),
-    selected = $state(new URL(location.href).searchParams.get('run') || ''),
+    axis = $state<Axis>(prefs.axis ?? 'depth'),
+    colorBy = $state<ColorBy>(prefs.colorBy ?? 'run'),
+    // The run whose details are open (`?run=`), and the runs chosen to compare (`?select=`).
+    selected = $state(params.get('run') || ''),
+    picked = $state(
+      new Set(
+        (params.get('select') || '')
+          .split(',')
+          .filter(Boolean)
+          .map((name) => prefix + name),
+      ),
+    ),
     settingsOpen = $state(false);
+  $effect(() => {
+    const value = {
+      axis,
+      colorBy,
+      filters: { collapseRejected: filters.collapseRejected, showIsolated: filters.showIsolated },
+    };
+    try {
+      localStorage.setItem(prefsKey, JSON.stringify(value));
+    } catch {
+      // Private windows may refuse storage; the page works without it.
+    }
+  });
 
   // Live run updates refresh the graph at most every ten seconds.
   const refreshInterval = 10_000;
@@ -106,11 +152,30 @@
   let shownEdges = $derived(
     graph?.edges.filter((edge) => shownSet.has(edge.source) && shownSet.has(edge.target)) ?? [],
   );
-  let groups = $derived(
-    [...new Set(graph?.nodes.map((node) => node.group).filter(Boolean))].sort(),
+  // Config-base references (`lineage.extends`) between drawn runs: weaker links, not laid out.
+  let baseEdges = $derived(
+    graph?.nodes.flatMap((node) =>
+      shownSet.has(node.id)
+        ? node.bases
+            .filter((base) => base.id && base.id !== index?.parent.get(node.id)?.source)
+            .filter((base) => shownSet.has(base.id!))
+            .map((base) => ({ source: base.id!, target: node.id }))
+        : [],
+    ) ?? [],
   );
-  let tags = $derived([...new Set(graph?.nodes.flatMap((node) => node.tags))].sort());
+  const distinct = (values: (string | null | undefined)[]) =>
+    [...new Set(values.filter((value): value is string => !!value))].sort();
+  let groups = $derived(distinct(graph?.nodes.map((node) => node.group) ?? []));
+  let tags = $derived(distinct(graph?.nodes.flatMap((node) => node.tags) ?? []));
+  let hosts = $derived(distinct(graph?.nodes.map((node) => node.compute?.host) ?? []));
   const runById = $derived(new Map(runs.map((run) => [run.id, run])));
+  // Hosts take the run palette in name order, so a host keeps its colour between visits.
+  function swatch(id: string) {
+    if (colorBy === 'run') return colors[id];
+    const host = index?.nodes.get(id)?.compute?.host;
+    if (!host) return undefined;
+    return runPalette[hosts.indexOf(host) % runPalette.length][dark ? 'dark' : 'light'];
+  }
 
   // Layout runs only when the drawn runs, their links or the axis change, not on live values.
   let layout = $state.raw<Layout | null>(null);
@@ -134,23 +199,25 @@
       layout = layoutGraph(dagre, ids, edges, along, start);
       if (first) {
         await tick();
-        // Open on the selected run, else the newest linked run, at a readable size.
-        const children = new Set(edges.map((edge) => edge.target)),
-          newest = ids.filter((id) => children.has(id)).at(-1);
-        const focus = selected && layout.positions.has(selected) ? selected : newest;
-        if (focus) centre(focus, 0.8);
-        else fit();
+        if (selected && layout.positions.has(selected)) centre(selected, 1);
+        else if (!focusRunning()) {
+          // Without running runs, the newest linked run.
+          const children = new Set(edges.map((edge) => edge.target)),
+            newest = ids.filter((id) => children.has(id)).at(-1) ?? ids.at(-1);
+          if (newest) centre(newest, 1);
+        }
       }
     })();
   });
 
-  // Pan and zoom: the canvas is translated and scaled inside a clipped viewport.
+  // Pan and zoom: the canvas is translated and scaled inside a clipped viewport. The page
+  // opens at 100%, where card text is the interface's normal size.
   let viewport = $state<HTMLDivElement>(),
     scale = $state(1),
     tx = $state(16),
     ty = $state(16);
-  const minScale = 0.15,
-    maxScale = 2;
+  const minScale = 0.1,
+    maxScale = 2.5;
   function zoomAt(factor: number, cx: number, cy: number) {
     const next = Math.min(maxScale, Math.max(minScale, scale * factor));
     tx = cx - ((cx - tx) * next) / scale;
@@ -160,23 +227,53 @@
   function zoom(factor: number) {
     if (viewport) zoomAt(factor, viewport.clientWidth / 2, viewport.clientHeight / 2);
   }
-  function fit() {
-    if (!layout || !viewport) return;
+  /** Shows a canvas box centred, at a scale if given, else the largest up to 100% that fits. */
+  function frame(box: { x: number; y: number; right: number; bottom: number }, at?: number) {
+    if (!viewport) return;
     const margin = 32,
       width = viewport.clientWidth - margin * 2,
       height = viewport.clientHeight - margin * 2;
-    scale = Math.min(1, Math.max(minScale, Math.min(width / layout.width, height / layout.height)));
-    tx = margin + Math.max(0, (width - layout.width * scale) / 2);
-    ty = margin;
+    scale =
+      at ??
+      Math.min(
+        1,
+        Math.max(minScale, Math.min(width / (box.right - box.x), height / (box.bottom - box.y))),
+      );
+    tx = viewport.clientWidth / 2 - ((box.x + box.right) / 2) * scale;
+    ty = viewport.clientHeight / 2 - ((box.y + box.bottom) / 2) * scale;
+  }
+  function fit() {
+    if (layout) frame({ x: 0, y: 0, right: layout.width, bottom: layout.height });
   }
   function centre(id: string, at: number) {
-    const position = layout?.positions.get(id);
-    if (!position || !viewport) return;
-    scale = at;
-    tx = viewport.clientWidth / 2 - (position.x + nodeWidth / 2) * scale;
-    ty = viewport.clientHeight / 2 - (position.y + nodeHeight / 2) * scale;
+    const box = layout && boundsOf(layout.positions, [id]);
+    if (box) frame(box, at);
   }
-  /** Pans so a run's card is in view, at the given scale if any. */
+  let runningIds = $derived(
+    (visible?.shown ?? []).filter((id) => index?.nodes.get(id)?.state === 'running'),
+  );
+  /**
+   * Shows the running runs at 100%: all of them when they fit, else the one that most recently
+   * reported. Returns whether any is drawn.
+   */
+  function focusRunning() {
+    if (!layout || !viewport || !runningIds.length) return false;
+    const box = boundsOf(layout.positions, runningIds)!;
+    if (
+      box.right - box.x <= viewport.clientWidth - 64 &&
+      box.bottom - box.y <= viewport.clientHeight - 64
+    )
+      frame(box, 1);
+    else {
+      const latest = (id: string) => runById.get(id)?.heartbeat ?? runById.get(id)?.updated ?? 0;
+      centre(
+        runningIds.reduce((a, b) => (latest(b) > latest(a) ? b : a)),
+        1,
+      );
+    }
+    return true;
+  }
+  /** Pans so a run's card is in view. */
   function reveal(id: string) {
     const position = layout?.positions.get(id);
     if (!position || !viewport) return;
@@ -187,45 +284,156 @@
     if (x < 0 || y < 0 || x + w > viewport.clientWidth || y + h > viewport.clientHeight)
       centre(id, scale);
   }
-  let drag: { x: number; y: number; tx: number; ty: number; id: number } | null = null;
+
+  // Gestures. Two-finger touchpad scrolling pans; a pinch (which browsers send as wheel events
+  // with ctrlKey, or as Safari gesture events) zooms around the fingers; a mouse wheel pans and
+  // Ctrl+wheel zooms. On touch screens one finger pans and two pinch. Shift+drag with a mouse
+  // draws a lasso that adds cards to the selection.
+  const pointers = new Map<number, { x: number; y: number }>();
+  let moved = false,
+    lasso = $state<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const local = (event: { clientX: number; clientY: number }) => {
+    const box = viewport!.getBoundingClientRect();
+    return { x: event.clientX - box.left, y: event.clientY - box.top };
+  };
   function pointerDown(event: PointerEvent) {
-    if (event.button !== 0 || (event.target as Element).closest('button, a')) return;
-    drag = { x: event.clientX, y: event.clientY, tx, ty, id: event.pointerId };
-    (event.currentTarget as Element).setPointerCapture(event.pointerId);
+    // Only a drag that starts with this press suppresses its click.
+    if (!pointers.size) moved = false;
+    const onControl = !!(event.target as Element).closest('button, a');
+    if (event.pointerType === 'mouse' && (event.button !== 0 || onControl)) return;
+    const at = local(event);
+    if (event.pointerType === 'mouse' && event.shiftKey) {
+      lasso = { x1: at.x, y1: at.y, x2: at.x, y2: at.y };
+      (event.currentTarget as Element).setPointerCapture(event.pointerId);
+      return;
+    }
+    pointers.set(event.pointerId, at);
+    // A touch that starts on a card still pans; it becomes a tap if it does not move.
+    if (!onControl) (event.currentTarget as Element).setPointerCapture(event.pointerId);
   }
   function pointerMove(event: PointerEvent) {
-    if (!drag || drag.id !== event.pointerId) return;
-    tx = drag.tx + event.clientX - drag.x;
-    ty = drag.ty + event.clientY - drag.y;
+    const at = local(event);
+    if (lasso) {
+      lasso = { ...lasso, x2: at.x, y2: at.y };
+      return;
+    }
+    const previous = pointers.get(event.pointerId);
+    if (!previous) return;
+    if (pointers.size === 2) {
+      const [other] = [...pointers].filter(([id]) => id !== event.pointerId).map(([, p]) => p);
+      const before = Math.hypot(previous.x - other.x, previous.y - other.y),
+        after = Math.hypot(at.x - other.x, at.y - other.y);
+      // Zoom around the midpoint, and follow it as the fingers move together.
+      tx += (at.x - previous.x) / 2;
+      ty += (at.y - previous.y) / 2;
+      if (before > 0) zoomAt(after / before, (at.x + other.x) / 2, (at.y + other.y) / 2);
+      moved = true;
+    } else if (pointers.size === 1) {
+      if (!moved && Math.hypot(at.x - previous.x, at.y - previous.y) < 4) return;
+      tx += at.x - previous.x;
+      ty += at.y - previous.y;
+      moved = true;
+    }
+    pointers.set(event.pointerId, at);
   }
-  // Wheel zoom needs preventDefault, so the listener is not passive.
+  function pointerUp(event: PointerEvent) {
+    if (lasso && layout) {
+      const box = lasso,
+        toCanvas = (x: number, y: number) => ({ x: (x - tx) / scale, y: (y - ty) / scale }),
+        a = toCanvas(box.x1, box.y1),
+        b = toCanvas(box.x2, box.y2);
+      lasso = null;
+      if (Math.abs(box.x2 - box.x1) > 4 || Math.abs(box.y2 - box.y1) > 4)
+        pick([...picked, ...cardsIn(layout.positions, { x1: a.x, y1: a.y, x2: b.x, y2: b.y })]);
+      return;
+    }
+    pointers.delete(event.pointerId);
+  }
+  // A drag that ends over a card is not a click on it.
+  function clickCapture(event: MouseEvent) {
+    if (!moved) return;
+    moved = false;
+    event.stopPropagation();
+    event.preventDefault();
+  }
+  // Wheel and gesture events need preventDefault, so their listeners are not passive.
   $effect(() => {
     const element = viewport;
     if (!element) return;
+    let gestureScale = 1;
+    const gestureStart = (event: any) => {
+      event.preventDefault();
+      gestureScale = 1;
+    };
+    const gestureChange = (event: any) => {
+      event.preventDefault();
+      const at = local(event);
+      zoomAt(event.scale / gestureScale, at.x, at.y);
+      gestureScale = event.scale;
+    };
     element.addEventListener('wheel', wheel, { passive: false });
-    return () => element.removeEventListener('wheel', wheel);
+    element.addEventListener('gesturestart', gestureStart);
+    element.addEventListener('gesturechange', gestureChange);
+    return () => {
+      element.removeEventListener('wheel', wheel);
+      element.removeEventListener('gesturestart', gestureStart);
+      element.removeEventListener('gesturechange', gestureChange);
+    };
   });
   function wheel(event: WheelEvent) {
     event.preventDefault();
-    const box = viewport!.getBoundingClientRect();
-    if (event.ctrlKey || event.metaKey)
-      zoomAt(Math.exp(-event.deltaY / 300), event.clientX - box.left, event.clientY - box.top);
-    else {
-      tx -= event.deltaX;
-      ty -= event.deltaY;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport!.clientHeight : 1;
+    const at = local(event);
+    if (event.ctrlKey || event.metaKey) {
+      // Pinch deltas are small and frequent; a mouse wheel's notch is capped so it steps gently.
+      const delta = Math.max(-50, Math.min(50, event.deltaY * unit));
+      zoomAt(Math.exp(-delta / 100), at.x, at.y);
+    } else {
+      tx -= event.deltaX * unit;
+      ty -= event.deltaY * unit;
     }
   }
 
-  // Selection lives in the URL (`?run=`), so a reload or shared link opens the same run.
+  // Selection lives in the URL (`?run=` for the details, `?select=` for the chosen runs by
+  // SDK ID), so a reload or a shared link opens the same comparison.
+  function syncURL() {
+    const url = new URL(location.href);
+    if (selected) url.searchParams.set('run', selected);
+    else url.searchParams.delete('run');
+    const chosen = [...picked]
+      .filter((id) => id.startsWith(prefix))
+      .map((id) => id.slice(prefix.length));
+    if (chosen.length) url.searchParams.set('select', chosen.join(','));
+    else url.searchParams.delete('select');
+    history.replaceState(history.state, '', url);
+  }
   function select(id: string, focus = false) {
     selected = id;
-    const url = new URL(location.href);
-    if (id) url.searchParams.set('run', id);
-    else url.searchParams.delete('run');
-    history.replaceState(history.state, '', url);
+    syncURL();
     if (id) {
       reveal(id);
       if (focus) void tick().then(() => cardButton(id)?.focus());
+    }
+  }
+  function pick(ids: Iterable<string>) {
+    picked = new Set(ids);
+    syncURL();
+  }
+  /** A click opens a run's details; Shift, Ctrl or Cmd adds it to or removes it from the selection. */
+  function cardClick(event: MouseEvent, id: string) {
+    if (event.shiftKey || event.ctrlKey || event.metaKey) {
+      const next = new Set(picked);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      pick(next);
+      return;
+    }
+    if (selected === id && picked.size <= 1) {
+      selected = '';
+      pick([]);
+    } else {
+      selected = id;
+      pick([id]);
     }
   }
   const cardButton = (id: string) =>
@@ -237,6 +445,10 @@
   }
   let path = $derived(selected && index?.nodes.has(selected) ? pathToRoot(selected, index) : []);
   let pathSet = $derived(new Set(path));
+  /** The chosen runs in the graph's order (creation). */
+  let pickedRuns = $derived(
+    graph?.nodes.filter((node) => picked.has(node.id)).map((node) => node.id) ?? [],
+  );
 
   // Arrow keys move along links: left to the parent, right to the first child, up and down
   // between siblings (or neighbouring cards in the grid of unlinked runs).
@@ -268,21 +480,22 @@
     }
   }
 
-  const edgeKey = (edge: LineageEdge) => edge.source + '>' + edge.target;
+  const edgeKey = (edge: { source: string; target: string }) => edge.source + '>' + edge.target;
+  /** Resume and extension links continue a run; other links start a new one. */
+  const continues = (edge: LineageEdge) => edge.relation === 'resume' || edge.relation === 'extend';
   function edgeLabel(edge: LineageEdge) {
     const parts: string[] = [];
     if (edge.update !== null)
       parts.push(
         $t('lineage.edge.update', { update: $number(edge.update, { notation: 'compact' }) }),
       );
+    const traits = edge.traits.filter((trait) => trait !== 'extends_config');
+    if (traits.length) parts.push(traits.map((trait) => '+' + trait.replace(/_/g, ' ')).join(' '));
     const keys = edge.changedKeys.slice(0, 2).map(shortKey);
     if (keys.length) parts.push(keys.join(', '));
     if (edge.changeCount > keys.length)
       parts.push($t('lineage.edge.more', { count: edge.changeCount - keys.length }));
     return parts.join(' · ');
-  }
-  function edgeTitle(edge: LineageEdge) {
-    return edge.changedKeys.join('\n');
   }
   const axisItems = $derived([
     { id: 'depth', text: $t('lineage.axis.depth') },
@@ -329,6 +542,18 @@
       ]}
       on:select={(event) => (filters.tag = String(event.detail.selectedId))}
     />
+    {#if hosts.length}<Dropdown
+        size="lg"
+        type="inline"
+        translateWithId={menuLabel}
+        labelText={$t('lineage.filter.host.label')}
+        selectedId={filters.host}
+        items={[
+          { id: '', text: $t('lineage.filter.host.all') },
+          ...hosts.map((host) => ({ id: host, text: host })),
+        ]}
+        on:select={(event) => (filters.host = String(event.detail.selectedId))}
+      />{/if}
     <Dropdown
       size="lg"
       type="inline"
@@ -337,6 +562,18 @@
       selectedId={axis}
       items={axisItems}
       on:select={(event) => (axis = event.detail.selectedId as Axis)}
+    />
+    <Dropdown
+      size="lg"
+      type="inline"
+      translateWithId={menuLabel}
+      labelText={$t('lineage.colorBy.label')}
+      selectedId={colorBy}
+      items={[
+        { id: 'run', text: $t('lineage.colorBy.run') },
+        { id: 'host', text: $t('lineage.colorBy.host') },
+      ]}
+      on:select={(event) => (colorBy = event.detail.selectedId as ColorBy)}
     />
     <fieldset class="lineage-options">
       <Checkbox
@@ -365,10 +602,19 @@
       <Button
         kind="ghost"
         size="field"
-        icon={CenterToFit}
+        icon={FitToScreen}
         iconDescription={$t('lineage.zoom.fit')}
         tooltipPosition="bottom"
         on:click={fit}
+      />
+      <Button
+        kind="ghost"
+        size="field"
+        icon={InProgress}
+        iconDescription={$t('lineage.zoom.running')}
+        tooltipPosition="bottom"
+        disabled={!runningIds.length}
+        on:click={focusRunning}
       />
       <Button
         kind="ghost"
@@ -381,19 +627,46 @@
       />
     </span>
   </div>
-  {#if graph && visible}<p class="lineage-summary" role="status">
-      {[
-        $t('lineage.summary.shown', { count: visible.shown.length }),
-        visible.isolatedHidden
-          ? $t('lineage.summary.isolated', { count: visible.isolatedHidden })
-          : '',
-        graph.counts.unresolved
-          ? $t('lineage.summary.unresolved', { count: graph.counts.unresolved })
-          : '',
-      ]
-        .filter(Boolean)
-        .join(' · ')}
-    </p>{/if}
+  {#if graph && visible}<div class="lineage-status">
+      <p class="lineage-summary" role="status">
+        {[
+          $t('lineage.summary.shown', { count: visible.shown.length }),
+          visible.isolatedHidden
+            ? $t('lineage.summary.isolated', { count: visible.isolatedHidden })
+            : '',
+          graph.counts.unresolved
+            ? $t('lineage.summary.unresolved', { count: graph.counts.unresolved })
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+      </p>
+      <div class="lineage-selection" role="region" aria-label={$t('lineage.selection.label')}>
+        <span
+          >{pickedRuns.length
+            ? $t('lineage.selection.count', { count: pickedRuns.length })
+            : $t('lineage.selection.hint')}</span
+        >
+        {#if selected && index?.nodes.has(selected)}<Button
+            kind="ghost"
+            size="small"
+            on:click={() => pick([...picked, ...path])}>{$t('lineage.selection.addPath')}</Button
+          ><Button
+            kind="ghost"
+            size="small"
+            on:click={() => pick([...picked, selected, ...descendants(selected, index!)])}
+            >{$t('lineage.selection.addBranch')}</Button
+          >{/if}
+        {#if pickedRuns.length}<Button kind="ghost" size="small" on:click={() => pick([])}
+            >{$t('lineage.selection.clear')}</Button
+          ><Button
+            kind="primary"
+            size="small"
+            icon={ChartLine}
+            on:click={() => onCompare(pickedRuns)}>{$t('lineage.selection.compare')}</Button
+          >{/if}
+      </div>
+    </div>{/if}
   {#if error}<InlineNotification
       lowContrast
       kind="error"
@@ -409,8 +682,9 @@
       role="presentation"
       onpointerdown={pointerDown}
       onpointermove={pointerMove}
-      onpointerup={() => (drag = null)}
-      onpointercancel={() => (drag = null)}
+      onpointerup={pointerUp}
+      onpointercancel={pointerUp}
+      onclickcapture={clickCapture}
     >
       {#if !graph}{#if !error}<p class="lineage-empty">{$t('common.status.loading')}</p>{/if}
       {:else if !graph.nodes.length}<p class="lineage-empty">{$t('lineage.empty.noRuns')}</p>
@@ -426,12 +700,20 @@
           style:transform={`translate(${tx}px, ${ty}px) scale(${scale})`}
         >
           <svg class="lineage-edges" width={layout.width} height={layout.height} aria-hidden="true">
+            {#each baseEdges as edge (edgeKey(edge))}{@const from = layout.positions.get(
+                edge.source,
+              )}{@const to = layout.positions.get(edge.target)}{#if from && to}<path
+                  class="lineage-edge base"
+                  d={edgePath(from, to)}
+                />{/if}{/each}
             {#each shownEdges as edge (edgeKey(edge))}{@const from = layout.positions.get(
                 edge.source,
               )}{@const to = layout.positions.get(edge.target)}{#if from && to}<path
                   class="lineage-edge"
                   class:on-path={pathSet.has(edge.target) && pathSet.has(edge.source)}
-                  class:matched={!edge.explicit}
+                  class:matched={!edge.explicit && !continues(edge)}
+                  class:continues={continues(edge)}
+                  class:rejected={index.nodes.get(edge.target)?.verdict === 'rejected'}
                   d={edgePath(from, to)}
                 />{/if}{/each}
           </svg>
@@ -440,7 +722,7 @@
                   edgeLabel(edge)}{#if label}<span
                     class="lineage-edge-label"
                     class:on-path={pathSet.has(edge.target)}
-                    title={edgeTitle(edge)}
+                    title={edge.changedKeys.join('\n')}
                     style:left={to.x - 8 + 'px'}
                     style:top={to.y + nodeHeight / 2 + 'px'}>{label}</span
                   >{/if}{/if}{/each}{/if}
@@ -452,16 +734,63 @@
                   index.nodes.get(index.parent.get(id)?.source ?? '')?.display_name,
                 )}
                 settings={graph.settings}
+                color={swatch(id)}
                 x={position.x}
                 y={position.y}
                 selected={selected === id}
+                picked={picked.has(id)}
                 onPath={pathSet.has(id)}
                 context={visible.context.has(id)}
                 collapsed={visible.collapsed.get(id) ?? 0}
-                onselect={() => select(selected === id ? '' : id)}
+                onclick={(event) => cardClick(event, id)}
                 onkeydown={(event) => cardKey(event, id)}
               />{/if}{/each}
         </div>{/if}
+      {#if lasso}<div
+          class="lineage-lasso"
+          style:left={Math.min(lasso.x1, lasso.x2) + 'px'}
+          style:top={Math.min(lasso.y1, lasso.y2) + 'px'}
+          style:width={Math.abs(lasso.x2 - lasso.x1) + 'px'}
+          style:height={Math.abs(lasso.y2 - lasso.y1) + 'px'}
+        ></div>{/if}
+      {#if layout && visible?.shown.length}<dl class="lineage-legend">
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.logged')}</dd>
+          </div>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge matched" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.matched')}</dd>
+          </div>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge continues" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.continues')}</dd>
+          </div>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge base" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.base')}</dd>
+          </div>
+          <div>
+            <dt><span class="lineage-legend-running"></span></dt>
+            <dd>{$t('lineage.legend.running')}</dd>
+          </div>
+        </dl>{/if}
     </div>
     {#if selected && index?.nodes.has(selected) && graph}<LineageDetails
         node={index.nodes.get(selected)!}

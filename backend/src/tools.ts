@@ -36,6 +36,12 @@ const chartGroup = {
 function schema(properties: Args = {}, required: string[] = []) {
   return { type: 'object', properties, required, additionalProperties: false };
 }
+/** Top-level config keys and their new values; `_` keys belong to the SDK. */
+const configPatch = {
+  type: 'object',
+  propertyNames: { pattern: '^[^_]', maxLength: 512 },
+  maxProperties: 100,
+};
 const lineageKeys = {
   type: 'array',
   items: { type: 'string', minLength: 1, maxLength: 512 },
@@ -285,6 +291,24 @@ export const toolCatalog = [
     ),
   },
   {
+    name: 'run_metadata_update',
+    description:
+      "Change a stored run's config keys, tags or notes without touching its state, history, summary, files or runtime; for backfilling metadata such as a lineage block or verdict:* tags. config replaces top-level config keys with JSON values (null removes a key); configMerge deep-merges objects into top-level keys (a null leaf removes that nested key); tags replaces the tag list, addTags and removeTags edit it; notes replaces the notes. by names the caller (a script or person) in the audit log. Keys starting with _ are reserved. Repeating a request changes nothing. A running run's SDK sends its whole config again on its next config update, which replaces keys set here.",
+    parameters: schema(
+      {
+        id: string,
+        config: configPatch,
+        configMerge: configPatch,
+        tags: { ...strings, maxItems: 100 },
+        addTags: { ...strings, maxItems: 100 },
+        removeTags: { ...strings, maxItems: 100 },
+        notes: { type: 'string', maxLength: 100000 },
+        by: { type: 'string', maxLength: 200 },
+      },
+      ['id'],
+    ),
+  },
+  {
     name: 'runs_config_diff',
     description:
       "List every config key whose value differs from run from to run to, with both values; ignored marks keys the project's lineage settings leave out of diffs.",
@@ -517,6 +541,11 @@ export class Tools {
         result = await lineageSettings(this.db, id);
         break;
       }
+      case 'run_metadata_update': {
+        const { by: _, ...changes } = a;
+        result = await this.db.call('runMetadataUpdate', changes);
+        break;
+      }
       case 'runs_config_diff': {
         const run = await this.db.call('run', a.to);
         if (!run) throw managementError('RUN_NOT_FOUND', 'Run not found');
@@ -633,7 +662,13 @@ export class Tools {
         ? { ...a, body: summarizeSelection(a.body) }
         : a;
     await this.db.call('audit', { tool: name, arguments: auditArgs });
-    this.changed(name === 'runs_update' ? result.ids : removedRuns);
+    this.changed(
+      name === 'runs_update'
+        ? result.ids
+        : name === 'run_metadata_update'
+          ? [a.id]
+          : removedRuns,
+    );
     return result;
   }
 }

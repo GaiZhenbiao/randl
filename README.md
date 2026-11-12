@@ -189,40 +189,65 @@ from project settings.
 
 The **Lineage** page draws a project's runs as cards linked from the run each one started
 from, so you can follow warm starts, extensions and grown architectures across hundreds of
-experiments. A resumed or extended run stays one card. Each card shows the run's state, a
-verdict from its `verdict:adopted`, `verdict:rejected` or `verdict:running` tag, and the
-latest and best value of the project's lineage metric. Each link is labelled with the
-parent update and the first changed config keys. Select a card for its hypothesis, the
+experiments. A resumed or extended run stays one card. Each card shows the run's colour (the
+same as in workspace charts) or its host's, its state, a verdict from its `verdict:adopted`,
+`verdict:rejected` or `verdict:running` tag, the host and GPUs it last trained on, and the
+latest and best value of the project's lineage metric. Running runs have an accent ring that
+ripples (it holds still when the system asks for reduced motion). Each link is labelled with the
+parent update, any further relations such as `+grown head`, and the changed config keys that
+set the run apart (those that change on the fewest links come first); a legend explains the
+line styles. Select a card for its hypothesis, relations, config bases, compute segments, the
 metric along its lineage, and every config difference from its parent or from another run you
-pick. Filter by name, group or tag, collapse rejected branches, and arrange cards by lineage
-depth, start update or start time. The selected run is kept in the URL (`?run=`).
+pick. Filter by name, group, tag or host, collapse rejected branches, and arrange cards by
+lineage depth, start update or start time.
+
+The page opens at 100% on the running runs (all of them when they fit, else the one that
+reported last). Two-finger touchpad scrolling or the mouse wheel pans; pinching (or Ctrl+wheel)
+zooms around the pointer; on touch screens, one finger pans and two pinch. **Fit all** and
+**Focus running runs** are in the toolbar. The arrangement, colouring and the two checkboxes are
+remembered per project in this browser.
+
+To compare runs, Shift-click them, Shift-drag a box around them, or use **Select path from
+root** or **Select branch** for the open run, then **Compare in workspace**: the project's
+workspace view shows exactly those runs as solos (which override visibility until you clear
+them) in its existing panels. The open run and the selection are kept in the URL (`?run=`,
+`?select=` with SDK run IDs), so a link reopens them. **Show in lineage** on a run page, or for
+the selected rows of the Runs table, opens the page on those runs.
 
 A run names its parent in a `lineage` config block:
 
 ```python
 wandb.config.update({"lineage": {
-    "parent": {"run_id": "jnsf11ul", "run_name": "v621_…", "update": 543000},
-    "relation": "grown_head",  # initialize_from, resume, extend, grown_head, grown_gru,
-                               # added_inputs, added_frames or extends_config
+    "parent": {"run_id": "jnsf11ul", "run_path": "chuanhu/AeroSeeker_Forest/jnsf11ul",
+               "run_name": "v621_…", "update": 543000,
+               "checkpoint": "/…/checkpoints/v621_…/update_00543000"},
+    "relation": ["initialize_from", "grown_head"],  # link kind first: initialize_from,
+        # resume or extend; then any of grown_head, grown_gru, added_inputs, added_frames,
+        # extends_config
     "changes": {"model.command_head_dim": [512, 1024]},
+    "extends": [{"kind": "run", "reference": "v621_…"}, {"kind": "file", "reference": "forest.yaml"}],
     "recipe": "latched_box40",
     "hypothesis": "A wider command head holds more boxes",
+    "compute": {"host": "Sirius", "gpu_count": 2, "segments": [
+        {"from_update": 543000, "to_update": None, "host": "Sirius", "gpu_count": 2,
+         "gpu_ids": [0, 1], "gpu_model": "RTX 4090 48GB", "slot": "sirius_34"}]},
 }})
 ```
 
-`parent.run_id` is the SDK run ID (or the full `entity/project/id`); `parent.run_name`, the
-display name, is used when the ID matches no run. `changes` maps dotted config keys to
-`[old, new]` and names the keys on the link instead of a computed diff. The block is
-authoritative: a run that logs it with no parent (a cold start) or with itself as parent (an
-in-place resume or extension) gets no link. Runs without the block are linked
+The parent is found by `run_id` (the SDK run ID), then `run_path`, then `run_name` (the display
+name), then its `checkpoint` path as below. A plain string `relation` is the link kind alone.
+`changes` maps dotted config keys to `[old, new]` and names the keys on the link instead of a
+computed diff. `extends` entries of kind `run` are drawn as weaker config-base links. The block
+is authoritative: a run that logs it with no parent (`null`, a cold start) or with itself as
+parent (an in-place resume or extension) gets no link. Runs without the block are linked
 by the checkpoint path in their **parent checkpoint keys** (default
 `rl.checkpoint.initialize_from`, then `rl.checkpoint.resume`): the path's folder or a
-`<name>_u<update>` (or `<name>_update_<update>`) warm-source label is matched, from the end of the path, against other
-runs' **run folder keys** (default `rl.checkpoint.save_dir` and `rl.checkpoint.run_name`)
-and display names, ignoring the host-specific start of the path. The update comes from an
-`update_<N>` folder or the label. A path that names the run's own folder adds no link.
-When several runs share the name, the latest created before the child is linked and marked
-as ambiguous. Changed keys are then computed from the two stored configs, leaving out
+`<name>_u<update>` (or `<name>_update_<update>`) warm-source label is matched, from the end of
+the path, against other runs' **run folder keys** (default `rl.checkpoint.save_dir` and
+`rl.checkpoint.run_name`) and display names, ignoring the host-specific start of the path. The
+update comes from an `update_<N>` folder or the label. A path that names the run's own folder
+adds no link. When several runs share the name, the latest created before the child is linked
+and marked as ambiguous. Changed keys are then computed from the two stored configs, leaving out
 `lineage.*`, the parent and folder keys, and the **keys left out of diffs** (by default
 `*save_dir`, `*run_name`, `*runs_root`, `*_path`, `*_dir`, `*.name`, `*.resume`). Set the
 metric, a display scale (512 shows a success rate as successes out of 512 episodes), whether
@@ -230,6 +255,28 @@ higher or lower is better, and the keys under **Lineage settings** on the page, 
 `project_lineage_settings_get` and `project_lineage_settings_update` tools. The graph comes
 from the `project_lineage` tool and full diffs from `runs_config_diff`; the CLI and the
 Assistant use the same tools.
+
+#### Updating stored runs
+
+`run_metadata_update` (`POST /api/tools/run_metadata_update`, or `randl runs update-meta`)
+changes a stored run's config keys, tags or notes, for example to backfill `lineage` blocks
+and verdict tags, without touching its state, history, summary, files, runtime or snapshot
+status:
+
+```sh
+randl runs update-meta --id chuanhu/AeroSeeker_Forest/jnsf11ul \
+  --config-file lineage.json --add-tags verdict:adopted --remove-tags verdict:running \
+  --by backfill-script
+```
+
+`config` (`--config` or `--config-file`, `-` for standard input) replaces top-level keys,
+stored in W&B's `{"value": …}` layout, and `null` removes one; `configMerge` (`--merge`)
+deep-merges objects into top-level keys, where a `null` leaf removes that nested key. `tags`
+replaces the tag list; `addTags` and `removeTags` edit it; `notes` replaces the notes. Keys
+starting with `_` belong to the SDK and are refused. The audit log records each change with its
+time, arguments and `by`. Repeating a request changes nothing, not even the run's revision.
+A running run's SDK sends its whole config again with each config update, which replaces
+keys set this way, so update runs after they finish.
 
 ### Project overview and server status
 
@@ -401,6 +448,7 @@ randl projects create --id local/robotics --name Robotics
 randl runs --project local/quickstart
 randl runs show --id local/quickstart/RUN_ID
 randl runs add-tags --ids local/quickstart/RUN_ID --tags baseline
+randl runs update-meta --id local/quickstart/RUN_ID --merge '{"lineage": {"hypothesis": "…"}}'
 randl views list
 randl artifacts list
 randl artifacts download --id ARTIFACT_ID --output ./downloads

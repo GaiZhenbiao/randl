@@ -18,12 +18,25 @@ export type LineageNode = {
   latest: number | null;
   best: number | null;
   unresolved: { source: string; update: number | null } | null;
+  bases: { kind: string; reference: string; id: string | null }[];
+  compute: Compute | null;
 };
+export type ComputeSegment = {
+  from_update: number | null;
+  to_update: number | null;
+  host: string | null;
+  gpu_count: number | null;
+  gpu_ids: number[] | null;
+  gpu_model: string | null;
+  slot: string | null;
+};
+export type Compute = { host: string | null; gpu_count: number | null; segments: ComputeSegment[] };
 export type ConfigChange = { key: string; from?: Json; to?: Json; ignored?: boolean };
 export type LineageEdge = {
   source: string;
   target: string;
   relation: string;
+  traits: string[];
   update: number | null;
   explicit: boolean;
   ambiguous: boolean;
@@ -51,6 +64,7 @@ export type Filters = {
   search: string;
   group: string;
   tag: string;
+  host: string;
   collapseRejected: boolean;
   showIsolated: boolean;
 };
@@ -80,7 +94,8 @@ export function pathToRoot(id: string, index: GraphIndex): string[] {
     path.unshift(edge.source);
   return path;
 }
-function descendants(id: string, index: GraphIndex, into: Set<string>) {
+/** Every run below a run, through any number of links. */
+export function descendants(id: string, index: GraphIndex, into = new Set<string>()) {
   const pending = [id];
   while (pending.length)
     for (const edge of index.children.get(pending.pop()!) ?? [])
@@ -117,7 +132,8 @@ export function visibleRuns(graph: LineageGraph, index: GraphIndex, filters: Fil
             node.display_name.toLowerCase().includes(query) ||
             node.name.toLowerCase().includes(query)) &&
           (!filters.group || node.group === filters.group) &&
-          (!filters.tag || node.tags.includes(filters.tag)),
+          (!filters.tag || node.tags.includes(filters.tag)) &&
+          (!filters.host || node.compute?.host === filters.host),
       )
       .map((node) => node.id),
   );
@@ -171,7 +187,7 @@ export function nameDelta(name: string, parentName: string | undefined) {
 }
 
 export const nodeWidth = 260,
-  nodeHeight = 92;
+  nodeHeight = 112;
 const gap = { rank: 170, node: 24 };
 export type Position = { x: number; y: number };
 export type Layout = { positions: Map<string, Position>; width: number; height: number };
@@ -300,4 +316,38 @@ export function formatMetric(
   if (value === null) return '–';
   if (scale) return format(Math.round(value * scale)) + '/' + format(scale);
   return format(value, { maximumSignificantDigits: 4 });
+}
+
+/** The hardware a run last trained on, such as "Sirius · 2× RTX 4090 48GB". */
+export function computeLabel(compute: Compute | null) {
+  if (!compute?.host && !compute?.gpu_count) return '';
+  const model = compute.segments.at(-1)?.gpu_model,
+    gpus = compute.gpu_count ? compute.gpu_count + '× ' + (model ?? 'GPU') : model;
+  return [compute.host, gpus].filter(Boolean).join(' · ');
+}
+/** Cards whose box meets a rectangle in canvas coordinates (a lasso). */
+export function cardsIn(
+  positions: Map<string, Position>,
+  box: { x1: number; y1: number; x2: number; y2: number },
+) {
+  const left = Math.min(box.x1, box.x2),
+    right = Math.max(box.x1, box.x2),
+    top = Math.min(box.y1, box.y2),
+    bottom = Math.max(box.y1, box.y2);
+  return [...positions]
+    .filter(
+      ([, p]) => p.x < right && p.x + nodeWidth > left && p.y < bottom && p.y + nodeHeight > top,
+    )
+    .map(([id]) => id);
+}
+/** The smallest box around some cards, in canvas coordinates. */
+export function boundsOf(positions: Map<string, Position>, ids: string[]) {
+  const boxes = ids.map((id) => positions.get(id)).filter((p): p is Position => !!p);
+  if (!boxes.length) return null;
+  return {
+    x: Math.min(...boxes.map((p) => p.x)),
+    y: Math.min(...boxes.map((p) => p.y)),
+    right: Math.max(...boxes.map((p) => p.x + nodeWidth)),
+    bottom: Math.max(...boxes.map((p) => p.y + nodeHeight)),
+  };
 }

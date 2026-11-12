@@ -5,6 +5,7 @@
     runSearchQuery,
     runURL,
     artifactURL,
+    interceptLink,
     groupFields,
     resultCount,
     runGroupField,
@@ -1690,6 +1691,23 @@
     save(true, view, feedback);
     return true;
   }
+  /**
+   * Shows exactly these runs in the project's workspace view, as solos (which override
+   * visibility until cleared), then opens the workspace.
+   */
+  async function compareInWorkspace(ids: string[]) {
+    if (!view || !selection(view.body.visible, ids, message('lineage.compare.done', { count: ids.length })))
+      return;
+    await navigate('workspace');
+  }
+  /** Opens the Lineage page on these runs: the first one's details, all of them selected. */
+  async function openLineage(ids: string[]) {
+    const url = new URL(pageURL(project, 'lineage'), location.origin);
+    if (ids[0]) url.searchParams.set('run', ids[0]);
+    if (ids.length) url.searchParams.set('select', ids.map((id) => id.split('/')[2]).join(','));
+    history.pushState(null, '', url);
+    await route();
+  }
   function toggleAll(on: boolean) {
     if (!view) return;
     const set = new Set(view.body.visible);
@@ -2588,6 +2606,31 @@
             tooltipAlignment="end"
             on:click={() => currentRun && requestStop([currentRun])}
           />{/if}{/if}
+      {#if page === 'run' && currentRun}{@const lineageURL =
+          pageURL(project, 'lineage') +
+          '?run=' +
+          encodeURIComponent(currentRun.id)}{@const lineageLabel = $t(
+          'runs.actions.showInLineage',
+        )}{@const showLineage = (event: MouseEvent) =>
+          interceptLink(event, () => void openLineage([currentRun!.id]))}{#if !iconRunActions}<Button
+            class="run-lineage"
+            kind="ghost"
+            size="small"
+            icon={DecisionTree}
+            href={lineageURL}
+            on:click={showLineage}>{lineageLabel}</Button
+          >{:else}<Button
+            class="run-lineage"
+            kind="ghost"
+            size="small"
+            icon={DecisionTree}
+            hideTooltip
+            title={lineageLabel}
+            iconDescription={lineageLabel}
+            tooltipAlignment="end"
+            href={lineageURL}
+            on:click={showLineage}
+          />{/if}{/if}
       {#if page === 'run' && currentRun}{@const exportURL =
           '/api/run-export?run=' +
           encodeURIComponent(currentRun.id) +
@@ -3203,6 +3246,7 @@
             }
           }}
           onrun={details}
+          onlineage={(ids) => void openLineage(ids)}
           oncolor={setRunColor}
           onfilter={(event) => {
             filterAnchor = (event.target as HTMLElement).closest('button');
@@ -3218,6 +3262,7 @@
           colors={resolvedColors}
           {dark}
           onRun={(run) => details(run)}
+          onCompare={compareInWorkspace}
         />{:else if page === 'server' && !project}<div class="project-page-content"><ServerOverview {dark} /></div>{:else if page === 'app-settings' && !project}<div
           class="project-page-content"
         >

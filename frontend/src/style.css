@@ -2014,10 +2014,28 @@ aside {
   display: flex;
   margin-left: auto;
 }
+.lineage-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 4px 16px;
+}
 .lineage-summary {
-  padding: 8px 16px;
   font-size: 12px;
   color: var(--cds-text-02);
+}
+.lineage-selection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--cds-text-02);
+}
+.lineage-selection > span {
+  margin-right: 8px;
 }
 .lineage-body {
   display: grid;
@@ -2066,8 +2084,22 @@ aside {
 .lineage-edge.matched {
   stroke-dasharray: 6 4;
 }
+.lineage-edge.continues {
+  stroke-dasharray: 2 4;
+  stroke-linecap: round;
+}
+/* A config base (`lineage.extends`) is a weaker link than a checkpoint. */
+.lineage-edge.base {
+  stroke: var(--cds-ui-03);
+  stroke-width: 1;
+  stroke-dasharray: 1 5;
+  stroke-linecap: round;
+}
+.lineage-edge.rejected {
+  stroke: var(--cds-support-01);
+}
 .lineage-edge.on-path {
-  stroke: var(--cds-interactive-04);
+  stroke: var(--cds-text-01);
   stroke-width: 3;
 }
 .lineage-edge-label {
@@ -2093,7 +2125,7 @@ aside {
   gap: 2px;
   box-sizing: border-box;
   width: 260px;
-  height: 92px;
+  height: 112px;
   padding: 6px 12px 8px;
   border: 1px solid var(--cds-ui-03);
   border-top: 4px solid var(--cds-ui-03);
@@ -2120,12 +2152,58 @@ aside {
   border-top-color: var(--cds-support-04);
 }
 .lineage-card.on-path {
-  border-left-color: var(--cds-interactive-04);
-  border-right-color: var(--cds-interactive-04);
-  border-bottom-color: var(--cds-interactive-04);
+  border-left-color: var(--cds-text-02);
+  border-right-color: var(--cds-text-02);
+  border-bottom-color: var(--cds-text-02);
+}
+.lineage-card.picked {
+  background: var(--cds-selected-ui);
 }
 .lineage-card.selected {
-  box-shadow: inset 0 0 0 2px var(--cds-interactive-04);
+  outline: 2px solid var(--cds-text-01);
+  outline-offset: 2px;
+}
+/* Running runs: an accent ring that ripples outward, or holds still for reduced motion. */
+.lineage-card.running {
+  box-shadow: 0 0 0 2px var(--cds-interactive-04);
+}
+.lineage-card.running::after {
+  position: absolute;
+  inset: -2px;
+  border-radius: 2px;
+  content: '';
+  pointer-events: none;
+  animation: lineage-ripple 2.4s ease-out infinite;
+}
+@keyframes lineage-ripple {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--cds-interactive-04) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 14px color-mix(in srgb, var(--cds-interactive-04) 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lineage-card.running::after {
+    animation: none;
+  }
+}
+.lineage-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.lineage-picked-icon {
+  flex: none;
+  fill: var(--cds-text-01);
+}
+.lineage-card-compute {
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 /* Ancestors shown only to connect matching runs to their roots. */
 .lineage-card.context {
@@ -2253,6 +2331,48 @@ aside {
 }
 .lineage-link:focus-visible {
   outline: 2px solid var(--cds-focus);
+}
+.lineage-traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.lineage-lasso {
+  position: absolute;
+  border: 1px dashed var(--cds-text-01);
+  background: color-mix(in srgb, var(--cds-interactive-04) 12%, transparent);
+  pointer-events: none;
+}
+.lineage-legend {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  max-width: calc(100% - 16px);
+  padding: 6px 8px;
+  border: 1px solid var(--cds-ui-03);
+  font-size: 12px;
+  color: var(--cds-text-02);
+  background: var(--cds-ui-01);
+  pointer-events: none;
+}
+.lineage-legend > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.lineage-legend svg {
+  display: block;
+  overflow: visible;
+}
+.lineage-legend-running {
+  display: block;
+  width: 16px;
+  height: 10px;
+  box-shadow: 0 0 0 2px var(--cds-interactive-04);
+  background: var(--cds-ui-01);
 }
 .lineage-children {
   display: flex;

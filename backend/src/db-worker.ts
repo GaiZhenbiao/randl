@@ -35,6 +35,7 @@ const allowed = new Set([
   'alert',
   'alerts',
   'runEdit',
+  'runMetadataUpdate',
   'runFields',
   'lineage',
   'configDiff',

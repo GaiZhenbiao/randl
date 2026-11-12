@@ -10,6 +10,7 @@ import {
   diffConfigs,
   flattenConfig,
   folderName,
+  lineageNode,
   lineageDefaults,
   pathUpdate,
   resolveParent,
@@ -79,6 +80,7 @@ test('parent paths match runs across hosts and checkpoint layouts', () => {
     id: v611.id,
     ambiguous: false,
     relation: 'initialize_from',
+    traits: [],
     update: 518000,
     explicit: false,
   });
@@ -133,7 +135,42 @@ test('an explicit lineage block wins over the parent path', () => {
     id: parent.id,
     ambiguous: false,
     relation: 'grown_head',
+    traits: [],
     update: 543000,
+    explicit: true,
+  });
+  // The writer's form: relation is a list, link kind first; run_path and the checkpoint
+  // path find the parent when the run ID is unknown.
+  const listed = run('v648_listed', {
+    lineage: {
+      parent: { run_id: null, run_path: parent.id, run_name: 'renamed', update: 543000 },
+      relation: ['initialize_from', 'grown_head', 'extends_config'],
+    },
+  });
+  assert.deepEqual(parentOf([parent, decoy, listed], listed), {
+    id: parent.id,
+    ambiguous: false,
+    relation: 'initialize_from',
+    traits: ['grown_head', 'extends_config'],
+    update: 543000,
+    explicit: true,
+  });
+  const byPath = run('v649_path', {
+    lineage: {
+      parent: {
+        run_id: null,
+        run_name: null,
+        checkpoint: '/x/checkpoints/v611_decoy/update_00000500',
+      },
+      relation: ['resume'],
+    },
+  });
+  assert.deepEqual(parentOf([decoy, byPath], byPath), {
+    id: decoy.id,
+    ambiguous: false,
+    relation: 'resume',
+    traits: [],
+    update: 500,
     explicit: true,
   });
   // A named parent that is not in the project is reported, not replaced by the path.
@@ -158,6 +195,64 @@ test('a logged block that names no parent or the run itself adds no link', () =>
   const renamed = run('v803_named', { lineage: { parent: { run_name: 'v803_named' } } });
   const runs = [source, cold, empty, extended, renamed];
   for (const child of [cold, empty, extended, renamed]) assert.equal(parentOf(runs, child), null);
+});
+
+test('nodes carry the logged compute segments and config bases', () => {
+  const base = run('v621_base');
+  const child = run('v650_child', {
+    lineage: {
+      parent: null,
+      relation: ['extends_config'],
+      extends: [
+        { kind: 'run', reference: 'v621_base' },
+        { kind: 'file', reference: 'configs/forest.yaml' },
+      ],
+      compute: {
+        host: 'Sirius',
+        gpu_count: 2,
+        segments: [
+          {
+            from_update: 543000,
+            to_update: 550000,
+            host: 'polaris',
+            gpu_count: 1,
+            gpu_ids: [3],
+            gpu_model: 'RTX 4090 24GB',
+            slot: 'polaris_012',
+          },
+          {
+            from_update: 550000,
+            to_update: null,
+            host: 'Sirius',
+            gpu_count: 2,
+            gpu_ids: null,
+            gpu_model: 'RTX 4090 48GB',
+            slot: null,
+          },
+        ],
+      },
+    },
+  });
+  const node = lineageNode(child, { latest: null, best: null }, new RunMatcher([base, child]));
+  assert.deepEqual(node.bases, [
+    { kind: 'run', reference: 'v621_base', id: base.id },
+    { kind: 'file', reference: 'configs/forest.yaml', id: null },
+  ]);
+  assert.equal(node.compute.host, 'Sirius');
+  assert.equal(node.compute.gpu_count, 2);
+  assert.deepEqual(node.compute.segments[0], {
+    from_update: 543000,
+    to_update: 550000,
+    host: 'polaris',
+    gpu_count: 1,
+    gpu_ids: [3],
+    gpu_model: 'RTX 4090 24GB',
+    slot: 'polaris_012',
+  });
+  assert.equal(
+    lineageNode(base, { latest: null, best: null }, new RunMatcher([base])).compute,
+    null,
+  );
 });
 
 test('config diffs skip ignored keys and compare nested values', () => {
@@ -290,6 +385,7 @@ test('project_lineage returns nodes, edges, metric values and config diffs', asy
     source: root,
     target: child,
     relation: 'initialize_from',
+    traits: [],
     update: 543000,
     explicit: false,
     ambiguous: false,

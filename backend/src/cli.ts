@@ -5,7 +5,7 @@ import { promises as fs, openAsBlob, createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { contained } from './plugins.js';
-const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
+const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them. State, history and files are untouched.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
 export async function main(argv = process.argv.slice(2)) {
   const { values: v, positionals: p } = parseArgs({
     args: argv,
@@ -24,6 +24,14 @@ export async function main(argv = process.argv.slice(2)) {
       project: { type: 'string' },
       description: {type:'string'},
       'description-file': {type:'string'},
+      config: { type: 'string' },
+      'config-file': { type: 'string' },
+      merge: { type: 'string' },
+      'merge-file': { type: 'string' },
+      'add-tags': { type: 'string' },
+      'remove-tags': { type: 'string' },
+      notes: { type: 'string' },
+      by: { type: 'string' },
       confirm: {type:'string'},
       'confirm-delete-project': {type:'string',multiple:true},
       name: { type: 'string' },
@@ -121,6 +129,37 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (command === 'status') return output(await request('/api/health'));
   if(command==='runs'&&action==='show')return output(await tool('run_get',{id:required('id')}));
+  if (command === 'runs' && action === 'update-meta') {
+    // JSON from --NAME or --NAME-file (a path, or - for standard input).
+    const json = async (name: 'config' | 'merge') => {
+      const file = v[`${name}-file`];
+      if (v[name] !== undefined && file !== undefined)
+        throw Error(`Use either --${name} or --${name}-file`);
+      let text = v[name];
+      if (file === '-') {
+        text = '';
+        for await (const chunk of process.stdin) text += chunk.toString();
+      } else if (file) text = await fs.readFile(file, 'utf8');
+      return text === undefined ? undefined : JSON.parse(text);
+    };
+    const change: Record<string, unknown> = { id: required('id') };
+    for (const [option, field] of [
+      ['config', 'config'],
+      ['merge', 'configMerge'],
+    ] as const) {
+      const value = await json(option);
+      if (value !== undefined) change[field] = value;
+    }
+    for (const [option, field] of [
+      ['tags', 'tags'],
+      ['add-tags', 'addTags'],
+      ['remove-tags', 'removeTags'],
+    ] as const)
+      if (v[option] !== undefined) change[field] = csv(v[option]);
+    if (v.notes !== undefined) change.notes = v.notes;
+    if (v.by !== undefined) change.by = v.by;
+    return output(await tool('run_metadata_update', change));
+  }
   if (command === 'runs')
     return output(await tool('runs_list', v.project ? { project: v.project } : {}));
   if (command === 'tools') return output(await request('/api/tools'));

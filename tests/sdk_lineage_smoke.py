@@ -25,7 +25,10 @@ with tempfile.TemporaryDirectory(prefix="randl-sdk-lineage-") as directory:
                     dir=directory, config=checkpoint("v647_child")) as run:
         run.config.update({"lineage": {
             "parent": {"run_id": parent_id, "run_name": "v621_parent", "update": 543000},
-            "relation": "grown_head",
+            "relation": ["initialize_from", "grown_head"],
+            "compute": {"host": "Sirius", "gpu_count": 2, "segments": [
+                {"from_update": 543000, "to_update": None, "host": "Sirius", "gpu_count": 2,
+                 "gpu_ids": None, "gpu_model": "RTX 4090 48GB", "slot": None}]},
             "changes": {"model.command_head_dim": [512, 1024]},
             "recipe": {"name": "latched_box40"},
             "hypothesis": "A wider command head holds more boxes",
@@ -50,7 +53,8 @@ graph = call("project_lineage", {"id": "local/" + project})
 edges = {edge["target"].split("/")[-1]: edge for edge in graph["edges"]}
 explicit, matched = edges[child_id], edges[path_id]
 assert explicit["source"].endswith("/" + parent_id), explicit
-assert (explicit["relation"], explicit["update"], explicit["explicit"]) == ("grown_head", 543000, True)
+assert (explicit["relation"], explicit["update"], explicit["explicit"]) == ("initialize_from", 543000, True)
+assert explicit["traits"] == ["grown_head"], explicit
 assert explicit["changedKeys"] == ["model.command_head_dim"], explicit
 assert explicit["changeSource"] == "lineage"
 assert matched["source"].endswith("/" + parent_id), matched
@@ -58,5 +62,6 @@ assert (matched["relation"], matched["update"], matched["explicit"]) == ("initia
 child = next(node for node in graph["nodes"] if node["name"] == child_id)
 assert child["hypothesis"] == "A wider command head holds more boxes"
 assert child["recipe"] == {"name": "latched_box40"}
+assert child["compute"]["segments"][0]["gpu_model"] == "RTX 4090 48GB"
 print(json.dumps({"sdk": wandb.__version__, "logged_lineage_block": "passed",
     "dotted_change_keys": "passed", "initialize_from_path": "passed"}))

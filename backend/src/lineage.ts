@@ -62,11 +62,32 @@ export type LineageNode = {
   best: number | null;
   /** A parent named by the run that matched no run in the project. */
   unresolved: Unresolved | null;
+  /** The config bases the run's `lineage.extends` lists; `id` is the matching run, if any. */
+  bases: { kind: string; reference: string; id: string | null }[];
+  /** Where the run trained: `lineage.compute` as logged (host, gpu_count, segments). */
+  compute: Compute | null;
+};
+export type ComputeSegment = {
+  from_update: number | null;
+  to_update: number | null;
+  host: string | null;
+  gpu_count: number | null;
+  gpu_ids: number[] | null;
+  gpu_model: string | null;
+  slot: string | null;
+};
+export type Compute = {
+  host: string | null;
+  gpu_count: number | null;
+  segments: ComputeSegment[];
 };
 export type LineageEdge = {
   source: string;
   target: string;
+  /** The kind of link: initialize_from, resume, extend, or a parent key's last part. */
   relation: string;
+  /** Further relations the run logged, such as grown_head or extends_config. */
+  traits: string[];
   update: number | null;
   /** Whether the run's `lineage` block named the parent, rather than a matched path. */
   explicit: boolean;
@@ -195,8 +216,8 @@ export class RunMatcher {
     return { id: chosen.id, ambiguous: others.length > 1 };
   }
   /** A run named by SDK ID, full ID or display name (an explicit `lineage.parent`). */
-  named(child: LineageRun, id: string | null, name: string | null) {
-    const exact = id ? this.byId.get(id) : undefined;
+  named(child: LineageRun, ids: string[], name: string | null) {
+    const exact = ids.map((id) => this.byId.get(id)).find(Boolean);
     if (exact) return exact.id === child.id ? 'self' : { id: exact.id, ambiguous: false };
     if (!name) return null;
     const named = this.byName.get(name);
@@ -251,7 +272,14 @@ export function loggedChanges(lineage: Record<string, Json> | null): string[] | 
 }
 type Unresolved = { source: string; update: number | null };
 export type ParentMatch =
-  | { id: string; ambiguous: boolean; relation: string; update: number | null; explicit: boolean }
+  | {
+      id: string;
+      ambiguous: boolean;
+      relation: string;
+      traits: string[];
+      update: number | null;
+      explicit: boolean;
+    }
   | { unresolved: Unresolved };
 /** A run's parent: its `lineage` block, else the first parent key whose path matches a run. */
 export function resolveParent(
@@ -263,15 +291,23 @@ export function resolveParent(
   // in-place resume or extension) means no link, even when a parent key holds a path.
   if (run.lineage) {
     const parent = object(run.lineage.parent),
-      id = text(parent?.run_id),
-      name = text(parent?.run_name);
-    if (!id && !name) return null;
-    const update = integer(parent!.update),
-      relation = text(run.lineage.relation) ?? 'initialize_from',
-      match = matcher.named(run, id, name);
+      ids = [text(parent?.run_id), text(parent?.run_path)].filter((id): id is string => !!id),
+      name = text(parent?.run_name),
+      checkpoint = text(parent?.checkpoint);
+    if (!ids.length && !name && !checkpoint) return null;
+    // `relation` is a list, link kind first (a plain string is that kind alone).
+    const logged = run.lineage.relation,
+      relations = (Array.isArray(logged) ? logged : [logged]).filter(
+        (item): item is string => typeof item === 'string' && !!item,
+      ),
+      [relation = 'initialize_from', ...traits] = relations,
+      update = integer(parent!.update) ?? (checkpoint ? pathUpdate(checkpoint) : null);
+    // The checkpoint path finds the parent when this host could not read its run ID.
+    const match =
+      matcher.named(run, ids, name) ?? (checkpoint ? matcher.path(run, checkpoint) : null);
     if (match === 'self') return null;
-    if (match) return { ...match, relation, update, explicit: true };
-    return { unresolved: { source: name ?? id!, update } };
+    if (match) return { ...match, relation, traits, update, explicit: true };
+    return { unresolved: { source: name ?? ids[0] ?? checkpoint!, update } };
   }
   let unresolved: Unresolved | null = null;
   for (const [index, path] of run.parents.entries()) {
@@ -280,14 +316,56 @@ export function resolveParent(
       relation = settings.parentKeys[index].split('.').at(-1)!;
     // A resume or restart from the run's own folder keeps it one node.
     if (match === 'self') continue;
-    if (match) return { ...match, relation, update: pathUpdate(path), explicit: false };
+    if (match)
+      return { ...match, relation, traits: [], update: pathUpdate(path), explicit: false };
     unresolved ??= { source: path, update: pathUpdate(path) };
   }
   return unresolved ? { unresolved } : null;
 }
+const numberOrNull = (value: Json | undefined) =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null;
+/** `lineage.compute` with the fields the page shows, or null when the run logged none. */
+export function computeOf(lineage: Record<string, Json> | null): Compute | null {
+  const compute = object(lineage?.compute);
+  if (!compute) return null;
+  const segments = (Array.isArray(compute.segments) ? compute.segments : [])
+    .map(object)
+    .filter((segment) => !!segment)
+    .map((segment) => ({
+      from_update: numberOrNull(segment.from_update),
+      to_update: numberOrNull(segment.to_update),
+      host: text(segment.host),
+      gpu_count: numberOrNull(segment.gpu_count),
+      gpu_ids: Array.isArray(segment.gpu_ids)
+        ? segment.gpu_ids.filter((id): id is number => typeof id === 'number')
+        : null,
+      gpu_model: text(segment.gpu_model),
+      slot: text(segment.slot),
+    }));
+  const last = segments.at(-1);
+  return {
+    host: text(compute.host) ?? last?.host ?? null,
+    gpu_count: numberOrNull(compute.gpu_count) ?? last?.gpu_count ?? null,
+    segments,
+  };
+}
+/** The runs a `lineage.extends` list names, matched by run name. */
+export function basesOf(run: LineageRun, matcher: RunMatcher) {
+  const list = Array.isArray(run.lineage?.extends) ? run.lineage.extends : [];
+  return list
+    .map(object)
+    .filter((item) => !!item && !!text(item.reference))
+    .map((item) => {
+      const kind = text(item!.kind) ?? 'file',
+        reference = text(item!.reference)!,
+        match = kind === 'run' ? matcher.named(run, [], reference) : null;
+      return { kind, reference, id: match && match !== 'self' ? match.id : null };
+    });
+}
 export function lineageNode(
   run: LineageRun,
   values: { latest: number | null; best: number | null },
+  matcher: RunMatcher,
 ): LineageNode {
   const tags = new Set(run.tags.map((tag) => tag.toLowerCase()));
   return {
@@ -303,6 +381,8 @@ export function lineageNode(
     recipe: run.lineage?.recipe ?? null,
     ...values,
     unresolved: null,
+    bases: basesOf(run, matcher),
+    compute: computeOf(run.lineage),
   };
 }
 /** Drops edges that would close a cycle, keeping the earlier-created child's parent. */
