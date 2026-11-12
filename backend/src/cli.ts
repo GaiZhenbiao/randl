@@ -5,7 +5,7 @@ import { promises as fs, openAsBlob, createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { contained } from './plugins.js';
-const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--summary JSON] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them; --summary sets summary keys. State, history and files are untouched.\nrandl runs rename-metrics --id entity/project/run --rename old=new[,old2=new2] [--combine] [--dry-run] [--by NAME]\nrandl runs rename-metrics --undo ID\n  Renames metric keys in history, summary and the metric index; --combine merges into existing keys. Prints undo IDs.\nrandl runs write-history --id entity/project/run --rows JSON | --rows-file PATH|- [--replace] [--dry-run] [--by NAME]\n  Rows are [{\"match\": {\"update\": 473000}, \"values\": {\"metric\": 0.7}}] or use \"step\"; each merges into one history record.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
+const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--summary JSON] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them; --summary sets summary keys. State, history and files are untouched.\nrandl runs rename-metrics --id entity/project/run --rename old=new[,old2=new2] [--combine] [--dry-run] [--by NAME]\nrandl runs rename-metrics --undo ID\n  Renames metric keys in history, summary and the metric index; --combine merges into existing keys. Prints undo IDs.\nrandl runs write-history --id entity/project/run --rows JSON | --rows-file PATH|- [--replace] [--dry-run] [--by NAME]\n  Rows are [{\"match\": {\"update\": 473000}, \"values\": {\"metric\": 0.7}}] or use \"step\"; each merges into one history record.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl findings list|get|save|delete --project entity/project [--id ID] [--run RUN] [--topic T] [--title T] [--status finding|ruled_out] [--body TEXT | --body-file PATH|-] [--cite RUN[@UPDATE],…] [--by NAME]\nrandl recipe get|set --project entity/project [--run RUN --reason TEXT [--since DATE]] [--by NAME]\nrandl plans list|save|delete --project entity/project [--id ID] [--name NAME] [--json '{\"host\":\"…\",\"slot\":\"…\",\"queue\":1}'] [--by NAME]\nrandl journal list|add [--run RUN | --project entity/project] [--text TEXT] [--update N] [--step N] [--time DATE] [--key KEY] [--by NAME]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
 export async function main(argv = process.argv.slice(2)) {
   const { values: v, positionals: p } = parseArgs({
     args: argv,
@@ -40,6 +40,20 @@ export async function main(argv = process.argv.slice(2)) {
       'rows-file': { type: 'string' },
       replace: { type: 'boolean' },
       'dry-run': { type: 'boolean' },
+      topic: { type: 'string' },
+      title: { type: 'string' },
+      body: { type: 'string' },
+      'body-file': { type: 'string' },
+      status: { type: 'string' },
+      cite: { type: 'string' },
+      run: { type: 'string' },
+      reason: { type: 'string' },
+      since: { type: 'string' },
+      text: { type: 'string' },
+      time: { type: 'string' },
+      update: { type: 'string' },
+      step: { type: 'string' },
+      key: { type: 'string' },
       confirm: {type:'string'},
       'confirm-delete-project': {type:'string',multiple:true},
       name: { type: 'string' },
@@ -215,6 +229,81 @@ export async function main(argv = process.argv.slice(2)) {
     return output(await tool('runs_list', v.project ? { project: v.project } : {}));
   if (command === 'tools') return output(await request('/api/tools'));
   if (command === 'tool') return output(await tool(action, JSON.parse(v.json || '{}')));
+  // The experiment ledger. --json supplies any further fields of a record.
+  const extra = () => JSON.parse(v.json || '{}'),
+    by = v.by !== undefined ? { by: v.by } : {},
+    num = (value: string | undefined) => (value === undefined ? undefined : Number(value)),
+    defined = (fields: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+  if (command === 'findings') {
+    const project = required('project');
+    if (action === 'list') return output(await tool('findings_list', defined({ project, run: v.run })));
+    if (action === 'get') return output(await tool('finding_get', { project, id: required('id') }));
+    if (action === 'delete')
+      return output(await tool('finding_delete', { project, id: required('id'), ...by }));
+    if (action === 'save') {
+      let body = v.body;
+      if (v['body-file'] === '-') {
+        body = '';
+        for await (const chunk of process.stdin) body += chunk.toString();
+      } else if (v['body-file']) body = await fs.readFile(v['body-file'], 'utf8');
+      const citations = v.cite
+        ? csv(v.cite).map((item) => {
+            const [run, update] = item.split('@');
+            return update === undefined ? { run } : { run, update: Number(update) };
+          })
+        : undefined;
+      return output(
+        await tool('finding_save', {
+          ...extra(),
+          ...defined({ project, id: required('id'), topic: v.topic, title: v.title, body, status: v.status, citations }),
+          ...by,
+        }),
+      );
+    }
+  }
+  if (command === 'recipe') {
+    const project = required('project');
+    if (action === 'set')
+      return output(
+        await tool('recipe_set', {
+          ...defined({ project, run: required('run'), reason: required('reason'), since: v.since }),
+          ...by,
+        }),
+      );
+    return output(await tool('recipe_get', { project }));
+  }
+  if (command === 'plans') {
+    const project = required('project');
+    if (action === 'save')
+      return output(
+        await tool('plan_save', {
+          ...extra(),
+          ...defined({ project, id: required('id'), name: v.name }),
+          ...by,
+        }),
+      );
+    if (action === 'delete')
+      return output(await tool('plan_delete', { project, id: required('id'), ...by }));
+    return output(await tool('plans_list', { project }));
+  }
+  if (command === 'journal') {
+    if (action === 'add')
+      return output(
+        await tool('journal_add', {
+          ...defined({
+            run: required('run'),
+            text: required('text'),
+            time: v.time,
+            update: num(v.update),
+            step: num(v.step),
+            key: v.key,
+          }),
+          ...by,
+        }),
+      );
+    return output(await tool('journal_list', defined({ run: v.run, project: v.project })));
+  }
   if (command === 'projects') {
     if (action === 'list') return output(await request('/api/projects'));
     const id=required('id');

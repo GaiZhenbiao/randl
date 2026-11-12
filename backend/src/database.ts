@@ -20,6 +20,7 @@ import { metricDefinitions, definitionFor, environmentMetadata } from './run-met
 import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runtime.js';
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
+import { Ledger } from './ledger.js';
 import {
   RunMatcher,
   acyclic,
@@ -130,6 +131,7 @@ export class Store {
   artifacts: Artifacts;
   projectStore: Projects;
   conversations: Conversations;
+  ledger: Ledger;
   constructor(readonly directory: string) {
     mkdirSync(directory, { recursive: true });
     this.db = new Database(join(directory, 'randl.sqlite3'));
@@ -164,6 +166,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS run_alerts_run ON run_alerts(run,created);`);
     this.artifacts = new Artifacts(this.db);
     this.conversations = new Conversations(this.db);
+    this.ledger = new Ledger(this.db);
     this.history = new HistoryStore(this.db);
     if (empty) {
       this.db.pragma('user_version=2');
@@ -2375,7 +2378,52 @@ export class Store {
   projectCreate(a:Row) { return this.projectStore.create(a); }
   projectUpdate(a:Row) { return this.projectStore.update(a); }
   projectGet(id:string) { return this.projectStore.get(id); }
-  projectDelete(a:Row) { const result=this.projectStore.delete(a);this.derived.clear();this.derivedBytes=0;return result; }
+  projectDelete(a: Row) {
+    const result = this.db.transaction(() => {
+      const removed = this.projectStore.delete(a);
+      this.ledger.deleteProject(a.id);
+      return removed;
+    })();
+    this.derived.clear();
+    this.derivedBytes = 0;
+    return result;
+  }
+  // The experiment ledger (ledger.ts). Journal entries need their run to exist.
+  findingSave(a: Row) {
+    return this.ledger.findingSave(a);
+  }
+  findingGet(a: Row) {
+    return this.ledger.findingGet(a.project, a.id);
+  }
+  findingDelete(a: Row) {
+    return this.ledger.findingDelete(a.project, a.id);
+  }
+  findings(a: Row) {
+    return this.ledger.findings(a.project, a.run);
+  }
+  recipeSet(a: Row) {
+    return this.ledger.recipeSet(a);
+  }
+  recipe(a: Row) {
+    return this.ledger.recipe(a.project);
+  }
+  planSave(a: Row) {
+    return this.ledger.planSave(a);
+  }
+  planDelete(a: Row) {
+    return this.ledger.planDelete(a.project, a.id);
+  }
+  plans(a: Row) {
+    return this.ledger.plans(a.project);
+  }
+  journalAdd(a: Row) {
+    if (!this.db.prepare('SELECT 1 FROM runs WHERE id=? AND deleted_at IS NULL').get(a.run))
+      throw managementError('RUN_NOT_FOUND', 'Run not found', { run: a.run }, 404);
+    return this.ledger.journalAdd(a);
+  }
+  journal(a: Row) {
+    return this.ledger.journal(a);
+  }
   runFileWritten(id:string,delta:number) { return this.projectStore.fileWritten(id,delta); }
   storageTotals() { return this.projectStore.totals(); }
   views() {

@@ -48,6 +48,11 @@ const codes = new Set([
   'METRIC_RENAME_NOT_FOUND',
   'METRIC_RENAME_CHANGED',
   'HISTORY_ROWS_REFUSED',
+  // The experiment ledger (ledger.ts).
+  'LEDGER_NOT_FOUND',
+  'LEDGER_TIME_INVALID',
+  'FINDING_CONFLICT',
+  'JOURNAL_KEY_IN_USE',
   ...agentErrorCodes,
 ]);
 export type ErrorFields = Error & {

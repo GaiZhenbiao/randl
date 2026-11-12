@@ -42,6 +42,12 @@ const configPatch = {
   propertyNames: { pattern: '^[^_]', maxLength: 512 },
   maxProperties: 100,
 };
+/** Ledger record ids: caller-chosen and stable, so a repeated backfill is a no-op. */
+const ledgerId = { type: 'string', minLength: 1, maxLength: 200, pattern: '^[^/]+$' };
+const author = { type: 'string', maxLength: 200 };
+const orNull = (value: Args) => ({ anyOf: [value, { type: 'null' }] });
+/** Seconds since the epoch or an ISO date. */
+const when = { anyOf: [{ type: 'number' }, { type: 'string', maxLength: 64 }] };
 /** A metric key a rename may use; `_` keys belong to the SDK. */
 const metricName = { type: 'string', minLength: 1, maxLength: 512, pattern: '^[^_]' };
 const lineageKeys = {
@@ -71,10 +77,10 @@ export const settingsSchema = schema({
   xAxis: string,
   xScale: string,
   yScale: string,
-  xMin: { type: ['number', 'null'] },
-  xMax: { type: ['number', 'null'] },
-  yMin: { type: ['number', 'null'] },
-  yMax: { type: ['number', 'null'] },
+  xMin: orNull({ type: 'number' }),
+  xMax: orNull({ type: 'number' }),
+  yMin: orNull({ type: 'number' }),
+  yMax: orNull({ type: 'number' }),
   excludeOutliers: { type: 'boolean' },
   outlierLower: { type: 'number', minimum: 0, maximum: 100 },
   outlierUpper: { type: 'number', minimum: 0, maximum: 100 },
@@ -385,6 +391,143 @@ export const toolCatalog = [
       ['id', 'rows'],
     ),
   },
+  // The experiment ledger (ledger.ts, README "Experiment ledger"). Records have caller-chosen
+  // ids; saving identical content reports unchanged. The Assistant does not see the ledger.
+  {
+    name: 'findings_list',
+    description: "List a project's findings by topic (status finding or ruled_out), or only those citing run.",
+    agent: false,
+    parameters: schema({ project: string, run: string }, ['project']),
+  },
+  {
+    name: 'finding_get',
+    description: 'Read one finding with all of its earlier versions.',
+    agent: false,
+    parameters: schema({ project: string, id: ledgerId }, ['project', 'id']),
+  },
+  {
+    name: 'finding_save',
+    description:
+      'Create or update a finding by its id: topic, title, body (Markdown), status (finding or ruled_out) and citations (runs, optionally at an update or step, with a note). Omitted fields keep their value. Every change is kept as a version; version, when given, must be the current one. by names the author.',
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        id: ledgerId,
+        topic: { type: 'string', maxLength: 200 },
+        title: { type: 'string', maxLength: 500 },
+        body: { type: 'string', maxLength: 200000 },
+        status: { type: 'string', enum: ['finding', 'ruled_out'] },
+        citations: {
+          type: 'array',
+          maxItems: 500,
+          items: schema(
+            {
+              run: string,
+              update: { type: 'number' },
+              step: { type: 'number' },
+              note: { type: 'string', maxLength: 2000 },
+            },
+            ['run'],
+          ),
+        },
+        version: { type: 'integer', minimum: 0 },
+        by: author,
+      },
+      ['project', 'id'],
+    ),
+  },
+  {
+    name: 'finding_delete',
+    description: 'Delete a finding; its versions are kept.',
+    agent: false,
+    parameters: schema({ project: string, id: ledgerId, by: author }, ['project', 'id']),
+  },
+  {
+    name: 'recipe_get',
+    description: "Read a project's current best recipe (a run, since when, why) and its history.",
+    agent: false,
+    parameters: schema({ project: string }, ['project']),
+  },
+  {
+    name: 'recipe_set',
+    description:
+      "Promote a run to the project's current best recipe, with the reason and since (seconds or an ISO date; now by default). The history keeps every promotion; repeating the current one changes nothing.",
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        run: string,
+        reason: { type: 'string', minLength: 1, maxLength: 5000 },
+        since: when,
+        by: author,
+      },
+      ['project', 'run', 'reason'],
+    ),
+  },
+  {
+    name: 'plans_list',
+    description:
+      "List a project's planned runs: name, parent and update, hypothesis, change, config, baseline, stop or decision rule, host, slot, queue position and status.",
+    agent: false,
+    parameters: schema({ project: string }, ['project']),
+  },
+  {
+    name: 'plan_save',
+    description:
+      'Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name). Omitted fields keep their value; status cancelled keeps it for the record.',
+    agent: false,
+    parameters: schema(
+      {
+        project: string,
+        id: ledgerId,
+        name: { type: 'string', minLength: 1, maxLength: 256 },
+        parent: orNull({ type: 'string' }),
+        parentUpdate: orNull({ type: 'number' }),
+        hypothesis: { type: 'string', maxLength: 20000 },
+        change: { type: 'string', maxLength: 2000 },
+        config: orNull({ type: 'object' }),
+        baseline: orNull({ type: 'string' }),
+        rule: { type: 'string', maxLength: 5000 },
+        host: { type: 'string', maxLength: 200 },
+        slot: { type: 'string', maxLength: 200 },
+        queue: orNull({ type: 'integer' }),
+        status: { type: 'string', enum: ['planned', 'cancelled'] },
+        by: author,
+      },
+      ['project', 'id'],
+    ),
+  },
+  {
+    name: 'plan_delete',
+    description: 'Delete a planned run.',
+    agent: false,
+    parameters: schema({ project: string, id: ledgerId, by: author }, ['project', 'id']),
+  },
+  {
+    name: 'journal_list',
+    description: "List a run's journal entries, or every entry in a project, oldest first.",
+    agent: false,
+    parameters: schema({ run: string, project: string }),
+  },
+  {
+    name: 'journal_add',
+    description:
+      "Append a dated entry to a run's journal, optionally tied to an update or step; separate from the run's notes. Entries are never changed: key (or, without one, the run, update, step and text) makes repeating an addition a no-op.",
+    agent: false,
+    parameters: schema(
+      {
+        run: string,
+        text: { type: 'string', minLength: 1, maxLength: 20000 },
+        time: when,
+        update: { type: 'number' },
+        step: { type: 'number' },
+        key: ledgerId,
+        by: author,
+      },
+      ['run', 'text'],
+    ),
+  },
   {
     name: 'runs_config_diff',
     description:
@@ -632,6 +775,41 @@ export class Tools {
       case 'run_history_write':
         result = await this.db.call('historyWrite', a);
         break;
+      case 'findings_list':
+        await this.db.call('projectGet', a.project);
+        return { findings: await this.db.call('findings', a) };
+      case 'finding_get':
+        return this.db.call('findingGet', a);
+      case 'recipe_get':
+        await this.db.call('projectGet', a.project);
+        return this.db.call('recipe', a);
+      case 'plans_list':
+        await this.db.call('projectGet', a.project);
+        return { plans: await this.db.call('plans', a) };
+      case 'journal_list':
+        if (!a.run && !a.project)
+          throw managementError('RUN_NOT_FOUND', 'Name a run or a project.', {}, 400);
+        return { entries: await this.db.call('journal', a) };
+      case 'finding_save':
+      case 'finding_delete':
+      case 'recipe_set':
+      case 'plan_save':
+      case 'plan_delete':
+        await this.db.call('projectGet', a.project);
+        result = await this.db.call(
+          {
+            finding_save: 'findingSave',
+            finding_delete: 'findingDelete',
+            recipe_set: 'recipeSet',
+            plan_save: 'planSave',
+            plan_delete: 'planDelete',
+          }[name]!,
+          a,
+        );
+        break;
+      case 'journal_add':
+        result = { ...(await this.db.call('journalAdd', a)), id: a.run };
+        break;
       case 'runs_config_diff': {
         const run = await this.db.call('run', a.to);
         if (!run) throw managementError('RUN_NOT_FOUND', 'Run not found');
@@ -756,6 +934,7 @@ export class Tools {
               'run_metrics_rename',
               'run_metrics_rename_undo',
               'run_history_write',
+              'journal_add',
             ].includes(name)
           ? [result.id]
           : removedRuns,
