@@ -469,6 +469,14 @@ test('metric renames and history writes are tools with audit, summary and a CLI'
     payload: { id: run.id, renames: [{ from: 'old', to: '_step' }] },
   });
   assert.equal(refused.statusCode, 400);
+  // Refusals carry their code over HTTP, so scripts can tell them apart.
+  const conflict = await server.app.inject({
+    method: 'POST',
+    url: '/api/tools/run_history_write',
+    payload: { id: run.id, rows: [{ step: 1, values: { 'audit/x': 0.9 } }] },
+  });
+  assert.equal(conflict.statusCode, 409);
+  assert.equal(conflict.json().code, 'HISTORY_ROWS_REFUSED');
 });
 
 test('a matched row with no record is added at the given or the implied step', async (t) => {

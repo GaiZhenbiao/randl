@@ -43,6 +43,11 @@ const codes = new Set([
   'AUTH_INVALID_KEY',
   'CONVERSATION_NOT_FOUND',
   'PLUGIN_OPTION_INVALID',
+  // Run history edits (run_metrics_rename, run_history_write): scripts branch on these.
+  'METRIC_RENAMES_REFUSED',
+  'METRIC_RENAME_NOT_FOUND',
+  'METRIC_RENAME_CHANGED',
+  'HISTORY_ROWS_REFUSED',
   ...agentErrorCodes,
 ]);
 export type ErrorFields = Error & {
