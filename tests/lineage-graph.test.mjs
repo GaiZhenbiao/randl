@@ -19,6 +19,7 @@ const {
   wordDiff,
   structuredDiff,
   entryOf,
+  linkStatus,
 } = await import('data:text/javascript;base64,' + Buffer.from(js).toString('base64'));
 
 const node = (id, extra = {}) => ({
@@ -241,4 +242,17 @@ test('lists of objects diff by identity, down to the changed fields', () => {
   assert.deepEqual(structuredDiff({ a: 1 }, { a: 1 }), []);
   // Key order is not a change.
   assert.deepEqual(structuredDiff([{ name: 'x', a: 1, b: 2 }], [{ b: 2, a: 1, name: 'x' }]), []);
+});
+
+test('links take the colour of the first chosen status of the run they lead to', () => {
+  const run = (verdict, state) => ({ verdict, state });
+  assert.equal(linkStatus(run('adopted', 'finished'), ['adopted']), 'adopted');
+  assert.equal(linkStatus(run('rejected', 'finished'), ['adopted']), null);
+  // Verdicts come before states; pending is a running verdict; failed counts as crashed.
+  assert.equal(linkStatus(run('adopted', 'killed'), ['stopped', 'adopted']), 'adopted');
+  assert.equal(linkStatus(run(null, 'killed'), ['stopped', 'adopted']), 'stopped');
+  assert.equal(linkStatus(run('running', 'running'), ['pending']), 'pending');
+  assert.equal(linkStatus(run(null, 'failed'), ['crashed']), 'crashed');
+  assert.equal(linkStatus(run(null, 'finished'), ['none']), 'none');
+  assert.equal(linkStatus(undefined, ['adopted']), null);
 });

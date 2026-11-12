@@ -223,7 +223,8 @@ export const toolCatalog = [
   },
   {
     name: 'runs_list',
-    description: 'List all lightweight run metadata. Optional project id filters entity/project.',
+    description:
+      "List all lightweight run metadata. Optional project id filters entity/project. state is running, finished, failed, crashed or killed (stopped on purpose; state_reason says why).",
     parameters: schema({ project: string }),
   },
   {
@@ -310,6 +311,21 @@ export const toolCatalog = [
         startKey: { type: 'string', maxLength: 512 },
       },
       ['id'],
+    ),
+  },
+  {
+    name: 'run_state_set',
+    description:
+      "Mark a run that has ended as stopped on purpose (state stopped: ended deliberately before its plan, as opposed to finished at its budget, failed or crashed), or set it back to finished, failed or crashed. reason says why it was stopped and shows on the run page and in Lineage. A running run is refused (code RUN_STATE_RUNNING): mark it once it ends. A stopped run stays stopped when its SDK or a re-sync later reports it finished. by names the caller in the audit log; the same request again changes nothing; dryRun reports what would change. Run lists report a stopped run's state as killed.",
+    parameters: schema(
+      {
+        id: string,
+        state: { type: 'string', enum: ['stopped', 'finished', 'failed', 'crashed'] },
+        reason: { type: 'string', maxLength: 2000 },
+        by: author,
+        dryRun,
+      },
+      ['id', 'state'],
     ),
   },
   {
@@ -850,6 +866,11 @@ export class Tools {
         result = await lineageSettings(this.db, id);
         break;
       }
+      case 'run_state_set':
+        result = await this.db.call('runStateSet', a);
+        // A dry run or a repeat changes nothing, so it is not audited.
+        if (a.dryRun || result.status === 'unchanged') return result;
+        break;
       case 'run_metadata_update': {
         const { by: _, ...changes } = a;
         result = await this.db.call('runMetadataUpdate', changes);

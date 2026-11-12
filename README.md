@@ -133,7 +133,9 @@ colors. Panels, run selections, colors, filters and chart settings are saved in
 - Drag across a chart to zoom; only the missing points are fetched.
 - Four smoothing methods (EMA, time-weighted EMA, Gaussian and centered running average), log
   axes, fixed ranges and **Exclude outliers from the Y range**, set per panel, per
-  section or for the whole workspace.
+  section or for the whole workspace. The original traces behind smoothed lines are drawn
+  beneath them, lighter and fainter as more runs share a chart; hovering a run brings its
+  trace back.
 - Export a panel as PNG or its data as CSV.
 
 ### Grouping and aggregation
@@ -185,6 +187,21 @@ Search, filter, sort and group runs, choose up to 32 columns from config, summar
 run fields, and select runs to tag, stop or delete them. Deleted runs can be restored
 from project settings.
 
+A run is running, finished, failed, crashed (silent for 10 minutes) or **stopped**: ended on
+purpose before its plan, shown with a purple square wherever its state appears. A run stopped
+from randl is stopped when its SDK ends; one stopped elsewhere is marked afterwards, with the
+reason shown on its run page and in Lineage, and it stays stopped if its SDK later reports
+it finished:
+
+```sh
+randl runs set-state --id chuanhu/AeroSeeker_Forest/RUN --state stopped \
+  --reason "Collisions kept rising after u550000" --by me
+```
+
+The tool is `run_state_set` (`{"id", "state": "stopped" | "finished" | "failed" | "crashed",
+"reason", "by", "dryRun"}`); a running run is refused, and run lists report stopped runs as
+`killed`, as W&B does.
+
 ### Run lineage
 
 The **Lineage** page draws a project's runs as cards linked from the run each one started
@@ -196,7 +213,7 @@ latest and best value of the project's lineage metric. Running runs have an acce
 ripples (it holds still when the system asks for reduced motion). Each link is labelled with the
 run's logged `change` sentence (whole on hover), or, without one, any further relations
 such as `+grown head` and the changed config keys that set the run apart (those that change on
-the fewest links come first), and a legend explains the line styles. Select a card for what changed, its hypothesis, result and verdict, relations, config
+the fewest links come first), and the legend under **i** explains the line styles. Select a card for what changed, its hypothesis, result and verdict, relations, config
 bases, compute segments, the metric along its lineage, and every config difference from its
 parent or from another run you pick, as a word diff under each key; lists of objects (such as
 `data.scenes`) are matched by name, label or ID and fold under a count of the entries and
@@ -207,16 +224,17 @@ The controls sit in the page header at every width: **Filters** (group, tag, hos
 rejected branches, show runs without lineage; the button counts the active ones); **View**
 (arrange cards by lineage depth, start update or start time, colour them by run or host, and
 zoom in steps); the actions for the open or selected runs, as icons; an **i** button with the
-counts; **Fit all**, **Focus running runs** and **Lineage settings** (inside **i** on phones);
-and the run search at the right end. The search matches the start of a run's short name
+counts and the legend (link styles and card markings); **Lineage settings** (inside **i** on
+phones); and the run search at the right end. Zoom out, zoom in, **Fit all** and **Focus
+running runs** float at the canvas's bottom-left, with the zoom level beside them when it is
+not 100% (select it to return to 100%). The search matches the start of a run's short name
 (`v63` finds v630–v639), its name or ID anywhere, shows those runs even inside collapsed
 branches, and lists them to open one (arrow keys and Enter, or a click).
 
 The page opens at 100% on the running runs (all of them when they fit, else the one that
 reported last). Two-finger touchpad scrolling, the mouse wheel or Shift+drag pans (the cursor
 becomes a hand while Shift is held); pinching (or Ctrl+wheel) zooms around the pointer; on touch
-screens, one finger pans and two pinch. **Fit all** and
-**Focus running runs** are in the toolbar. The arrangement, colouring and the two checkboxes are
+screens, one finger pans and two pinch. The arrangement, colouring and the two checkboxes are
 remembered per project in this browser.
 
 To compare runs, drag a box around them on the canvas (the runs it covers are selected as it

@@ -15,7 +15,9 @@
       ? 'green'
       : ['failed', 'crashed'].includes(run.state)
         ? 'red'
-        : 'gray'}
+        : run.state === 'killed'
+          ? 'purple'
+          : 'gray'}
   >{run.stop_requested && run.state === 'running'
     ? $t('runs.stop.requested')
     : statusLabel(run.state, $t)}</Tag

@@ -217,7 +217,7 @@
   </header>
 
   <div class="lineage-details-body">
-    {#if node.change || node.hypothesis || node.result || node.verdict || node.recipe !== null}<section
+    {#if node.change || node.hypothesis || node.result || node.verdict || node.recipe !== null || (node.state === 'killed' && node.stateReason)}<section
         class="lineage-story"
       >
         <dl class="lineage-fields">
@@ -232,6 +232,10 @@
           {#if node.result}<div>
               <dt>{$t('lineage.panel.result')}</dt>
               <dd class="lineage-hypothesis">{node.result}</dd>
+            </div>{/if}
+          {#if node.state === 'killed' && node.stateReason}<div>
+              <dt>{$t('runs.stopped.reason')}</dt>
+              <dd class="lineage-hypothesis">{node.stateReason}</dd>
             </div>{/if}
           {#if node.verdict}<div>
               <dt>{$t('lineage.panel.verdict')}</dt>

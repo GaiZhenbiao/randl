@@ -26,7 +26,8 @@
   import SettingsAdjust from 'carbon-icons-svelte/lib/SettingsAdjust.svelte';
   import ChartLine from 'carbon-icons-svelte/lib/ChartLine.svelte';
   import { tool, apiMessage } from './api';
-  import { t, type Message } from './i18n';
+  import { t, number, type Message } from './i18n';
+  import StarFilled from 'carbon-icons-svelte/lib/StarFilled.svelte';
   import { statusLabel } from './ui';
   import { runPalette } from './run-colors';
   import type { Plugin, Run } from './types';
@@ -37,6 +38,9 @@
     boundsOf,
     cardsIn,
     searchRuns,
+    linkStatus,
+    linkStatuses,
+    type LinkStatus,
     descendants,
     edgePath,
     indexGraph,
@@ -89,7 +93,12 @@
   // The page's choices for a project, kept in this browser.
   type ColorBy = 'run' | 'host';
   const prefsKey = untrack(() => 'randl.lineage:' + project);
-  function readPrefs(): { axis?: Axis; colorBy?: ColorBy; filters?: Partial<Filters> } {
+  function readPrefs(): {
+    axis?: Axis;
+    colorBy?: ColorBy;
+    linkColors?: string[];
+    filters?: Partial<Filters>;
+  } {
     try {
       return JSON.parse(localStorage.getItem(prefsKey) || '{}');
     } catch {
@@ -111,6 +120,14 @@
     }),
     axis = $state<Axis>(prefs.axis ?? 'depth'),
     colorBy = $state<ColorBy>(prefs.colorBy ?? 'run'),
+    // Links into runs of these statuses take the status's colour; adopted by default.
+    linkColors = $state<LinkStatus[]>(
+      Array.isArray(prefs.linkColors)
+        ? (prefs.linkColors.filter((status) =>
+            (linkStatuses as readonly string[]).includes(status),
+          ) as LinkStatus[])
+        : ['adopted'],
+    ),
     // The run whose details are open (`?run=`), and the runs chosen to compare (`?select=`).
     selected = $state(params.get('run') || ''),
     picked = $state(
@@ -126,6 +143,7 @@
     const value = {
       axis,
       colorBy,
+      linkColors,
       filters: { collapseRejected: filters.collapseRejected, showIsolated: filters.showIsolated },
     };
     try {
@@ -267,9 +285,11 @@
   /** Shows a canvas box centred, at a scale if given, else the largest up to 100% that fits. */
   function frame(box: { x: number; y: number; right: number; bottom: number }, at?: number) {
     if (!viewport) return;
+    // The bottom band holds the zoom controls, so framed cards stay above them.
     const margin = 32,
+      reserve = 48,
       width = viewport.clientWidth - margin * 2,
-      height = viewport.clientHeight - margin * 2;
+      height = viewport.clientHeight - margin * 2 - reserve;
     scale =
       at ??
       Math.min(
@@ -277,7 +297,7 @@
         Math.max(minScale, Math.min(width / (box.right - box.x), height / (box.bottom - box.y))),
       );
     tx = viewport.clientWidth / 2 - ((box.x + box.right) / 2) * scale;
-    ty = viewport.clientHeight / 2 - ((box.y + box.bottom) / 2) * scale;
+    ty = (viewport.clientHeight - reserve) / 2 - ((box.y + box.bottom) / 2) * scale;
   }
   function fit() {
     if (layout) frame({ x: 0, y: 0, right: layout.width, bottom: layout.height });
@@ -651,6 +671,16 @@
     ].filter(Boolean).length,
   );
   let showLabels = $derived(scale >= 0.55);
+  const linkStatusLabels = {
+    adopted: 'lineage.linkStatus.adopted',
+    rejected: 'lineage.linkStatus.rejected',
+    pending: 'lineage.linkStatus.pending',
+    none: 'lineage.linkStatus.none',
+    running: 'lineage.linkStatus.running',
+    finished: 'lineage.linkStatus.finished',
+    crashed: 'lineage.linkStatus.crashed',
+    stopped: 'lineage.linkStatus.stopped',
+  } as const;
   // Search suggestions: the best-matching runs, chosen with the arrows and Enter or a click.
   let suggested = $derived(graph ? searchRuns(graph.nodes, filters.search) : []),
     active = $state(0);
@@ -773,31 +803,14 @@
         on:click={(event) => openMenu('info', event)}
       />
       {#if !narrow}<Button
-        kind="ghost"
-        size="small"
-        icon={FitToScreen}
-        iconDescription={$t('lineage.zoom.fit')}
-        tooltipPosition="bottom"
-        on:click={fit}
-      />
-      <Button
-        kind="ghost"
-        size="small"
-        icon={InProgress}
-        iconDescription={$t('lineage.zoom.running')}
-        tooltipPosition="bottom"
-        disabled={!runningIds.length}
-        on:click={focusRunning}
-      />
-      <Button
-        kind="ghost"
-        size="small"
-        icon={SettingsAdjust}
-        iconDescription={$t('lineage.settings.open')}
-        tooltipPosition="bottom"
-        tooltipAlignment="end"
-        on:click={() => (settingsOpen = true)}
-      />{/if}
+          kind="ghost"
+          size="small"
+          icon={SettingsAdjust}
+          iconDescription={$t('lineage.settings.open')}
+          tooltipPosition="bottom"
+          tooltipAlignment="end"
+          on:click={() => (settingsOpen = true)}
+        />{/if}
     </span>
   </div>
 {/snippet}
@@ -902,22 +915,26 @@
               text={$t('lineage.colorBy.host')}
             /></Select
           >
-          <div class="lineage-zoom">
-            <span>{$t('lineage.zoom.level', { percent: Math.round(scale * 100) })}</span>
-            <Button
-              kind="ghost"
-              size="small"
-              icon={ZoomOut}
-              iconDescription={$t('lineage.zoom.out')}
-              on:click={() => zoom(1 / 1.25)}
-            /><Button
-              kind="ghost"
-              size="small"
-              icon={ZoomIn}
-              iconDescription={$t('lineage.zoom.in')}
-              on:click={() => zoom(1.25)}
-            />
-          </div>
+          <fieldset class="lineage-link-colors">
+            <legend class="bx--label">{$t('lineage.linkColors.label')}</legend>
+            <div class="lineage-link-colors-all">
+              <Button kind="ghost" size="small" on:click={() => (linkColors = [...linkStatuses])}
+                >{$t('lineage.linkColors.all')}</Button
+              ><Button kind="ghost" size="small" on:click={() => (linkColors = [])}
+                >{$t('lineage.linkColors.none')}</Button
+              >
+            </div>
+            {#each linkStatuses as status (status)}<Checkbox
+                labelText={$t(linkStatusLabels[status])}
+                checked={linkColors.includes(status)}
+                on:change={(event) => {
+                  const on = (event.target as HTMLInputElement).checked;
+                  linkColors = linkStatuses.filter((item) =>
+                    item === status ? on : linkColors.includes(item),
+                  );
+                }}
+              />{/each}
+          </fieldset>
         </div>{:else if graph && visible}<ul class="lineage-info">
           <li>{$t('lineage.summary.shown', { count: visible.shown.length })}</li>
           {#if visible.isolatedHidden}<li>
@@ -931,16 +948,70 @@
             </li>{/if}
           <li class="lineage-muted">{$t('lineage.selection.hint')}</li>
         </ul>
+        <dl class="lineage-legend" aria-label={$t('lineage.legend.title')}>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.logged')}</dd>
+          </div>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge matched" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.matched')}</dd>
+          </div>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge continues" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.continues')}</dd>
+          </div>
+          <div>
+            <dt>
+              <svg width="28" height="8" aria-hidden="true"
+                ><path class="lineage-edge base" d="M0,4 H28" /></svg
+              >
+            </dt>
+            <dd>{$t('lineage.legend.base')}</dd>
+          </div>
+          {#each linkColors as status (status)}<div>
+              <dt>
+                <svg width="28" height="8" aria-hidden="true"
+                  ><path class="lineage-edge" data-status={status} d="M0,4 H28" /></svg
+                >
+              </dt>
+              <dd>{$t('lineage.legend.linkInto', { status: $t(linkStatusLabels[status]) })}</dd>
+            </div>{/each}
+          <div>
+            <dt><span class="lineage-legend-running"></span></dt>
+            <dd>{$t('lineage.legend.running')}</dd>
+          </div>
+          <div>
+            <dt><span class="lineage-legend-card verdict-adopted"></span></dt>
+            <dd>{$t('lineage.legend.adopted')}</dd>
+          </div>
+          <div>
+            <dt><span class="lineage-legend-card verdict-rejected"></span></dt>
+            <dd>{$t('lineage.legend.rejected')}</dd>
+          </div>
+          <div>
+            <dt><span class="lineage-legend-card planned"></span></dt>
+            <dd>{$t('lineage.legend.planned')}</dd>
+          </div>
+          <div>
+            <dt><StarFilled size={16} class="lineage-recipe-icon" /></dt>
+            <dd>{$t('lineage.legend.recipe')}</dd>
+          </div>
+        </dl>
         {#if narrow}<div class="lineage-info-actions">
-            <Button kind="ghost" size="small" icon={FitToScreen} on:click={fit}
-              >{$t('lineage.zoom.fit')}</Button
-            ><Button
-              kind="ghost"
-              size="small"
-              icon={InProgress}
-              disabled={!runningIds.length}
-              on:click={focusRunning}>{$t('lineage.zoom.running')}</Button
-            ><Button
+            <Button
               kind="ghost"
               size="small"
               icon={SettingsAdjust}
@@ -1001,7 +1072,7 @@
                   class:matched={!edge.explicit && !continues(edge)}
                   class:continues={continues(edge)}
                   class:planned={edge.relation === 'planned'}
-                  class:rejected={index.nodes.get(edge.target)?.verdict === 'rejected'}
+                  data-status={linkStatus(index.nodes.get(edge.target), linkColors)}
                   d={edgePath(from, to)}
                 />{/if}{/each}
           </svg>
@@ -1042,44 +1113,49 @@
           style:width={Math.abs(lasso.x2 - lasso.x1) + 'px'}
           style:height={Math.abs(lasso.y2 - lasso.y1) + 'px'}
         ></div>{/if}
-      {#if layout && visible?.shown.length}<dl class="lineage-legend">
-          <div>
-            <dt>
-              <svg width="28" height="8" aria-hidden="true"
-                ><path class="lineage-edge" d="M0,4 H28" /></svg
-              >
-            </dt>
-            <dd>{$t('lineage.legend.logged')}</dd>
-          </div>
-          <div>
-            <dt>
-              <svg width="28" height="8" aria-hidden="true"
-                ><path class="lineage-edge matched" d="M0,4 H28" /></svg
-              >
-            </dt>
-            <dd>{$t('lineage.legend.matched')}</dd>
-          </div>
-          <div>
-            <dt>
-              <svg width="28" height="8" aria-hidden="true"
-                ><path class="lineage-edge continues" d="M0,4 H28" /></svg
-              >
-            </dt>
-            <dd>{$t('lineage.legend.continues')}</dd>
-          </div>
-          <div>
-            <dt>
-              <svg width="28" height="8" aria-hidden="true"
-                ><path class="lineage-edge base" d="M0,4 H28" /></svg
-              >
-            </dt>
-            <dd>{$t('lineage.legend.base')}</dd>
-          </div>
-          <div>
-            <dt><span class="lineage-legend-running"></span></dt>
-            <dd>{$t('lineage.legend.running')}</dd>
-          </div>
-        </dl>{/if}
+      {#if layout && visible?.shown.length}<div
+          class="lineage-zoom-controls"
+          role="group"
+          aria-label={$t('lineage.zoom.label')}
+        >
+          <Button
+            kind="ghost"
+            size="small"
+            icon={ZoomOut}
+            iconDescription={$t('lineage.zoom.out')}
+            tooltipPosition="top"
+            tooltipAlignment="start"
+            on:click={() => zoom(1 / 1.25)}
+          /><Button
+            kind="ghost"
+            size="small"
+            icon={ZoomIn}
+            iconDescription={$t('lineage.zoom.in')}
+            tooltipPosition="top"
+            on:click={() => zoom(1.25)}
+          /><Button
+            kind="ghost"
+            size="small"
+            icon={FitToScreen}
+            iconDescription={$t('lineage.zoom.fit')}
+            tooltipPosition="top"
+            on:click={fit}
+          /><Button
+            kind="ghost"
+            size="small"
+            icon={InProgress}
+            iconDescription={$t('lineage.zoom.running')}
+            tooltipPosition="top"
+            disabled={!runningIds.length}
+            on:click={focusRunning}
+          />{#if Math.round(scale * 100) !== 100}<button
+              type="button"
+              class="lineage-zoom-level"
+              title={$t('lineage.zoom.reset')}
+              aria-label={$t('lineage.zoom.resetTo', { percent: Math.round(scale * 100) })}
+              onclick={() => zoom(1 / scale)}>{$number(Math.round(scale * 100))}%</button
+            >{/if}
+        </div>{/if}
     </div>
     {#if selected && index?.nodes.has(selected) && graph}<LineageDetails
         node={index.nodes.get(selected)!}

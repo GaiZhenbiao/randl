@@ -36,6 +36,7 @@ const allowed = new Set([
   'alerts',
   'runEdit',
   'runMetadataUpdate',
+  'runStateSet',
   'metricsRename',
   'metricsRenameUndo',
   'historyWrite',

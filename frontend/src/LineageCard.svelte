@@ -55,7 +55,9 @@
       ? [
           node.planned.host,
           node.planned.slot,
-          node.planned.queue === null ? '' : $t('lineage.plan.queue', { position: node.planned.queue }),
+          node.planned.queue === null
+            ? ''
+            : $t('lineage.plan.queue', { position: node.planned.queue }),
         ]
           .filter(Boolean)
           .join(' · ')
@@ -102,7 +104,11 @@
         aria-label={$t('lineage.selection.picked')}
       />{/if}
     <span class="lineage-card-state state-{node.state}"
-      >{node.planned ? $t('lineage.plan.state') : statusLabel(node.state, $t)}</span
+      >{#if node.state === 'killed' && !node.planned}<span
+          class="run-state"
+          data-state="killed"
+          aria-hidden="true"
+        ></span>{/if}{node.planned ? $t('lineage.plan.state') : statusLabel(node.state, $t)}</span
     >
   </span>
   <span class="lineage-card-delta">{delta || node.display_name}</span>

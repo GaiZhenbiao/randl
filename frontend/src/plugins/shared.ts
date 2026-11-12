@@ -193,10 +193,48 @@ export function smoothingFor(ctx: PanelContext) {
     ),
   };
 }
+/** A hex colour moved toward another by `amount` (0 keeps it); other colours stay as they are. */
+export function mixColor(from: string, to: string, amount: number) {
+  const parse = (hex: string) => {
+    const value = hex.replace('#', '');
+    const full = value.length === 3 ? [...value].map((c) => c + c).join('') : value;
+    return /^[0-9a-f]{6}$/i.test(full)
+      ? [0, 2, 4].map((at) => parseInt(full.slice(at, at + 2), 16))
+      : null;
+  };
+  const a = parse(from),
+    b = parse(to);
+  if (!a || !b || amount <= 0) return from;
+  return (
+    '#' +
+    a
+      .map((channel, index) =>
+        Math.round(channel + (b[index] - channel) * Math.min(1, amount))
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
+}
+/**
+ * How the faint original traces behind smoothed lines are drawn for `count` plotted series:
+ * they recede as more runs share the chart, so the smoothed lines stay readable, and lighten
+ * toward the background once several overlap.
+ */
+export function originalStyle(count: number) {
+  const n = Math.max(1, count);
+  return {
+    opacity: Math.min(0.25, Math.max(0.04, 0.25 * Math.sqrt(4 / n))),
+    lighten: n <= 4 ? 0 : Math.min(0.5, 0.15 + n / 200),
+    width: n > 30 ? 0.75 : 1,
+  };
+}
 export function lines(ctx: PanelContext, area = false): any[] {
   const settings = ctx.panel.settings || {},
     { method, amount, spacing } = smoothingFor(ctx),
-    metrics = ctx.panel.metrics?.length ? ctx.panel.metrics : [ctx.panel.metric];
+    metrics = ctx.panel.metrics?.length ? ctx.panel.metrics : [ctx.panel.metric],
+    original = originalStyle(ctx.data.series.length * metrics.length),
+    background = ctx.dark ? '#161616' : '#ffffff';
   const result: any[] = [];
   for (const series of ctx.data.series)
     for (const [metric, index] of metrics.map((m, i) => [m, i] as const)) {
@@ -206,6 +244,8 @@ export function lines(ctx: PanelContext, area = false): any[] {
         source = smoothingSource(series, metric, method, amount),
         points = smooth(source, method, amount, spacing),
         name = legendName(ctx, series, metric, metrics.length > 1);
+      // Original traces sit beneath every smoothed line (z) and recede as runs are added; a
+      // hovered or focused run brings its own back.
       if (settings.showOriginal && method !== 'none')
         result.push({
           name,
@@ -213,7 +253,16 @@ export function lines(ctx: PanelContext, area = false): any[] {
           type: 'line',
           data: raw,
           showSymbol: false,
-          lineStyle: { color: color(series.id, ctx.colors, ctx.dark), width: 1, opacity: 0.25 },
+          z: 1,
+          lineStyle: {
+            color: mixColor(color(series.id, ctx.colors, ctx.dark), background, original.lighten),
+            width: original.width,
+            opacity: original.opacity,
+          },
+          emphasis: {
+            lineStyle: { color: color(series.id, ctx.colors, ctx.dark), opacity: 0.6, width: 1 },
+          },
+          blur: { lineStyle: { opacity: original.opacity / 2 } },
           silent: true,
         });
       const band = (series as any).bands?.[metric] as number[][] | undefined;
@@ -260,6 +309,7 @@ export function lines(ctx: PanelContext, area = false): any[] {
         randlRunIds: series.runIds || [series.id],
         type: 'line',
         data: points,
+        z: 2,
         showSymbol: settings.showPoints || points.length === 1,
         ...(points.length === 1 && !settings.showPoints
           ? { symbol: 'circle', symbolSize: 6 }

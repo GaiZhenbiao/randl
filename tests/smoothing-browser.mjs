@@ -228,6 +228,97 @@ try {
   checks.push(
     `a downsampled skewed metric smooths to its mean (${level.toFixed(3)} vs ${truth.toFixed(3)})`,
   );
+
+  // With many runs the original traces recede beneath every smoothed line, and a highlighted
+  // run's original trace comes back.
+  const crowd = [];
+  for (let r = 0; r < 40; r++) {
+    const noisy = await server.db.call('upsert', {
+      entity: 'test',
+      project: 'crowd',
+      name: 'r' + r,
+      displayName: 'Run ' + r,
+    });
+    await server.db.call('ingest', noisy.id, {
+      files: {
+        'wandb-history.jsonl': {
+          offset: 0,
+          content: Array.from({ length: 80 }, (_, i) =>
+            JSON.stringify({ _step: i, bias: (i % 2 ? 1 : -1) * 0.9 + r / 100 }),
+          ),
+        },
+      },
+      complete: true,
+    });
+    crowd.push(noisy.id);
+  }
+  const crowdView = await server.tools.execute('view_create', {
+    project: 'test/crowd',
+    name: 'Crowd',
+    body: {
+      generation: 'manual',
+      panels: [
+        {
+          id: 'crowd-bias',
+          plugin: 'line',
+          metric: 'bias',
+          metrics: ['bias'],
+          title: 'Bias',
+          section: 'crowd',
+          settings: { smoothingMethod: 'twema', smoothingValue: 0.9, showOriginal: true },
+        },
+      ],
+      sections: [{ id: 'crowd', name: 'crowd' }],
+      sectionLayouts: { crowd: { width: 600, height: 300, rows: 1 } },
+      visible: crowd,
+      solo: [],
+    },
+  });
+  await page.goto(base + '/test/crowd/workspace?view=' + crowdView.id);
+  const crowdChart = page.locator('[data-panel-id="crowd-bias"] [_echarts_instance_]');
+  await expect(crowdChart.locator('canvas').first()).toBeVisible();
+  await expect
+    .poll(() =>
+      crowdChart.evaluate(async (host) => {
+        const url = performance
+          .getEntriesByType('resource')
+          .map((e) => e.name)
+          .find((n) => /\/assets\/engine-[^/]+\.js/.test(n));
+        const mod = await import(url);
+        return mod[Object.keys(mod).find((key) => mod[key]?.getInstanceByDom)]
+          .getInstanceByDom(host)
+          .getOption()
+          .series.filter((s) => s.randlKey).length;
+      }),
+    )
+    .toBe(40);
+  const styles = await crowdChart.evaluate(async (host) => {
+    const url = performance
+      .getEntriesByType('resource')
+      .map((e) => e.name)
+      .find((n) => /\/assets\/engine-[^/]+\.js/.test(n));
+    const mod = await import(url),
+      series = Object.values(mod)
+        .find((v) => v?.getInstanceByDom)
+        .getInstanceByDom(host)
+        .getOption().series;
+    const originals = series.filter((s) => !s.randlKey && s.silent),
+      smoothed = series.filter((s) => s.randlKey);
+    return {
+      opacity: originals[0].lineStyle.opacity,
+      color: originals[0].lineStyle.color,
+      lifted: originals[0].emphasis.lineStyle.opacity,
+      runColor: smoothed[0].itemStyle.color,
+      below: Math.max(...originals.map((s) => s.z)) < Math.min(...smoothed.map((s) => s.z)),
+    };
+  });
+  assert.ok(styles.opacity <= 0.1, 'many original traces recede: ' + styles.opacity);
+  assert.ok(styles.below, 'original traces sit beneath every smoothed line');
+  assert.notEqual(styles.color, styles.runColor, 'original traces are lightened');
+  assert.ok(styles.lifted > styles.opacity * 3, 'a highlighted run lifts its original trace');
+  checks.push(
+    `with 40 runs original traces recede to ${styles.opacity.toFixed(3)}, lightened and beneath the smoothed lines`,
+  );
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks, roughnessRatios: results, errors }, null, 2));
 } catch (error) {

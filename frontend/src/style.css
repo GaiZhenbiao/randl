@@ -2223,8 +2223,34 @@ aside {
   stroke-dasharray: 1 5;
   stroke-linecap: round;
 }
-.lineage-edge.rejected {
+/* Links into runs of the statuses chosen under View take the status's colour. */
+.lineage-edge[data-status='adopted'],
+.lineage-edge[data-status='finished'] {
+  stroke: var(--cds-support-02);
+}
+.lineage-edge[data-status='rejected'],
+.lineage-edge[data-status='crashed'] {
   stroke: var(--cds-support-01);
+}
+.lineage-edge[data-status='pending'],
+.lineage-edge[data-status='running'] {
+  stroke: var(--cds-interactive-04);
+}
+.lineage-edge[data-status='none'] {
+  stroke: var(--cds-text-02);
+}
+.lineage-edge[data-status='stopped'] {
+  stroke: var(--run-stopped);
+}
+.lineage-link-colors {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lineage-link-colors-all {
+  display: flex;
+  gap: 4px;
+  margin: -4px 0 4px -12px;
 }
 .lineage-edge.on-path {
   stroke: var(--cds-text-01);
@@ -2456,6 +2482,10 @@ aside {
 .lineage-state.state-finished::before {
   background: var(--cds-support-02);
 }
+.lineage-state.state-killed::before {
+  border-radius: 1px;
+  background: var(--run-stopped);
+}
 .lineage-state.state-crashed::before,
 .lineage-state.state-failed::before {
   background: var(--cds-support-01);
@@ -2684,20 +2714,72 @@ aside {
   background: color-mix(in srgb, var(--cds-interactive-04) 12%, transparent);
   pointer-events: none;
 }
+/* The legend, in the Info popup: link styles and card markings. */
 .lineage-legend {
-  position: absolute;
-  bottom: 8px;
-  left: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  max-width: calc(100% - 16px);
-  padding: 6px 8px;
-  border: 1px solid var(--cds-ui-03);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--cds-ui-03);
   font-size: 12px;
   color: var(--cds-text-02);
+}
+.lineage-legend dt {
+  display: flex;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+}
+.lineage-legend-card {
+  display: block;
+  width: 24px;
+  height: 14px;
+  border: 1px solid var(--cds-ui-03);
+  border-top: 3px solid var(--cds-ui-03);
   background: var(--cds-ui-01);
-  pointer-events: none;
+}
+.lineage-legend-card.verdict-adopted {
+  border-top-color: var(--cds-support-02);
+}
+.lineage-legend-card.verdict-rejected {
+  border-top-color: var(--cds-support-01);
+}
+.lineage-legend-card.planned {
+  border-style: dashed;
+  background: var(--cds-ui-background);
+}
+/* Zoom controls float at the canvas's bottom-left; the percentage shows away from 100%. */
+.lineage-zoom-controls {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--cds-ui-03);
+  background: var(--cds-ui-01);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 15%);
+}
+.lineage-zoom-level {
+  height: 32px;
+  min-width: 52px;
+  padding: 0 8px;
+  border: 0;
+  border-left: 1px solid var(--cds-ui-03);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--cds-text-01);
+  background: none;
+  cursor: pointer;
+}
+.lineage-zoom-level:hover {
+  background: var(--cds-hover-ui);
+}
+.lineage-zoom-level:focus-visible {
+  outline: 2px solid var(--cds-focus);
+  outline-offset: -2px;
 }
 .lineage-legend > div {
   display: flex;
@@ -3285,6 +3367,23 @@ aside {
 .run-state[data-state='failed'],
 .run-state[data-state='crashed'] {
   background: var(--cds-support-01);
+}
+/* Stopped on purpose: a purple square, the stop symbol, wherever a run's state shows. */
+.run-state[data-state='killed'] {
+  border-radius: 1px;
+  background: var(--run-stopped);
+}
+:root {
+  --run-stopped: #8a3ffc;
+}
+[theme='g90'],
+[theme='g100'] {
+  --run-stopped: #a56eff;
+}
+.run-state-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 @media (max-width: 900px) {
   .panel-editor-layout {
@@ -7173,6 +7272,10 @@ th.findings-col-citations .findings-sort {
 .occupancy-bar.kind-past.ended-crashed,
 .occupancy-bar.kind-past.ended-failed {
   border-right: 2px solid var(--cds-support-01);
+}
+/* Stopped on purpose: ends on the stopped colour. */
+.occupancy-bar.kind-past.ended-killed {
+  border-right: 3px solid var(--run-stopped);
 }
 .occupancy-bar.kind-running {
   color: #fff;

@@ -146,6 +146,29 @@ try {
   );
   checks.push('Keyboard focus on a cut name shows it whole');
 
+  // A run marked stopped shows the stopped square and its reason wherever its state shows.
+  await call('run_state_set', {
+    id: childId,
+    state: 'stopped',
+    reason: 'Holds fell after u1500',
+    by: 'test',
+  });
+  await page.goto(`${origin}/test/names/runs`);
+  const childRow = page.getByRole('row', { name: /v701_child/ });
+  await expect(childRow).toContainText('Stopped');
+  await expect(childRow.locator('.run-state[data-state="killed"]')).toHaveCount(1);
+  await page.goto(`${origin}/test/names/runs/child`);
+  await expect(page.locator('.run-state-tag')).toHaveText('Stopped');
+  await expect(page.locator('main')).toContainText('Holds fell after u1500');
+  await page.goto(`${origin}/test/names/lineage?run=test%2Fnames%2Fchild`);
+  await expect(page.locator('.lineage-details')).toContainText('Holds fell after u1500');
+  await expect(
+    page.locator('.lineage-card', { hasText: 'v701' }).locator('.run-state[data-state="killed"]'),
+  ).toHaveCount(1);
+  checks.push(
+    'A run marked stopped shows its square and reason in the table, run page and Lineage',
+  );
+
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ checks }, null, 2));
 } finally {

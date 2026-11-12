@@ -78,6 +78,8 @@ export type LineageNode = {
   result: string | null;
   /** Why the verdict was given (`lineage.verdict.reason`). */
   verdictReason: string | null;
+  /** Why the run was stopped on purpose, when it was marked so (run_state_set). */
+  stateReason?: string;
   recipe: Json | null;
   jobType: string;
   latest: number | null;

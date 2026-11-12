@@ -327,6 +327,9 @@ export function create({
     else if (bar.kind === 'planned' && bar.budget != null)
       lines.push(t('occupancy.tooltip.updates', { updates: numbers.format(bar.budget) }));
     if (bar.inferred) lines.push(t('occupancy.tooltip.inferred'));
+    // How a past run ended, when it did not simply finish.
+    if (bar.kind === 'past' && bar.run && bar.state !== 'finished')
+      lines.push(t(('runs.state.' + bar.state) as never));
     // Every other run on these GPUs at the same time.
     const sharing = [
       ...new Set(

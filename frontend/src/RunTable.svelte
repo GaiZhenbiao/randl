@@ -526,7 +526,9 @@
             onclick={(event) => interceptLink(event, () => onrun(run))}
             ><span class="table-link-text">{cell.value}</span></a
           >
-        </div>{:else}<span class="table-cell-text" title={String(cell.value ?? '')}>{cell.value}</span
+        </div>{:else if cell.key === 'state'}<span class="table-cell-text run-state-label" title={String(cell.value ?? '')}
+          ><span class="run-state" data-state={run.state} aria-hidden="true"></span>{cell.value}</span
+        >{:else}<span class="table-cell-text" title={String(cell.value ?? '')}>{cell.value}</span
         >{/if}</svelte:fragment
     ></DataTable
   >{#if !runs.length}<div class="empty-table">

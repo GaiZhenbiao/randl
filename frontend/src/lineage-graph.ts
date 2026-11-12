@@ -17,6 +17,8 @@ export type LineageNode = {
   change: string | null;
   result: string | null;
   verdictReason: string | null;
+  /** Why the run was stopped on purpose, when it was marked so. */
+  stateReason?: string;
   recipe: Json | null;
   jobType: string;
   latest: number | null;
@@ -626,4 +628,43 @@ export function structuredDiff(
 /** The entry of a list a change belongs to (`[canopy]` of `[canopy].templates[0]`), if any. */
 export function entryOf(path: string) {
   return /^\[[^\]]*\]/.exec(path)?.[0] ?? '';
+}
+
+/** The statuses links can be coloured by: verdicts first, then run states. */
+export const linkStatuses = [
+  'adopted',
+  'rejected',
+  'pending',
+  'none',
+  'running',
+  'finished',
+  'crashed',
+  'stopped',
+] as const;
+export type LinkStatus = (typeof linkStatuses)[number];
+/** Whether a run has a status: its verdict (pending is `running`), or its state. */
+export function hasStatus(node: Pick<LineageNode, 'verdict' | 'state'>, status: LinkStatus) {
+  switch (status) {
+    case 'adopted':
+    case 'rejected':
+      return node.verdict === status;
+    case 'pending':
+      return node.verdict === 'running';
+    case 'none':
+      return !node.verdict;
+    case 'crashed':
+      return node.state === 'crashed' || node.state === 'failed';
+    case 'stopped':
+      return node.state === 'killed';
+    default:
+      return node.state === status;
+  }
+}
+/** The colour a link into a run takes: its first chosen status, in `linkStatuses` order. */
+export function linkStatus(
+  node: Pick<LineageNode, 'verdict' | 'state'> | undefined,
+  chosen: readonly string[],
+): LinkStatus | null {
+  if (!node) return null;
+  return linkStatuses.find((status) => chosen.includes(status) && hasStatus(node, status)) ?? null;
 }

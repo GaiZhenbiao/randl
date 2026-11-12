@@ -73,6 +73,10 @@ export type Run = {
   heartbeat?: number;
   finished?: number | null;
   exit_code?: number | null;
+  /** Why a run marked stopped (state killed) was stopped, by whom and when. */
+  state_reason?: string | null;
+  state_by?: string | null;
+  state_at?: number | null;
 };
 export type SectionLayout = { width?: number; height?: number; rows?: number };
 export type Section = { id: string; name: string; collapsed?: boolean };

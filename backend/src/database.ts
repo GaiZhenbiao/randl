@@ -157,7 +157,7 @@ export class Store {
     if(empty)this.db.exec('BEGIN');
     try {
     // Every table gains the columns added after it was created (schema.ts).
-    ensureTables(this.db, `CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,entity TEXT,project TEXT,name TEXT,display_name TEXT,state TEXT,created REAL,updated REAL,config TEXT DEFAULT '{}',summary TEXT DEFAULT '{}',tags TEXT DEFAULT '[]',notes TEXT DEFAULT '',history_count INTEGER DEFAULT 0,revision INTEGER DEFAULT 0,group_name TEXT DEFAULT '',job_type TEXT DEFAULT '',deleted_at REAL,stop_requested INTEGER DEFAULT 0,metadata TEXT DEFAULT '{}',host TEXT DEFAULT '',program TEXT DEFAULT '',git_remote TEXT DEFAULT '',git_commit TEXT DEFAULT '',username TEXT DEFAULT '',runtime REAL DEFAULT 0,runtime_at REAL,runtime_reported INTEGER DEFAULT 0,runtime_raw REAL,runtime_raw_at REAL,started REAL,heartbeat REAL,finished REAL,exit_code INTEGER,metric_revision INTEGER DEFAULT 0,metric_definitions TEXT DEFAULT '[]',snapshot_at REAL,snapshot_source TEXT,stream_bytes INTEGER NOT NULL DEFAULT 0,file_bytes INTEGER NOT NULL DEFAULT 0,resumed_at REAL,color_index INTEGER);
+    ensureTables(this.db, `CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY,entity TEXT,project TEXT,name TEXT,display_name TEXT,state TEXT,created REAL,updated REAL,config TEXT DEFAULT '{}',summary TEXT DEFAULT '{}',tags TEXT DEFAULT '[]',notes TEXT DEFAULT '',history_count INTEGER DEFAULT 0,revision INTEGER DEFAULT 0,group_name TEXT DEFAULT '',job_type TEXT DEFAULT '',deleted_at REAL,stop_requested INTEGER DEFAULT 0,metadata TEXT DEFAULT '{}',host TEXT DEFAULT '',program TEXT DEFAULT '',git_remote TEXT DEFAULT '',git_commit TEXT DEFAULT '',username TEXT DEFAULT '',runtime REAL DEFAULT 0,runtime_at REAL,runtime_reported INTEGER DEFAULT 0,runtime_raw REAL,runtime_raw_at REAL,started REAL,heartbeat REAL,finished REAL,exit_code INTEGER,metric_revision INTEGER DEFAULT 0,metric_definitions TEXT DEFAULT '[]',snapshot_at REAL,snapshot_source TEXT,stream_bytes INTEGER NOT NULL DEFAULT 0,file_bytes INTEGER NOT NULL DEFAULT 0,resumed_at REAL,color_index INTEGER,state_reason TEXT,state_by TEXT,state_at REAL);
       CREATE INDEX IF NOT EXISTS running_run_heartbeats ON runs(heartbeat) WHERE state='running';
       CREATE INDEX IF NOT EXISTS project_runs ON runs(entity,project);
       CREATE TABLE IF NOT EXISTS server_settings(key TEXT PRIMARY KEY,value TEXT);CREATE TABLE IF NOT EXISTS sessions(hash TEXT PRIMARY KEY,expires REAL);
@@ -1026,7 +1026,7 @@ export class Store {
     return (
       this.db
         .prepare(
-          'SELECT id,entity,project,name,display_name,state,created,updated,history_count,revision,group_name,job_type,tags,stop_requested,host,program,git_commit,git_remote,username,runtime,runtime_at,runtime_reported,snapshot_at,snapshot_source,started,heartbeat,finished,exit_code,metric_revision,color_index,(SELECT count(*) FROM run_metrics WHERE run=(SELECT key FROM run_keys WHERE id=runs.id)) AS metric_count FROM runs WHERE deleted_at IS NULL ORDER BY created DESC',
+          'SELECT id,entity,project,name,display_name,state,created,updated,history_count,revision,group_name,job_type,tags,stop_requested,host,program,git_commit,git_remote,username,runtime,runtime_at,runtime_reported,snapshot_at,snapshot_source,started,heartbeat,finished,exit_code,metric_revision,color_index,state_reason,state_by,state_at,(SELECT count(*) FROM run_metrics WHERE run=(SELECT key FROM run_keys WHERE id=runs.id)) AS metric_count FROM runs WHERE deleted_at IS NULL ORDER BY created DESC',
         )
         .all() as Row[]
     ).map((row) => this.presentRun(row)!);
@@ -1036,7 +1036,7 @@ export class Store {
     return (
       this.db
         .prepare(
-          `SELECT id,entity,project,name,display_name,state,created,updated,history_count,revision,group_name,job_type,tags,stop_requested,host,program,git_commit,git_remote,username,runtime,runtime_at,runtime_reported,snapshot_at,snapshot_source,started,heartbeat,finished,exit_code,metric_revision,color_index,(SELECT count(*) FROM run_metrics WHERE run=(SELECT key FROM run_keys WHERE id=runs.id)) AS metric_count FROM runs WHERE deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY id`,
+          `SELECT id,entity,project,name,display_name,state,created,updated,history_count,revision,group_name,job_type,tags,stop_requested,host,program,git_commit,git_remote,username,runtime,runtime_at,runtime_reported,snapshot_at,snapshot_source,started,heartbeat,finished,exit_code,metric_revision,color_index,state_reason,state_by,state_at,(SELECT count(*) FROM run_metrics WHERE run=(SELECT key FROM run_keys WHERE id=runs.id)) AS metric_count FROM runs WHERE deleted_at IS NULL AND id IN (SELECT value FROM json_each(?)) ORDER BY id`,
         )
         .all(JSON.stringify(ids)) as Row[]
     ).map((row) => this.presentRun(row)!);
@@ -1179,11 +1179,15 @@ export class Store {
       if (v.state === 'running' && previous.state !== 'running')
         this.db
           .prepare(
-            'UPDATE runs SET runtime_at=?,finished=NULL,exit_code=NULL,stop_requested=0 WHERE id=?',
+            'UPDATE runs SET runtime_at=?,finished=NULL,exit_code=NULL,stop_requested=0,state_reason=NULL,state_by=NULL,state_at=NULL WHERE id=?',
           )
           .run(now, id);
+      // A run marked stopped (killed) keeps that state when its SDK, or a re-sync, later
+      // reports it finished, failed or crashed; resuming it still runs it again.
+      const keepStopped =
+        previous.state === 'killed' && ['finished', 'failed', 'crashed'].includes(v.state);
       for (const [key, column] of Object.entries(fields))
-        if (v[key] != null) {
+        if (v[key] != null && !(key === 'state' && keepStopped)) {
           let value = v[key];
           if (['config', 'summaryMetrics', 'tags'].includes(key))
             value =
@@ -1233,6 +1237,9 @@ export class Store {
     const reports: { raw: unknown; at: number }[] = [];
     this.history.transaction(() => {
       if (before.snapshot_at != null) before = this.resumeSnapshot(id, now);
+      // A run marked stopped (run_state_set) takes late history as data, not as a resume; a
+      // real resume comes through the SDK's init, which sets it running.
+      const marked = before.state === 'killed' && before.state_at != null;
       const runKey = this.history.ensureRunKey(id);
       for (const [file, item] of Object.entries(payload.files || {}) as [string, Row][]) {
         const fileKey = this.history.ensureFileId(file);
@@ -1257,7 +1264,7 @@ export class Store {
               system = file === 'wandb-events.jsonl',
               step = historyStep(row, position, system);
             if (!system) {
-              resumed = before.state !== 'running';
+              resumed = before.state !== 'running' && !marked;
               if (row._runtime !== undefined)
                 reports.push({
                   raw: row._runtime,
@@ -1280,9 +1287,9 @@ export class Store {
             else
               this.db
                 .prepare(
-                  "UPDATE runs SET history_count=max(history_count,?),revision=revision+1,state='running' WHERE id=?",
+                  "UPDATE runs SET history_count=max(history_count,?),revision=revision+1,state=CASE WHEN ? THEN state ELSE 'running' END WHERE id=?",
                 )
-                .run(position + 1, id);
+                .run(position + 1, marked ? 1 : 0, id);
           } else if (file === 'wandb-summary.json') {
             const summary = JSON.parse(line);
             if ((summary._wandb?.runtime ?? summary._runtime) !== undefined)
@@ -2410,6 +2417,37 @@ export class Store {
     this.derivedBytes = 0;
     return result;
   }
+  /**
+   * Marks a run that has ended as stopped on purpose (stored as the `killed` state, which the
+   * interface calls Stopped) or sets it back to finished, failed or crashed, with an optional
+   * reason, who did it and when. A running run is refused: it is marked once it ends. The same
+   * request again changes nothing.
+   */
+  runStateSet(a: Row) {
+    const run = this.run(a.id);
+    if (!run || run.deleted_at != null)
+      throw managementError('RUN_NOT_FOUND', `Run not found: ${a.id}`, { id: a.id }, 404);
+    if (run.state === 'running' && run.snapshot_at == null)
+      throw managementError(
+        'RUN_STATE_RUNNING',
+        'The run is still running; mark it once it has ended.',
+        { id: a.id },
+        409,
+      );
+    const state = a.state === 'stopped' ? 'killed' : a.state,
+      reason = state === 'killed' ? (a.reason ?? run.state_reason ?? null) : null,
+      shown = (value: string) => (value === 'killed' ? 'stopped' : value);
+    if (run.state === state && (run.state_reason ?? null) === reason)
+      return { status: 'unchanged', id: a.id, state: shown(state), previous: shown(run.state) };
+    if (a.dryRun)
+      return { status: 'updated', dryRun: true, id: a.id, state: shown(state), previous: shown(run.state) };
+    this.db
+      .prepare(
+        'UPDATE runs SET state=?,state_reason=?,state_by=?,state_at=?,stop_requested=0,revision=revision+1 WHERE id=?',
+      )
+      .run(state, reason, a.by ?? '', Date.now() / 1000, a.id);
+    return { status: 'updated', id: a.id, state: shown(state), previous: shown(run.state), reason };
+  }
   // The experiment ledger (ledger.ts). Journal entries need their run to exist.
   findingSave(a: Row) {
     return this.ledger.findingSave(a);
@@ -2852,7 +2890,7 @@ export class Store {
       keys = [...settings.parentKeys, ...settings.identityKeys];
     const rows = this.db
       .prepare(
-        `SELECT id,name,display_name,state,group_name,job_type,tags,created,revision,json_extract(config,'$.lineage.value') lineage,json_extract(config,'$.evidence.value.files') files,${keys
+        `SELECT id,name,display_name,state,state_reason,group_name,job_type,tags,created,revision,json_extract(config,'$.lineage.value') lineage,json_extract(config,'$.evidence.value.files') files,${keys
           .map((_, index) => `json_extract(config,?) k${index}`)
           .join(',')}${keys.length ? ',' : ''}json_extract(summary,?) latest FROM runs WHERE entity=? AND project=? AND deleted_at IS NULL ORDER BY created`,
       )
@@ -2918,6 +2956,8 @@ export class Store {
         },
         matcher,
       );
+      // Why a run was stopped on purpose (run_state_set).
+      if (rows[index].state_reason) node.stateReason = rows[index].state_reason;
       if (due()) yield;
       nodes.push(node);
       const parent = resolveParent(run, matcher, settings);

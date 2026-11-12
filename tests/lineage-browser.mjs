@@ -237,6 +237,78 @@ try {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   checks.push('The page opens at 100% on the running run; its ripple respects reduced motion');
 
+  // Zoom controls float at the canvas's bottom-left, clear of the framed cards; the percentage
+  // shows only away from 100% and takes the view back there.
+  const zoomControls = page.getByRole('group', { name: 'Zoom' });
+  const canvasBox = await page.locator('.lineage-viewport').boundingBox(),
+    zoomBox = await zoomControls.boundingBox();
+  assert.ok(zoomBox.x - canvasBox.x < 24 && canvasBox.y + canvasBox.height - zoomBox.y < 64);
+  const level = zoomControls.getByRole('button', { name: /back to 100%/ });
+  await expect(level).toHaveCount(0);
+  await zoomControls.getByRole('button', { name: 'Fit all' }).click();
+  const overlaps = await page.evaluate(() => {
+    const controls = document.querySelector('.lineage-zoom-controls').getBoundingClientRect();
+    return [...document.querySelectorAll('.lineage-card')].filter((card) => {
+      const box = card.getBoundingClientRect();
+      return (
+        box.left < controls.right &&
+        box.right > controls.left &&
+        box.top < controls.bottom &&
+        box.bottom > controls.top
+      );
+    }).length;
+  });
+  assert.equal(overlaps, 0, 'fitted cards stay clear of the zoom controls');
+  await zoomControls.getByRole('button', { name: 'Zoom in' }).click();
+  await expect(level).toHaveCount(1);
+  await level.click();
+  await expect.poll(async () => (await transform())[2]).toBeCloseTo(1, 5);
+  await expect(level).toHaveCount(0);
+  // The legend is in the Info popup, not on the canvas.
+  await expect(page.locator('.lineage-viewport .lineage-legend')).toHaveCount(0);
+  await toolbar.getByRole('button', { name: 'Counts and help' }).click();
+  const legend = page.getByRole('dialog').locator('.lineage-legend');
+  for (const text of [
+    'Logged link',
+    'Matched by checkpoint path',
+    'Adopted',
+    'Planned run',
+    'Best recipe',
+  ])
+    await expect(legend).toContainText(text);
+  await page.keyboard.press('Escape');
+  checks.push(
+    'Zoom controls sit at the bottom-left (100% shown only away from it); the legend is in Info',
+  );
+
+  // Links are coloured by the status of the run they lead to: adopted by default, so the link
+  // into the rejected v102 stays neutral; View chooses the statuses, saved for the project.
+  const linkStatuses = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.lineage-edges .lineage-edge:not(.base)')].map((edge) =>
+        edge.getAttribute('data-status'),
+      ),
+    );
+  assert.ok(!(await linkStatuses()).includes('rejected'), 'rejected links are neutral by default');
+  const view = await menu('View');
+  await view.getByRole('button', { name: 'None' }).click();
+  await view.getByText('Rejected', { exact: true }).click();
+  await closeMenu();
+  await expect.poll(linkStatuses).toContain('rejected');
+  await page.reload();
+  await expect(cards.first()).toBeVisible();
+  await expect.poll(linkStatuses).toContain('rejected');
+  await toolbar.getByRole('button', { name: 'Counts and help' }).click();
+  await expect(page.getByRole('dialog').locator('.lineage-legend')).toContainText(
+    'Link into a run: Rejected',
+  );
+  await page.keyboard.press('Escape');
+  const viewAgain = await menu('View');
+  await viewAgain.getByRole('button', { name: 'None' }).click();
+  await viewAgain.getByText('Adopted', { exact: true }).click();
+  await closeMenu();
+  checks.push('Links take the colour of their run’s status, adopted by default, chosen under View');
+
   // Cards carry each run's workspace colour.
   const swatch = (name) =>
     card(name)

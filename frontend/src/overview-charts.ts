@@ -22,7 +22,7 @@ export function stateColors(dark: boolean): Record<string, string> {
     finished: dark ? '#8d8d8d' : '#8d8d8d',
     failed: cssVar('--cds-support-01', dark ? '#fa4d56' : '#da1e28'),
     crashed: dark ? '#ff832b' : '#ff832b',
-    killed: dark ? '#6f6f6f' : '#c6c6c6',
+    killed: dark ? '#a56eff' : '#8a3ffc',
   };
 }
 function tooltip(dark: boolean) {

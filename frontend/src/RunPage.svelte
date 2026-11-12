@@ -251,7 +251,8 @@
             <dt>{$t('runs.fields.name')}</dt>
             <dd>{run.name}</dd>
             <dt>{$t('runs.fields.state')}</dt>
-            <dd>{statusLabel(run.state, $t)}</dd>
+            <dd><span class="run-state-label"><span class="run-state" data-state={run.state} aria-hidden="true"></span>{statusLabel(run.state, $t)}</span></dd>
+            {#if run.state === 'killed' && run.state_reason}<dt>{$t('runs.stopped.reason')}</dt><dd>{run.state_reason}{#if run.state_by || run.state_at}<span class="lineage-muted"> · {[run.state_by, run.state_at ? $date(run.state_at) : ''].filter(Boolean).join(' · ')}</span>{/if}</dd>{/if}
             {#if run.snapshot_at != null}<dt>{$t('runs.snapshot.captured')}</dt><dd>{$date(run.snapshot_at)}</dd>
             {#if run.snapshot_source}<dt>{$t('runs.snapshot.source')}</dt><dd>{run.snapshot_source}</dd>{/if}{/if}
             <dt>{$t('runs.fields.started')}</dt>
