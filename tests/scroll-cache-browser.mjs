@@ -229,8 +229,9 @@ try {
     'unchanged panels redraw from stored responses',
   );
 
-  // A live update refreshes visible panels with a delta against the stored response.
-  const visible = (await showing(true)).filter((id) => id !== 'image'),
+  // A live update refreshes the panels on screen with a delta against the stored response;
+  // those drawn ahead, off screen, catch up when they come into view.
+  const visible = (await showing(false)).filter((id) => id !== 'image'),
     beforeUpdate = hits.length,
     bodiesBefore = chartBodies.length;
   await call(`/files/${scope}/r00/file_stream`, {

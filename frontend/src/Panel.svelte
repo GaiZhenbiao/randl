@@ -705,6 +705,62 @@
       if (renderer === owned) renderer = undefined;
     };
   });
+  // Live runs bump their revision with every row they stream, which would redraw every chart
+  // showing them each time. A panel takes new points on a shared 2 s tick, so the charts on
+  // screen redraw together in one frame; only while on screen (one scrolled into view catches
+  // up), and not during a hover gesture (the hovered run or cursor changed within the last
+  // second), catching up once the pointer rests or leaves. Any other change to what it shows
+  // applies at once.
+  const liveEvery = 2000,
+    hoverSettle = 1000;
+  let liveKey = $state(untrack(() => requestKey)),
+    liveAt = 0,
+    hoverEnded = 0,
+    // The key a live update (new points only) set, which draws once its points are all in.
+    liveOnly = '',
+    wasSeen = false;
+  // Each change of the hovered run or the cursor restarts the gesture's quiet period.
+  let hoverState = $derived(readonly ? null : [$plotCursor, $runFocus]);
+  $effect(() => {
+    void hoverState;
+    hoverEnded = performance.now();
+  });
+  const withoutVersions = (key: string) => {
+    const { versions: _, ...rest } = JSON.parse(key);
+    return JSON.stringify(rest);
+  };
+  $effect(() => {
+    const next = requestKey,
+      current = liveKey,
+      seen = onScreen || focused || readonly;
+    void hoverState;
+    const arrived = seen && !wasSeen;
+    wasSeen = seen;
+    if (next === current) return;
+    if (withoutVersions(next) !== withoutVersions(current) || !untrack(() => data)) {
+      liveKey = next;
+      liveAt = performance.now();
+      return;
+    }
+    if (!seen) return;
+    // A panel coming into view with points it has not drawn catches up at once.
+    if (arrived) {
+      liveOnly = next;
+      liveKey = next;
+      liveAt = performance.now();
+      return;
+    }
+    const now = performance.now(),
+      // The next shared tick at least `liveEvery` after this panel's last update.
+      earliest = Math.max(liveAt + liveEvery, hoverEnded + hoverSettle, now),
+      wait = Math.ceil(earliest / liveEvery) * liveEvery - now,
+      timer = setTimeout(() => {
+        liveOnly = next;
+        liveKey = next;
+        liveAt = performance.now();
+      }, wait);
+    return () => clearTimeout(timer);
+  });
   // Identifies the response in `data`, so a stored copy is not shown again.
   let shown = '';
   $effect(() => {
@@ -714,7 +770,7 @@
       return;
     }
     if (!showing || occupancyPanel) return;
-    const { endpoint, request, versions, count } = JSON.parse(requestKey);
+    const { endpoint, request, versions, count } = JSON.parse(liveKey);
     if (!laidOut) return;
     if (!count) {
       data = null;
@@ -765,8 +821,10 @@
       id = JSON.stringify([endpoint, request]) + '|' + versions;
     if (!untrack(() => data)) status = 'common.status.loading';
     loading = true;
+    const progressive = liveKey !== liveOnly;
     void loadChart(endpoint, request, versions, controller.signal, (partial) => {
-      if (controller.signal.aborted) return;
+      // A live update keeps the chart as it is until its new points are all in.
+      if (controller.signal.aborted || !progressive) return;
       // Runs that have not arrived yet are named from the run list for the legend.
       const names = new Map(untrack(() => runs).map((run) => [run.id, run.display_name]));
       show(

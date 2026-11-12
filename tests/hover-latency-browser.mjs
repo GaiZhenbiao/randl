@@ -18,6 +18,11 @@ const RUN_LIST_BUDGET_MS = Number(process.env.RUN_LIST_BUDGET_MS ?? 25),
   RUN_LIST_LATENCY_MS = Number(process.env.RUN_LIST_LATENCY_MS ?? 150),
   CHART_LATENCY_MS = Number(process.env.CHART_LATENCY_MS ?? 300),
   HEAP_BUDGET_MB = Number(process.env.HEAP_BUDGET_MB ?? 60),
+  // Three live runs streaming 83 metrics every 3 s, as a training workspace has.
+  STREAMING_IDLE_PERCENT = Number(process.env.STREAMING_IDLE_PERCENT ?? 12),
+  STREAMING_HOVER_P90_MS = Number(process.env.STREAMING_HOVER_P90_MS ?? 100),
+  STREAMING_HOVER_WORK_MS = Number(process.env.STREAMING_HOVER_WORK_MS ?? 35),
+  LIVE = 3,
   RUNS = 600,
   SHOWN = 45,
   POINTS = Number(process.env.HOVER_POINTS ?? 300);
@@ -64,8 +69,8 @@ store.db.transaction(() => {
       },
     });
     store.db
-      .prepare("UPDATE runs SET state='finished',created=? WHERE id=?")
-      .run(1_700_000_000 + index, run.id);
+      .prepare('UPDATE runs SET state=?,created=?,heartbeat=? WHERE id=?')
+      .run(index < LIVE ? 'running' : 'finished', 1_700_000_000 + index, Date.now() / 1000, run.id);
     if (index < SHOWN)
       store.ingest(run.id, {
         files: {
@@ -121,7 +126,30 @@ try {
       plotSettings: { showOriginal: true, tooltipColoredNames: true },
     },
   });
-  const measureIn = async (browser) => {
+  // The live runs' streams: a row of 83 metrics per run every 3 s, as the SDK sends them.
+  const streamed = new Map(runIds.slice(0, LIVE).map((id) => [id, POINTS]));
+  const streamRow = async () => {
+    for (const [id, offset] of streamed) {
+      const row = {
+        _step: offset,
+        update: offset * 1000,
+        loss: Math.random(),
+        reward: Math.random(),
+        rate: Math.random(),
+      };
+      for (let key = 0; key < 80; key++) row['extra/metric_' + key] = Math.random();
+      await fetch(`${base}/files/${id}/file_stream`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          files: { 'wandb-history.jsonl': { offset, content: [JSON.stringify(row)] } },
+        }),
+      });
+      streamed.set(id, offset + 1);
+    }
+  };
+  const measureIn = async (browser, streaming = false) => {
+    const stream = streaming ? setInterval(() => void streamRow(), 3000) : undefined;
     const page = await browser.newPage({
       viewport: { width: 1600, height: 1000 },
       deviceScaleFactor: 2,
@@ -134,9 +162,44 @@ try {
       null,
       { timeout: 30000 },
     );
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(streaming ? 6000 : 3000);
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Performance.enable');
+    // Counts each chart's redraws (ECharts' renders; the hover overlay is not one).
+    const renders = () =>
+      page.evaluate(async () => {
+        if (!window.renderCounts) {
+          const url = performance
+            .getEntriesByType('resource')
+            .map((entry) => entry.name)
+            .find((name) => /\/assets\/engine-[^/]+\.js/.test(name));
+          const engine = Object.values(await import(url)).find((value) => value?.getInstanceByDom);
+          window.renderCounts = new Map();
+          for (const host of document.querySelectorAll('[_echarts_instance_]')) {
+            const chart = engine.getInstanceByDom(host);
+            window.renderCounts.set(host, 0);
+            chart
+              .getZr()
+              .on('rendered', () =>
+                window.renderCounts.set(host, window.renderCounts.get(host) + 1),
+              );
+          }
+        }
+        const counts = [...window.renderCounts.values()];
+        return {
+          charts: counts.length,
+          total: counts.reduce((a, b) => a + b, 0),
+          most: Math.max(...counts),
+        };
+      });
+    // The share of the main thread busy while nobody touches the page.
+    const idleRenders = streaming ? await renders() : null;
+    const idleStart = await cdp.send('Performance.getMetrics');
+    await page.waitForTimeout(streaming ? 15000 : 0);
+    const idleEnd = await cdp.send('Performance.getMetrics');
+    const busy = (metrics) => metrics.metrics.find((m) => m.name === 'TaskDuration').value;
+    const idle = streaming ? ((busy(idleEnd) - busy(idleStart)) / 15) * 100 : 0,
+      idleRedraws = streaming ? (await renders()).most - idleRenders.most : 0;
     await cdp.send('HeapProfiler.collectGarbage');
     const heap = (await cdp.send('Runtime.getHeapUsage')).usedSize / 1048576;
     const taskTime = async () =>
@@ -169,11 +232,25 @@ try {
       return {
         work: (((await taskTime()) - before) * 1000) / steps,
         latency: latencies[Math.floor(latencies.length / 2)],
+        p90: latencies[Math.floor(latencies.length * 0.9)],
       };
     };
+    const beforeHover = streaming ? (await renders()).total : 0;
     const runList = await measure(20, (index) =>
       page.mouse.move(boxes[index].x + 24, boxes[index].y + boxes[index].height / 2),
     );
+    // A hover gesture of several seconds while rows arrive: no chart redraws until it ends.
+    let hoverRedraws = 0;
+    if (streaming) {
+      const start = (await renders()).total;
+      for (let step = 0; step < 40; step++) {
+        const box = boxes[step % boxes.length];
+        await page.mouse.move(box.x + 24, box.y + box.height / 2);
+        await page.waitForTimeout(150);
+      }
+      hoverRedraws = (await renders()).total - start;
+      void beforeHover;
+    }
     const chart = await page.locator('.panel canvas, .chart canvas').first().boundingBox();
     const chartMove = await measure(24, (index) =>
       page.mouse.move(
@@ -182,7 +259,8 @@ try {
       ),
     );
     await page.close();
-    return { heap, runList, chartMove };
+    clearInterval(stream);
+    return { heap, runList, chartMove, idle, idleRedraws, hoverRedraws };
   };
   const round = (value) => Math.round(value * 10) / 10;
   browser = await launchBrowser();
@@ -192,21 +270,54 @@ try {
     args: ['--enable-gpu', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   const gpu = await measureIn(browser);
+  await browser.close();
+  browser = await launchBrowser();
+  const live = await measureIn(browser, true);
   const report = {
     heapMB: round(plain.heap),
     runListHoverMs: round(plain.runList.work),
     chartMoveMs: round(plain.chartMove.work),
     gpuRunListLatencyMs: round(gpu.runList.latency),
     gpuChartLatencyMs: round(gpu.chartMove.latency),
+    streamingIdlePercent: round(live.idle),
+    streamingRedrawsPerChartIn15s: live.idleRedraws,
+    streamingRedrawsDuringHover: live.hoverRedraws,
+    streamingRunListP90Ms: round(live.runList.p90),
+    streamingChartP90Ms: round(live.chartMove.p90),
+    streamingRunListMs: round(live.runList.work),
+    streamingChartMoveMs: round(live.chartMove.work),
     budgets: {
       heap: HEAP_BUDGET_MB,
       runList: RUN_LIST_BUDGET_MS,
       chartMove: CHART_MOVE_BUDGET_MS,
       runListLatency: RUN_LIST_LATENCY_MS,
       chartLatency: CHART_LATENCY_MS,
+      streamingIdle: STREAMING_IDLE_PERCENT,
+      streamingHoverP90: STREAMING_HOVER_P90_MS,
+      streamingHoverWork: STREAMING_HOVER_WORK_MS,
     },
   };
   console.log(JSON.stringify(report, null, 2));
+  // On a shared 2 s tick: at most 8 redraws per chart in 15 s; none during a hover gesture.
+  assert.ok(live.idleRedraws <= 8, `a chart redrew ${live.idleRedraws} times in 15 s of streaming`);
+  assert.equal(live.hoverRedraws, 0, 'charts redraw during a hover gesture while runs stream');
+  assert.ok(
+    live.idle <= STREAMING_IDLE_PERCENT,
+    `while runs stream, ${round(live.idle)}% of the main thread is busy with nobody hovering`,
+  );
+  for (const [name, measured] of [
+    ['run-list hover', live.runList],
+    ['chart move', live.chartMove],
+  ]) {
+    assert.ok(
+      measured.p90 <= STREAMING_HOVER_P90_MS,
+      `while runs stream, a ${name} took ${round(measured.p90)} ms (p90) to its second frame`,
+    );
+    assert.ok(
+      measured.work <= STREAMING_HOVER_WORK_MS,
+      `while runs stream, a ${name} took ${round(measured.work)} ms of main-thread work`,
+    );
+  }
   assert.ok(plain.heap <= HEAP_BUDGET_MB, `the workspace holds ${round(plain.heap)} MB of heap`);
   assert.ok(
     plain.runList.work <= RUN_LIST_BUDGET_MS,
