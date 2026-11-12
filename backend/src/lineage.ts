@@ -57,6 +57,12 @@ export type LineageNode = {
   created: number;
   verdict: 'adopted' | 'rejected' | 'running' | null;
   hypothesis: string | null;
+  /** What the run changed from its parent, in a sentence (`lineage.change`). */
+  change: string | null;
+  /** How the run turned out (`lineage.result`). */
+  result: string | null;
+  /** Why the verdict was given (`lineage.verdict.reason`). */
+  verdictReason: string | null;
   recipe: Json | null;
   latest: number | null;
   best: number | null;
@@ -417,8 +423,15 @@ export function lineageNode(
     group: run.group,
     tags: run.tags,
     created: run.created,
-    verdict: verdicts.find((verdict) => tags.has('verdict:' + verdict)) ?? null,
+    // The verdict tag decides; the block's verdict applies to runs without one.
+    verdict:
+      verdicts.find((verdict) => tags.has('verdict:' + verdict)) ??
+      verdicts.find((verdict) => verdict === text(object(run.lineage?.verdict)?.status)) ??
+      null,
     hypothesis: text(run.lineage?.hypothesis),
+    change: text(run.lineage?.change),
+    result: text(run.lineage?.result),
+    verdictReason: text(object(run.lineage?.verdict)?.reason),
     recipe: run.lineage?.recipe ?? null,
     ...values,
     unresolved: null,

@@ -14,6 +14,9 @@ export type LineageNode = {
   created: number;
   verdict: Verdict | null;
   hypothesis: string | null;
+  change: string | null;
+  result: string | null;
+  verdictReason: string | null;
   recipe: Json | null;
   latest: number | null;
   best: number | null;

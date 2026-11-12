@@ -42,6 +42,8 @@ const configPatch = {
   propertyNames: { pattern: '^[^_]', maxLength: 512 },
   maxProperties: 100,
 };
+/** A metric key a rename may use; `_` keys belong to the SDK. */
+const metricName = { type: 'string', minLength: 1, maxLength: 512, pattern: '^[^_]' };
 const lineageKeys = {
   type: 'array',
   items: { type: 'string', minLength: 1, maxLength: 512 },
@@ -293,12 +295,13 @@ export const toolCatalog = [
   {
     name: 'run_metadata_update',
     description:
-      "Change a stored run's config keys, tags or notes without touching its state, history, summary, files or runtime; for backfilling metadata such as a lineage block or verdict:* tags. config replaces top-level config keys with JSON values (null removes a key); configMerge deep-merges objects into top-level keys (a null leaf removes that nested key); tags replaces the tag list, addTags and removeTags edit it; notes replaces the notes. by names the caller (a script or person) in the audit log. Keys starting with _ are reserved. Repeating a request changes nothing. A running run's SDK sends its whole config again on its next config update, which replaces keys set here.",
+      "Change a stored run's config keys, tags or notes without touching its state, history, summary, files or runtime; for backfilling metadata such as a lineage block or verdict:* tags. config replaces top-level config keys with JSON values (null removes a key); configMerge deep-merges objects into top-level keys (a null leaf removes that nested key); summary sets top-level summary keys (null removes one), for example a final audit value; tags replaces the tag list, addTags and removeTags edit it; notes replaces the notes. by names the caller (a script or person) in the audit log. Keys starting with _ are reserved. Repeating a request changes nothing. A running run's SDK sends its whole config again on its next config update, which replaces keys set here.",
     parameters: schema(
       {
         id: string,
         config: configPatch,
         configMerge: configPatch,
+        summary: configPatch,
         tags: { ...strings, maxItems: 100 },
         addTags: { ...strings, maxItems: 100 },
         removeTags: { ...strings, maxItems: 100 },
@@ -306,6 +309,68 @@ export const toolCatalog = [
         by: { type: 'string', maxLength: 200 },
       },
       ['id'],
+    ),
+  },
+  {
+    name: 'run_metrics_rename',
+    description:
+      "Rename metric keys of a stored run, for example old names to current ones so runs compare: its history records, chart points, logged media, metric index, summary and define_metric settings. Not available to the Assistant. renames is a list of {from, to}. A key already renamed (from gone, to present) is left alone; a target that already exists is refused unless merge is true, and a merge is refused when a step or history record holds both keys. Each applied rename returns an undo id for run_metrics_rename_undo. by names the caller in the audit log.",
+    agent: false,
+    parameters: schema(
+      {
+        id: string,
+        renames: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 100,
+          items: schema({ from: metricName, to: metricName }, ['from', 'to']),
+        },
+        merge: { type: 'boolean' },
+        by: { type: 'string', maxLength: 200 },
+      },
+      ['id', 'renames'],
+    ),
+  },
+  {
+    name: 'run_metrics_rename_undo',
+    description:
+      'Reverse one metric rename by the undo id run_metrics_rename returned. Not available to the Assistant. Repeating it changes nothing.',
+    agent: false,
+    parameters: schema(
+      { undo: { type: 'integer', minimum: 1 }, by: { type: 'string', maxLength: 200 } },
+      ['undo'],
+    ),
+  },
+  {
+    name: 'run_history_write',
+    description:
+      "Write numeric values at given steps of a stored run's history, such as audit results computed after training (the SDK cannot log at earlier steps). Not available to the Assistant. rows is a list of {step, values: {metric: number}}; each merges into the history record at that _step, or adds one. A different stored value at the same step and metric is refused unless replace is true; identical values change nothing. by names the caller in the audit log.",
+    agent: false,
+    parameters: schema(
+      {
+        id: string,
+        rows: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 100000,
+          items: schema(
+            {
+              step: { type: 'number' },
+              values: {
+                type: 'object',
+                propertyNames: { pattern: '^[^_]', maxLength: 512 },
+                additionalProperties: { type: 'number' },
+                minProperties: 1,
+                maxProperties: 1000,
+              },
+            },
+            ['step', 'values'],
+          ),
+        },
+        replace: { type: 'boolean' },
+        by: { type: 'string', maxLength: 200 },
+      },
+      ['id', 'rows'],
     ),
   },
   {
@@ -546,6 +611,15 @@ export class Tools {
         result = await this.db.call('runMetadataUpdate', changes);
         break;
       }
+      case 'run_metrics_rename':
+        result = await this.db.call('metricsRename', a);
+        break;
+      case 'run_metrics_rename_undo':
+        result = await this.db.call('metricsRenameUndo', a);
+        break;
+      case 'run_history_write':
+        result = await this.db.call('historyWrite', a);
+        break;
       case 'runs_config_diff': {
         const run = await this.db.call('run', a.to);
         if (!run) throw managementError('RUN_NOT_FOUND', 'Run not found');
@@ -665,8 +739,13 @@ export class Tools {
     this.changed(
       name === 'runs_update'
         ? result.ids
-        : name === 'run_metadata_update'
-          ? [a.id]
+        : [
+              'run_metadata_update',
+              'run_metrics_rename',
+              'run_metrics_rename_undo',
+              'run_history_write',
+            ].includes(name)
+          ? [result.id]
           : removedRuns,
     );
     return result;

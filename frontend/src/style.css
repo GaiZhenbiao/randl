@@ -1991,16 +1991,18 @@ aside {
 }
 .lineage-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px 16px;
-  padding: 8px 16px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 4px 16px;
   border-bottom: 1px solid var(--cds-ui-03);
 }
+.lineage-toolbar > .bx--btn {
+  flex-shrink: 0;
+}
 .lineage-search {
-  flex: 1 1 200px;
-  min-width: 180px;
-  max-width: 360px;
+  flex: 0 1 320px;
+  min-width: 120px;
 }
 .lineage-options {
   display: flex;
@@ -2010,32 +2012,26 @@ aside {
 .lineage-options .bx--form-item {
   flex: none;
 }
-.lineage-toolbar-actions {
-  display: flex;
-  margin-left: auto;
-}
-.lineage-status {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px 16px;
-  padding: 4px 16px;
-}
-.lineage-summary {
-  font-size: 12px;
-  color: var(--cds-text-02);
-}
+.lineage-toolbar-actions,
 .lineage-selection {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--cds-text-02);
+  flex-shrink: 0;
 }
-.lineage-selection > span {
-  margin-right: 8px;
+.lineage-toolbar-actions {
+  margin-left: auto;
+}
+.lineage-selection {
+  padding-left: 8px;
+  border-left: 1px solid var(--cds-ui-03);
+}
+.lineage-info {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+.lineage-story .lineage-hypothesis {
+  margin-left: 4px;
 }
 .lineage-body {
   display: grid;
@@ -2104,14 +2100,17 @@ aside {
 }
 .lineage-edge-label {
   position: absolute;
-  max-width: 150px;
+  display: -webkit-box;
+  max-width: 160px;
   overflow: hidden;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   transform: translate(-100%, -100%);
   padding: 0 2px;
   font-size: 11px;
   line-height: 14px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  text-align: right;
+  overflow-wrap: anywhere;
   color: var(--cds-text-02);
   background: var(--cds-ui-background);
 }
@@ -5797,4 +5796,8 @@ aside {
 }
 .media-quicklook .carousel {
   height: 100%;
+}
+.lineage-menu .lineage-options {
+  flex-direction: column;
+  gap: 4px;
 }

@@ -151,3 +151,228 @@ test('randl runs update-meta sends the update from the command line', async (t) 
   assert.deepEqual(result.config.lineage, { hypothesis: 'h' });
   assert.deepEqual(result.tags, ['a', 'verdict:rejected']);
 });
+
+// Metric renames and history writes on a stored run, through the store so history can be
+// sealed into blocks first.
+const drain = (job) => {
+  for (;;) {
+    const step = job.next();
+    if (step.done) return step.value;
+  }
+};
+async function historyFixture(t, rows) {
+  const directory = await mkdtemp(join(tmpdir(), 'randl-run-history-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new Store(directory);
+  t.after(() => store.db.close());
+  const { id } = store.upsert({
+    entity: 'e',
+    project: 'p',
+    name: 'r',
+    summaryMetrics: { old: rows.at(-1).old, keep: 1 },
+    config: {
+      _wandb: { value: { m: [{ 1: 'old', 4: 'epoch' }] } },
+    },
+  });
+  store.ingest(id, {
+    files: {
+      'wandb-history.jsonl': { offset: 0, content: rows.map((row) => JSON.stringify(row)) },
+    },
+    complete: true,
+  });
+  const key = store.history.runKey(id);
+  store.history.transaction(() =>
+    store.history.sealRun(key, { until: Infinity, points: Infinity, lines: Infinity }, true),
+  );
+  const records = () =>
+    [...store.history.lines(key, 'wandb-history.jsonl')].map((line) => JSON.parse(line.content));
+  const series = (name) => {
+    const { steps, values } = store.history.series(key, name);
+    return Array.from(steps, (step, index) => [step, values[index]]);
+  };
+  const run = () => store.run(id);
+  return { store, id, key, records, series, run };
+}
+const history = (count, make) => Array.from({ length: count }, (_, step) => make(step));
+
+test('renaming a metric moves its history, points, summary and settings, and undoes', async (t) => {
+  const rows = history(600, (step) => ({ _step: step, old: step / 10, loss: 1 }));
+  const { store, id, records, series, run } = await historyFixture(t, rows);
+  assert.ok(store.db.prepare('SELECT count(*) n FROM stream_blocks').get().n > 1, 'sealed blocks');
+  const before = records();
+  const { renames } = drain(
+    store.metricsRename({ id, renames: [{ from: 'old', to: 'new' }], by: 't' }),
+  );
+  assert.equal(renames[0].status, 'renamed');
+  assert.ok(records().every((row, index) => row.new === before[index].old && !('old' in row)));
+  assert.deepEqual(Object.keys(records()[3]), ['_step', 'new', 'loss'], 'key order kept');
+  assert.deepEqual(
+    series('new'),
+    rows.map((row) => [row._step, row.old]),
+  );
+  assert.deepEqual(series('old'), []);
+  assert.deepEqual(store.keys([id]), ['loss', 'new']);
+  assert.deepEqual(JSON.parse(run().summary), { keep: 1, new: 59.9 });
+  assert.equal(JSON.parse(run().metric_definitions)[0].name, 'new');
+  // Repeating changes nothing; renaming onto an existing key needs a merge.
+  assert.equal(
+    drain(store.metricsRename({ id, renames: [{ from: 'old', to: 'new' }] })).renames[0].status,
+    'unchanged',
+  );
+  assert.throws(
+    () => drain(store.metricsRename({ id, renames: [{ from: 'loss', to: 'new' }] })),
+    /already exists/,
+  );
+  assert.throws(
+    () => drain(store.metricsRename({ id, renames: [{ from: 'loss', to: 'new' }], merge: true })),
+    /same step/,
+  );
+  // Undo restores the original records exactly.
+  const undone = drain(store.metricsRenameUndo({ undo: renames[0].undo }));
+  assert.equal(undone.status, 'undone');
+  assert.deepEqual(records(), before);
+  assert.deepEqual(
+    series('old'),
+    rows.map((row) => [row._step, row.old]),
+  );
+  assert.deepEqual(JSON.parse(run().summary), { old: 59.9, keep: 1 });
+  assert.equal(drain(store.metricsRenameUndo({ undo: renames[0].undo })).status, 'unchanged');
+});
+
+test('a merge combines two keys logged at different steps, and its undo splits them', async (t) => {
+  // An old run logged `old` at even steps and `new` at odd ones.
+  const rows = history(400, (step) =>
+    step % 2 ? { _step: step, new: step } : { _step: step, old: -step - 1 },
+  );
+  const { store, id, records, series } = await historyFixture(t, rows);
+  const before = records();
+  const { renames } = drain(
+    store.metricsRename({ id, renames: [{ from: 'old', to: 'new' }], merge: true }),
+  );
+  assert.equal(renames[0].status, 'merged');
+  assert.deepEqual(
+    series('new'),
+    rows.map((row) => [row._step, row.new ?? row.old]),
+  );
+  assert.ok(records().every((row) => !('old' in row)));
+  drain(store.metricsRenameUndo({ undo: renames[0].undo }));
+  assert.deepEqual(records(), before);
+  assert.deepEqual(
+    series('old'),
+    rows.filter((row) => 'old' in row).map((row) => [row._step, row.old]),
+  );
+  assert.deepEqual(
+    series('new'),
+    rows.filter((row) => 'new' in row).map((row) => [row._step, row.new]),
+  );
+});
+
+test('history writes merge audit values into records at their steps', async (t) => {
+  const rows = history(500, (step) => ({ _step: step * 10, loss: step }));
+  const { store, id, records, series, run } = await historyFixture(t, rows);
+  const audit = 'audit/box/value';
+  const write = (extra = {}) =>
+    drain(
+      store.historyWrite({
+        id,
+        rows: [
+          { step: 1000, values: { [audit]: 0.5 } },
+          { step: 4990, values: { [audit]: 0.75 } },
+          // No record at this step: a new one is added.
+          { step: 9000, values: { [audit]: 0.8 } },
+        ],
+        ...extra,
+      }),
+    );
+  const revision = run().revision;
+  assert.deepEqual(write(), { id, changed: true, added: 1, updated: 2 });
+  assert.ok(run().revision > revision);
+  assert.deepEqual(records()[100], { _step: 1000, loss: 100, [audit]: 0.5 });
+  assert.deepEqual(records().at(-1), { _step: 9000, [audit]: 0.8 });
+  assert.deepEqual(series(audit), [
+    [1000, 0.5],
+    [4990, 0.75],
+    [9000, 0.8],
+  ]);
+  assert.ok(store.keys([id]).includes(audit));
+  // The same write again changes nothing; a different value needs replace.
+  const again = run().revision;
+  assert.deepEqual(write(), { id, changed: false, added: 0, updated: 0 });
+  assert.equal(run().revision, again);
+  assert.throws(
+    () => drain(store.historyWrite({ id, rows: [{ step: 1000, values: { loss: 7 } }] })),
+    /Different values are already stored: loss@1000/,
+  );
+  drain(store.historyWrite({ id, rows: [{ step: 1000, values: { loss: 7 } }], replace: true }));
+  assert.equal(records()[100].loss, 7);
+  assert.deepEqual(
+    series('loss').find(([step]) => step === 1000),
+    [1000, 7],
+  );
+});
+
+test('metric renames and history writes are tools with audit, summary and a CLI', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'randl-run-metrics-cli-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const server = await createServer(directory);
+  t.after(() => server.app.close());
+  const url = await listen(server);
+  const run = await server.db.call('upsert', { entity: 'e', project: 'p', name: 'r3' });
+  await server.db.call('ingest', run.id, {
+    files: {
+      'wandb-history.jsonl': {
+        offset: 0,
+        content: [JSON.stringify({ _step: 0, old: 1 }), JSON.stringify({ _step: 1, old: 2 })],
+      },
+    },
+    complete: true,
+  });
+  const cli = async (...args) =>
+    JSON.parse(
+      (
+        await promisify(execFile)(
+          process.execPath,
+          ['backend/dist/cli.js', ...args, '--url', url],
+          {
+            env: { ...process.env, RANDL_API_KEY: '' },
+          },
+        )
+      ).stdout,
+    );
+  const renamed = await cli(
+    'runs',
+    'rename-metrics',
+    '--id',
+    run.id,
+    '--rename',
+    'old=new',
+    '--by',
+    'cli',
+  );
+  assert.equal(renamed.renames[0].status, 'renamed');
+  const written = await cli(
+    'runs',
+    'write-history',
+    '--id',
+    run.id,
+    '--rows',
+    JSON.stringify([{ step: 1, values: { 'audit/x': 0.5 } }]),
+  );
+  assert.deepEqual(written, { id: run.id, changed: true, added: 0, updated: 1 });
+  const summary = await cli('runs', 'update-meta', '--id', run.id, '--summary', '{"audit/x": 0.5}');
+  assert.equal(summary.summary['audit/x'], 0.5);
+  const undone = await cli('runs', 'rename-metrics', '--undo', String(renamed.renames[0].undo));
+  assert.equal(undone.status, 'undone');
+  const audit = await server.db.call('auditList');
+  for (const tool of ['run_metrics_rename', 'run_history_write', 'run_metrics_rename_undo'])
+    assert.ok(
+      audit.some((entry) => entry.tool === tool),
+      tool,
+    );
+  const refused = await server.app.inject({
+    method: 'POST',
+    url: '/api/tools/run_metrics_rename',
+    payload: { id: run.id, renames: [{ from: 'old', to: '_step' }] },
+  });
+  assert.equal(refused.statusCode, 400);
+});

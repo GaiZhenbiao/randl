@@ -194,12 +194,18 @@ same as in workspace charts) or its host's, its state, a verdict from its `verdi
 `verdict:rejected` or `verdict:running` tag, the host and GPUs it last trained on, and the
 latest and best value of the project's lineage metric. Running runs have an accent ring that
 ripples (it holds still when the system asks for reduced motion). Each link is labelled with the
-parent update, any further relations such as `+grown head`, and the changed config keys that
-set the run apart (those that change on the fewest links come first); a legend explains the
-line styles. Select a card for its hypothesis, relations, config bases, compute segments, the
-metric along its lineage, and every config difference from its parent or from another run you
-pick. Filter by name, group, tag or host, collapse rejected branches, and arrange cards by
-lineage depth, start update or start time.
+parent update and the run's logged `change` sentence, or, without one, any further relations
+such as `+grown head` and the changed config keys that set the run apart (those that change on
+the fewest links come first); hovering shows the whole label, and a legend explains the line
+styles. Select a card for what changed, its hypothesis, result and verdict, relations, config
+bases, compute segments, the metric along its lineage, and every config difference from its
+parent or from another run you pick.
+
+The toolbar is one row: the name filter; **Filters** (group, tag, host, collapse rejected
+branches, show runs without lineage; the button counts the active ones); **View** (arrange cards
+by lineage depth, start update or start time, and colour them by run or host); the actions for
+the open or selected runs, as icons; and on the right an **i** button with the counts, zoom,
+**Fit all**, **Focus running runs** and **Lineage settings**.
 
 The page opens at 100% on the running runs (all of them when they fit, else the one that
 reported last). Two-finger touchpad scrolling or the mouse wheel pans; pinching (or Ctrl+wheel)
@@ -208,7 +214,7 @@ zooms around the pointer; on touch screens, one finger pans and two pinch. **Fit
 remembered per project in this browser.
 
 To compare runs, Shift-click them, Shift-drag a box around them, or use **Select path from
-root** or **Select branch** for the open run, then **Compare in workspace**: the project's
+root** or **Select branch** for the open run, then **Compare** (it shows how many): the project's
 workspace view shows exactly those runs as solos (which override visibility until you clear
 them) in its existing panels. The open run and the selection are kept in the URL (`?run=`,
 `?select=` with SDK run IDs), so a link reopens them. **Show in lineage** on a run page, or for
@@ -227,7 +233,10 @@ wandb.config.update({"lineage": {
     "changes": {"model.command_head_dim": [512, 1024]},
     "extends": [{"kind": "run", "reference": "v621_…"}, {"kind": "file", "reference": "forest.yaml"}],
     "recipe": "latched_box40",
+    "change": "Command head widened from 512 to 1024 units",
     "hypothesis": "A wider command head holds more boxes",
+    "result": "Best 377/512 holds at u560k, +12 over the parent",
+    "verdict": {"status": "adopted", "reason": "More holds at equal collisions"},
     "compute": {"host": "Sirius", "gpu_count": 2, "segments": [
         {"from_update": 543000, "to_update": None, "host": "Sirius", "gpu_count": 2,
          "gpu_ids": [0, 1], "gpu_model": "RTX 4090 48GB", "slot": "sirius_34"}]},
@@ -237,7 +246,9 @@ wandb.config.update({"lineage": {
 The parent is found by `run_id` (the SDK run ID), then `run_path`, then `run_name` (the display
 name), then its `checkpoint` path as below. A plain string `relation` is the link kind alone.
 `changes` maps dotted config keys to `[old, new]` and names the keys on the link instead of a
-computed diff. `extends` entries of kind `run` are drawn as weaker config-base links. The block
+computed diff; `change` is a sentence for people and labels the link instead of either. The
+`verdict:*` tag sets a run's verdict; `verdict.status` is used only for runs without one, and
+`verdict.reason` is shown with it. `extends` entries of kind `run` are drawn as weaker config-base links. The block
 is authoritative: a run that logs it with no parent (`null`, a cold start) or with itself as
 parent (an in-place resume or extension) gets no link. Runs without the block are linked
 by the checkpoint path in their **parent checkpoint keys** (default
@@ -276,7 +287,25 @@ replaces the tag list; `addTags` and `removeTags` edit it; `notes` replaces the 
 starting with `_` belong to the SDK and are refused. The audit log records each change with its
 time, arguments and `by`. Repeating a request changes nothing, not even the run's revision.
 A running run's SDK sends its whole config again with each config update, which replaces
-keys set this way, so update runs after they finish.
+keys set this way, so update runs after they finish. `summary` (`--summary`) sets top-level
+summary keys the same way.
+
+`run_metrics_rename` (`randl runs rename-metrics --id RUN --rename old=new[,old2=new2]`)
+renames metric keys of a stored run, for example so older runs compare with newer ones: its
+history records (rewritten in place, one stored block at a time), chart points, logged media,
+metric list, summary and define_metric settings. A key already renamed is left alone. A target
+key that exists is refused unless `merge` (`--combine`) is set, and a merge is refused while any
+step or history record holds both keys. Each rename returns an undo ID for
+`run_metrics_rename_undo` (`--undo ID`), which restores the records, points and summary as they
+were.
+
+`run_history_write` (`randl runs write-history --id RUN --rows-file rows.json`) writes numeric
+values at given steps of a stored run, such as audit results computed after training, which the
+SDK cannot log at earlier steps. Each row (`{"step": 545000, "values": {"audit/…/value": 0.73}}`)
+merges into the history record at that `_step`, or adds a record when there is none. A
+different stored value at the same step is refused unless `replace` (`--replace`) is set;
+identical values change nothing. These three tools are not available to the Assistant, and all
+of them are audited with their `by`.
 
 ### Project overview and server status
 

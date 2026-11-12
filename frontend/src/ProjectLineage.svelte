@@ -3,7 +3,21 @@
   // each started from. The server derives the graph; this page filters, lays out and explains
   // it, and hands chosen runs to the workspace for comparison.
   import { onMount, tick, untrack } from 'svelte';
-  import { Button, Dropdown, InlineNotification, Search, Checkbox } from 'carbon-components-svelte';
+  import {
+    Button,
+    Checkbox,
+    InlineNotification,
+    Search,
+    Select,
+    SelectItem,
+  } from 'carbon-components-svelte';
+  import Filter from 'carbon-icons-svelte/lib/Filter.svelte';
+  import View from 'carbon-icons-svelte/lib/View.svelte';
+  import Information from 'carbon-icons-svelte/lib/Information.svelte';
+  import TreeViewAlt from 'carbon-icons-svelte/lib/TreeViewAlt.svelte';
+  import Branch from 'carbon-icons-svelte/lib/Branch.svelte';
+  import Erase from 'carbon-icons-svelte/lib/Erase.svelte';
+  import ContextPopover from './ContextPopover.svelte';
   import ZoomIn from 'carbon-icons-svelte/lib/ZoomIn.svelte';
   import ZoomOut from 'carbon-icons-svelte/lib/ZoomOut.svelte';
   import FitToScreen from 'carbon-icons-svelte/lib/FitToScreen.svelte';
@@ -483,12 +497,15 @@
   const edgeKey = (edge: { source: string; target: string }) => edge.source + '>' + edge.target;
   /** Resume and extension links continue a run; other links start a new one. */
   const continues = (edge: LineageEdge) => edge.relation === 'resume' || edge.relation === 'extend';
+  /** Links read as the child's logged `change` sentence, else its relations and changed keys. */
   function edgeLabel(edge: LineageEdge) {
     const parts: string[] = [];
     if (edge.update !== null)
       parts.push(
         $t('lineage.edge.update', { update: $number(edge.update, { notation: 'compact' }) }),
       );
+    const change = index?.nodes.get(edge.target)?.change;
+    if (change) return [...parts, change].join(' · ');
     const traits = edge.traits.filter((trait) => trait !== 'extends_config');
     if (traits.length) parts.push(traits.map((trait) => '+' + trait.replace(/_/g, ' ')).join(' '));
     const keys = edge.changedKeys.slice(0, 2).map(shortKey);
@@ -502,8 +519,29 @@
     { id: 'update', text: $t('lineage.axis.update') },
     { id: 'time', text: $t('lineage.axis.time') },
   ]);
-  const menuLabel = (id: string) =>
-    $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close');
+  // The toolbar's collapsed menus: filters, view options and the counts.
+  let menu = $state<'' | 'filters' | 'view' | 'info'>(''),
+    menuAnchor = $state<HTMLElement | null>(null);
+  function openMenu(next: 'filters' | 'view' | 'info', event: MouseEvent) {
+    if (menu === next) return closeMenu();
+    menuAnchor = (event.currentTarget as HTMLElement).closest('button');
+    menu = next;
+  }
+  function closeMenu() {
+    const anchor = menuAnchor;
+    menu = '';
+    void tick().then(() => anchor?.focus());
+  }
+  const valueOf = (event: Event) => (event.target as HTMLSelectElement).value;
+  let activeFilters = $derived(
+    [
+      filters.group,
+      filters.tag,
+      filters.host,
+      filters.collapseRejected,
+      filters.showIsolated,
+    ].filter(Boolean).length,
+  );
   let showLabels = $derived(scale >= 0.55);
 </script>
 
@@ -518,71 +556,71 @@
         bind:value={filters.search}
       />
     </div>
-    <Dropdown
-      size="lg"
-      type="inline"
-      translateWithId={menuLabel}
-      labelText={$t('lineage.filter.group.label')}
-      selectedId={filters.group}
-      items={[
-        { id: '', text: $t('lineage.filter.group.all') },
-        ...groups.map((group) => ({ id: group, text: group })),
-      ]}
-      on:select={(event) => (filters.group = String(event.detail.selectedId))}
-    />
-    <Dropdown
-      size="lg"
-      type="inline"
-      translateWithId={menuLabel}
-      labelText={$t('lineage.filter.tag.label')}
-      selectedId={filters.tag}
-      items={[
-        { id: '', text: $t('lineage.filter.tag.all') },
-        ...tags.map((tag) => ({ id: tag, text: tag })),
-      ]}
-      on:select={(event) => (filters.tag = String(event.detail.selectedId))}
-    />
-    {#if hosts.length}<Dropdown
-        size="lg"
-        type="inline"
-        translateWithId={menuLabel}
-        labelText={$t('lineage.filter.host.label')}
-        selectedId={filters.host}
-        items={[
-          { id: '', text: $t('lineage.filter.host.all') },
-          ...hosts.map((host) => ({ id: host, text: host })),
-        ]}
-        on:select={(event) => (filters.host = String(event.detail.selectedId))}
-      />{/if}
-    <Dropdown
-      size="lg"
-      type="inline"
-      translateWithId={menuLabel}
-      labelText={$t('lineage.axis.label')}
-      selectedId={axis}
-      items={axisItems}
-      on:select={(event) => (axis = event.detail.selectedId as Axis)}
-    />
-    <Dropdown
-      size="lg"
-      type="inline"
-      translateWithId={menuLabel}
-      labelText={$t('lineage.colorBy.label')}
-      selectedId={colorBy}
-      items={[
-        { id: 'run', text: $t('lineage.colorBy.run') },
-        { id: 'host', text: $t('lineage.colorBy.host') },
-      ]}
-      on:select={(event) => (colorBy = event.detail.selectedId as ColorBy)}
-    />
-    <fieldset class="lineage-options">
-      <Checkbox
-        labelText={$t('lineage.filter.collapseRejected')}
-        bind:checked={filters.collapseRejected}
-      />
-      <Checkbox labelText={$t('lineage.filter.showIsolated')} bind:checked={filters.showIsolated} />
-    </fieldset>
+    <Button
+      kind="ghost"
+      size="field"
+      icon={Filter}
+      aria-haspopup="dialog"
+      aria-expanded={menu === 'filters'}
+      on:click={(event) => openMenu('filters', event)}
+      >{activeFilters
+        ? $t('lineage.toolbar.filtersActive', { count: activeFilters })
+        : $t('lineage.toolbar.filters')}</Button
+    >
+    <Button
+      kind="ghost"
+      size="field"
+      icon={View}
+      aria-haspopup="dialog"
+      aria-expanded={menu === 'view'}
+      on:click={(event) => openMenu('view', event)}>{$t('lineage.toolbar.view')}</Button
+    >
+    {#if pickedRuns.length || (selected && index?.nodes.has(selected))}<span
+        class="lineage-selection"
+        role="group"
+        aria-label={$t('lineage.selection.label')}
+      >
+        {#if selected && index?.nodes.has(selected)}<Button
+            kind="ghost"
+            size="field"
+            icon={TreeViewAlt}
+            iconDescription={$t('lineage.selection.addPath')}
+            tooltipPosition="bottom"
+            on:click={() => pick([...picked, ...path])}
+          /><Button
+            kind="ghost"
+            size="field"
+            icon={Branch}
+            iconDescription={$t('lineage.selection.addBranch')}
+            tooltipPosition="bottom"
+            on:click={() => pick([...picked, selected, ...descendants(selected, index!)])}
+          />{/if}
+        {#if pickedRuns.length}<Button
+            kind="ghost"
+            size="field"
+            icon={Erase}
+            iconDescription={$t('lineage.selection.clear')}
+            tooltipPosition="bottom"
+            on:click={() => pick([])}
+          /><Button
+            kind="primary"
+            size="field"
+            icon={ChartLine}
+            on:click={() => onCompare(pickedRuns)}
+            >{$t('lineage.selection.compareCount', { count: pickedRuns.length })}</Button
+          >{/if}
+      </span>{/if}
     <span class="lineage-toolbar-actions">
+      <Button
+        kind="ghost"
+        size="field"
+        icon={Information}
+        iconDescription={$t('lineage.toolbar.info')}
+        tooltipPosition="bottom"
+        aria-haspopup="dialog"
+        aria-expanded={menu === 'info'}
+        on:click={(event) => openMenu('info', event)}
+      />
       <Button
         kind="ghost"
         size="field"
@@ -627,46 +665,90 @@
       />
     </span>
   </div>
-  {#if graph && visible}<div class="lineage-status">
-      <p class="lineage-summary" role="status">
-        {[
-          $t('lineage.summary.shown', { count: visible.shown.length }),
-          visible.isolatedHidden
-            ? $t('lineage.summary.isolated', { count: visible.isolatedHidden })
-            : '',
-          graph.counts.unresolved
-            ? $t('lineage.summary.unresolved', { count: graph.counts.unresolved })
-            : '',
-        ]
-          .filter(Boolean)
-          .join(' · ')}
-      </p>
-      <div class="lineage-selection" role="region" aria-label={$t('lineage.selection.label')}>
-        <span
-          >{pickedRuns.length
-            ? $t('lineage.selection.count', { count: pickedRuns.length })
-            : $t('lineage.selection.hint')}</span
-        >
-        {#if selected && index?.nodes.has(selected)}<Button
-            kind="ghost"
-            size="small"
-            on:click={() => pick([...picked, ...path])}>{$t('lineage.selection.addPath')}</Button
-          ><Button
-            kind="ghost"
-            size="small"
-            on:click={() => pick([...picked, selected, ...descendants(selected, index!)])}
-            >{$t('lineage.selection.addBranch')}</Button
-          >{/if}
-        {#if pickedRuns.length}<Button kind="ghost" size="small" on:click={() => pick([])}
-            >{$t('lineage.selection.clear')}</Button
-          ><Button
-            kind="primary"
-            size="small"
-            icon={ChartLine}
-            on:click={() => onCompare(pickedRuns)}>{$t('lineage.selection.compare')}</Button
-          >{/if}
-      </div>
-    </div>{/if}
+  {#if menu && menuAnchor}<ContextPopover
+      anchor={menuAnchor}
+      title={menu === 'filters'
+        ? $t('lineage.toolbar.filters')
+        : menu === 'view'
+          ? $t('lineage.toolbar.view')
+          : $t('lineage.toolbar.info')}
+      onClose={closeMenu}
+      width={320}
+    >
+      {#if menu === 'filters'}<div class="form-stack lineage-menu">
+          <Select
+            labelText={$t('lineage.filter.group.label')}
+            selected={filters.group}
+            on:change={(event) => (filters.group = valueOf(event))}
+            ><SelectItem
+              value=""
+              text={$t('lineage.filter.group.all')}
+            />{#each groups as group (group)}<SelectItem
+                value={group}
+                text={group}
+              />{/each}</Select
+          >
+          <Select
+            labelText={$t('lineage.filter.tag.label')}
+            selected={filters.tag}
+            on:change={(event) => (filters.tag = valueOf(event))}
+            ><SelectItem
+              value=""
+              text={$t('lineage.filter.tag.all')}
+            />{#each tags as tag (tag)}<SelectItem value={tag} text={tag} />{/each}</Select
+          >
+          {#if hosts.length}<Select
+              labelText={$t('lineage.filter.host.label')}
+              selected={filters.host}
+              on:change={(event) => (filters.host = valueOf(event))}
+              ><SelectItem
+                value=""
+                text={$t('lineage.filter.host.all')}
+              />{#each hosts as host (host)}<SelectItem value={host} text={host} />{/each}</Select
+            >{/if}
+          <fieldset class="lineage-options">
+            <Checkbox
+              labelText={$t('lineage.filter.collapseRejected')}
+              bind:checked={filters.collapseRejected}
+            />
+            <Checkbox
+              labelText={$t('lineage.filter.showIsolated')}
+              bind:checked={filters.showIsolated}
+            />
+          </fieldset>
+        </div>{:else if menu === 'view'}<div class="form-stack lineage-menu">
+          <Select
+            labelText={$t('lineage.axis.label')}
+            selected={axis}
+            on:change={(event) => (axis = valueOf(event) as Axis)}
+            >{#each axisItems as item (item.id)}<SelectItem
+                value={item.id}
+                text={item.text}
+              />{/each}</Select
+          >
+          <Select
+            labelText={$t('lineage.colorBy.label')}
+            selected={colorBy}
+            on:change={(event) => (colorBy = valueOf(event) as ColorBy)}
+            ><SelectItem value="run" text={$t('lineage.colorBy.run')} /><SelectItem
+              value="host"
+              text={$t('lineage.colorBy.host')}
+            /></Select
+          >
+        </div>{:else if graph && visible}<ul class="lineage-info">
+          <li>{$t('lineage.summary.shown', { count: visible.shown.length })}</li>
+          {#if visible.isolatedHidden}<li>
+              {$t('lineage.summary.isolated', { count: visible.isolatedHidden })}
+            </li>{/if}
+          {#if graph.counts.unresolved}<li>
+              {$t('lineage.summary.unresolved', { count: graph.counts.unresolved })}
+            </li>{/if}
+          {#if pickedRuns.length}<li>
+              {$t('lineage.selection.count', { count: pickedRuns.length })}
+            </li>{/if}
+          <li class="lineage-muted">{$t('lineage.selection.hint')}</li>
+        </ul>{/if}
+    </ContextPopover>{/if}
   {#if error}<InlineNotification
       lowContrast
       kind="error"
@@ -722,7 +804,9 @@
                   edgeLabel(edge)}{#if label}<span
                     class="lineage-edge-label"
                     class:on-path={pathSet.has(edge.target)}
-                    title={edge.changedKeys.join('\n')}
+                    title={[index.nodes.get(edge.target)?.change, ...edge.changedKeys]
+                      .filter(Boolean)
+                      .join('\n')}
                     style:left={to.x - 8 + 'px'}
                     style:top={to.y + nodeHeight / 2 + 'px'}>{label}</span
                   >{/if}{/if}{/each}{/if}

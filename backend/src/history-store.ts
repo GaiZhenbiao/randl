@@ -241,6 +241,86 @@ export class HistoryStore {
       ).run(run, file, offset, content);
     return previous === undefined ? 'inserted' : 'replaced';
   }
+  /**
+   * Edits a stream's stored lines in place, keeping their offsets: `edit` returns a line's new
+   * content, or undefined to keep it. Each block is rewritten in its own transaction and the
+   * generator yields after it, so a long history does not hold the worker. Returns the offsets
+   * that changed. Callers make edits repeatable, so an interrupted rewrite can run again.
+   */
+  *rewriteLines(
+    run: number,
+    file: number,
+    edit: (content: string, offset: number) => string | undefined,
+  ): Generator<void, number[]> {
+    const changed: number[] = [],
+      history = file === this.fileId('wandb-history.jsonl');
+    const apply = (rows: Line[]) =>
+      rows.map((line) => {
+        const content = edit(line.content, line.offset);
+        if (content === undefined || content === line.content) return line;
+        changed.push(line.offset);
+        return { offset: line.offset, content };
+      });
+    const ids = (
+      this.sql('SELECT id FROM stream_blocks WHERE run=? AND file=? ORDER BY first').all(
+        run,
+        file,
+      ) as Row[]
+    ).map((row) => row.id as number);
+    for (const id of ids) {
+      this.transaction(() => {
+        const block = this.sql('SELECT * FROM stream_blocks WHERE id=?').get(id) as LineBlock & Row;
+        const before = changed.length,
+          rows = apply(decodeLines(block));
+        if (changed.length === before) return;
+        const b = encodeLines(rows, history);
+        this.sql(
+          'UPDATE stream_blocks SET bytes=?,largest=?,step_hi=?,step_hi_offset=?,body=? WHERE id=?',
+        ).run(b.bytes, b.largest, b.step_hi, b.step_hi_offset, b.body, id);
+      });
+      this.decoded = undefined;
+      yield;
+    }
+    this.transaction(() => {
+      const tail = this.sql(
+        'SELECT offset,content FROM stream_tail WHERE run=? AND file=? ORDER BY offset',
+      ).all(run, file) as Line[];
+      for (const line of apply(tail))
+        this.sql('UPDATE stream_tail SET content=? WHERE run=? AND file=? AND offset=?').run(
+          line.content,
+          run,
+          file,
+          line.offset,
+        );
+    });
+    return changed;
+  }
+  /** One series' points, removed from storage (blocks and tail). */
+  takePoints(run: number, metric: number): Point[] {
+    const points = this.series(run, metric);
+    const steps = points.steps,
+      values = points.values;
+    this.sql('DELETE FROM point_blocks WHERE run=? AND metric=?').run(run, metric);
+    this.sql('DELETE FROM point_tail WHERE run=? AND metric=?').run(run, metric);
+    this.bounds.delete(`point:${run}:${metric}`);
+    this.counts.delete(`${run}:${metric}`);
+    return Array.from(steps, (step, index) => ({ step, value: values[index] }));
+  }
+  /** Moves a whole series to another metric name without decoding it. */
+  relabelPoints(run: number, from: number, to: number) {
+    for (const table of ['point_blocks', 'point_tail', 'media'])
+      this.sql(`UPDATE ${table} SET metric=? WHERE run=? AND metric=?`).run(to, run, from);
+    this.sql('UPDATE OR IGNORE run_metrics SET metric=? WHERE run=? AND metric=?').run(
+      to,
+      run,
+      from,
+    );
+    this.sql('DELETE FROM run_metrics WHERE run=? AND metric=?').run(run, from);
+    for (const metric of [from, to]) {
+      this.bounds.delete(`point:${run}:${metric}`);
+      this.counts.delete(`${run}:${metric}`);
+    }
+  }
   private target(kind: 'point' | 'stream', run: number, key: number, value: number): Row {
     const column = kind === 'point' ? 'metric' : 'file';
     return (this.sql(

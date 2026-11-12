@@ -52,6 +52,19 @@ function drain<T>(job: Generator<void, T>) {
     if (step.done) return step.value;
   }
 }
+/**
+ * A history record with one top-level key renamed and the key order kept, or undefined when
+ * the record lacks the key or already has the new one. Records are stored as JSON.stringify
+ * output, so re-serializing changes nothing else.
+ */
+function renameKey(content: string, from: string, to: string) {
+  if (!content.includes(JSON.stringify(from))) return undefined;
+  const record = JSON.parse(content);
+  if (!Object.hasOwn(record, from) || Object.hasOwn(record, to)) return undefined;
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(record).map(([name, value]) => [name === from ? to : name, value])),
+  );
+}
 /** Whether a chart result is a job to be advanced, rather than a finished chart. */
 export const isJob = (value: unknown): value is Generator<void, Row> =>
   !!value && typeof (value as Generator).next === 'function' && Symbol.iterator in (value as object);
@@ -113,6 +126,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,manifest TEXT,source TEXT,revision TEXT,enabled INTEGER DEFAULT 0);
       CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY,time REAL,tool TEXT,arguments TEXT);
       CREATE TABLE IF NOT EXISTS run_alerts(id INTEGER PRIMARY KEY,run TEXT,title TEXT,text TEXT,severity TEXT,created REAL);
+      CREATE TABLE IF NOT EXISTS metric_renames(id INTEGER PRIMARY KEY,run TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,merged INTEGER NOT NULL,offsets TEXT NOT NULL,steps TEXT,summary TEXT NOT NULL,by TEXT NOT NULL DEFAULT '',created REAL NOT NULL,undone REAL);
       CREATE INDEX IF NOT EXISTS run_alerts_run ON run_alerts(run,created);`);
     this.artifacts = new Artifacts(this.db);
     this.conversations = new Conversations(this.db);
@@ -237,7 +251,7 @@ export class Store {
     return this.run(args.id);
   }
   /**
-   * Changes a stored run's config keys, tags or notes and nothing else: no state, runtime,
+   * Changes a stored run's config keys, summary keys, tags or notes and nothing else: no state, runtime,
    * history, summary or snapshot change (the `run_metadata_update` tool). `config` replaces
    * top-level keys (null removes one); `configMerge` deep-merges objects into them (null
    * removes a nested key). Values are stored in W&B's `{value}` layout. A request that
@@ -246,7 +260,7 @@ export class Store {
   runMetadataUpdate(args: Row) {
     return this.db.transaction(() => {
       const row = this.db
-        .prepare('SELECT config,tags,notes FROM runs WHERE id=? AND deleted_at IS NULL')
+        .prepare('SELECT config,tags,notes,summary FROM runs WHERE id=? AND deleted_at IS NULL')
         .get(args.id) as Row | undefined;
       if (!row) throw managementError('RUN_NOT_FOUND', 'Run not found', { run: args.id }, 404);
       const config = JSON.parse(row.config),
@@ -273,17 +287,25 @@ export class Store {
       tags = [...new Set([...tags, ...(args.addTags ?? [])].map((tag) => tag.trim()))].filter(
         (tag) => tag && !removed.has(tag),
       );
+      const summary = JSON.parse(row.summary);
+      for (const [key, value] of Object.entries(args.summary ?? {}))
+        if (value === null) delete summary[key];
+        else summary[key] = value;
       const next = {
         config: JSON.stringify(config),
         tags: JSON.stringify(tags),
         notes: args.notes ?? row.notes,
+        summary: JSON.stringify(summary),
       };
       const changed =
-        next.config !== row.config || next.tags !== row.tags || next.notes !== row.notes;
+        next.config !== row.config ||
+        next.tags !== row.tags ||
+        next.notes !== row.notes ||
+        next.summary !== JSON.stringify(JSON.parse(row.summary));
       if (changed)
         this.db
-          .prepare('UPDATE runs SET config=?,tags=?,notes=?,revision=revision+1 WHERE id=?')
-          .run(next.config, next.tags, next.notes, args.id);
+          .prepare('UPDATE runs SET config=?,tags=?,notes=?,summary=?,revision=revision+1 WHERE id=?')
+          .run(next.config, next.tags, next.notes, next.summary, args.id);
       return {
         id: args.id,
         changed,
@@ -294,7 +316,313 @@ export class Store {
         ),
         tags,
         notes: next.notes,
+        summary: Object.fromEntries(Object.entries(summary).filter(([key]) => !key.startsWith('_'))),
       };
+    })();
+  }
+  /** The stored run for an edit of its history, or a not-found error. */
+  private editableRun(id: string) {
+    const row = this.db
+      .prepare('SELECT id,summary,metric_definitions FROM runs WHERE id=? AND deleted_at IS NULL')
+      .get(id) as Row | undefined;
+    const key = this.history.runKey(id);
+    if (!row || key === undefined)
+      throw managementError('RUN_NOT_FOUND', 'Run not found', { run: id }, 404);
+    return { row, key };
+  }
+  /** Clears what derived data depends on a run's history, and marks the run changed. */
+  private historyEdited(id: string, keysChanged: boolean) {
+    this.history.resetCaches();
+    this.derived.clear();
+    this.derivedBytes = 0;
+    this.db
+      .prepare(
+        `UPDATE runs SET revision=revision+1${keysChanged ? ',metric_revision=metric_revision+1' : ''} WHERE id=?`,
+      )
+      .run(id);
+  }
+  /** Whether a run has a metric: in its index, points, media or summary. */
+  private hasMetric(key: number, summary: Row, name: string) {
+    const metric = this.history.metricId(name);
+    return (
+      Object.hasOwn(summary, name) ||
+      (metric !== undefined &&
+        !!this.db
+          .prepare(
+            'SELECT 1 FROM run_metrics WHERE run=? AND metric=? UNION ALL SELECT 1 FROM point_tail WHERE run=? AND metric=? UNION ALL SELECT 1 FROM point_blocks WHERE run=? AND metric=? UNION ALL SELECT 1 FROM media WHERE run=? AND metric=? LIMIT 1',
+          )
+          .get(key, metric, key, metric, key, metric, key, metric))
+    );
+  }
+  /**
+   * Renames metric keys of a stored run (the `run_metrics_rename` tool): its history records,
+   * points, media, index, summary and define_metric settings. A key whose source is gone and
+   * whose target exists is already renamed and left alone. An existing target is refused unless
+   * `merge` is set, and a merge is refused while any step or record holds both keys. Each
+   * rename is logged in `metric_renames` for `metricsRenameUndo`. A job: history is rewritten
+   * one block at a time, then the index and summary change in one transaction.
+   */
+  *metricsRename(args: Row): Generator<void, Row> {
+    const results: Row[] = [];
+    for (const { from, to } of args.renames as { from: string; to: string }[])
+      results.push(yield* this.renameMetric(args.id, from, to, !!args.merge, args.by ?? ''));
+    return { id: args.id, renames: results };
+  }
+  private *renameMetric(
+    id: string,
+    from: string,
+    to: string,
+    merge: boolean,
+    by: string,
+  ): Generator<void, Row> {
+    if (from === to)
+      throw managementError('METRIC_RENAME_SAME', 'Choose a different name.', { metric: from }, 400);
+    const { row, key } = this.editableRun(id),
+      summary = JSON.parse(row.summary);
+    const source = this.hasMetric(key, summary, from),
+      target = this.hasMetric(key, summary, to);
+    if (!source) return { from, to, status: target ? 'unchanged' : 'missing' };
+    if (target && !merge)
+      throw managementError(
+        'METRIC_EXISTS',
+        `${to} already exists on this run; merge them to combine.`,
+        { metric: to },
+        409,
+      );
+    const fromId = this.history.metricId(from),
+      file = this.history.fileId('wandb-history.jsonl');
+    if (target) {
+      // A merge must not lose a value: no step or record may hold both keys.
+      const toId = this.history.metricId(to);
+      if (fromId !== undefined && toId !== undefined) {
+        const steps = new Set(this.history.series(key, toId).steps);
+        if (this.history.series(key, fromId).steps.some((step) => steps.has(step)))
+          throw managementError(
+            'METRIC_MERGE_CONFLICT',
+            `${from} and ${to} both have values at the same step.`,
+            { metric: to },
+            409,
+          );
+      }
+      if (file !== undefined) {
+        let count = 0;
+        for (const line of this.history.lines(key, file)) {
+          if (line.content.includes(JSON.stringify(to))) {
+            const record = JSON.parse(line.content);
+            if (Object.hasOwn(record, from) && Object.hasOwn(record, to))
+              throw managementError(
+                'METRIC_MERGE_CONFLICT',
+                `${from} and ${to} are both in history record ${line.offset}.`,
+                { metric: to },
+                409,
+              );
+          }
+          if (++count % 4096 === 0) yield;
+        }
+      }
+    }
+    const offsets =
+      file === undefined
+        ? []
+        : yield* this.history.rewriteLines(key, file, (content) => renameKey(content, from, to));
+    return this.db.transaction(() => {
+      const fresh = this.editableRun(id).row,
+        summary = JSON.parse(fresh.summary),
+        before = { [from]: summary[from], [to]: summary[to] };
+      if (Object.hasOwn(summary, from)) {
+        const value = summary[from];
+        delete summary[from];
+        if (!Object.hasOwn(summary, to)) summary[to] = value;
+      }
+      let moved: { points: number[]; media: number[] } | null = null;
+      const toId = this.history.ensureMetricId(to);
+      if (fromId !== undefined) {
+        if (target) {
+          const points = this.history.takePoints(key, fromId);
+          for (const point of points) this.history.pointPut(key, toId, point.step, point.value);
+          const media = (
+            this.db.prepare('SELECT step FROM media WHERE run=? AND metric=?').all(key, fromId) as Row[]
+          ).map((item) => item.step as number);
+          this.db
+            .prepare('UPDATE OR IGNORE media SET metric=? WHERE run=? AND metric=?')
+            .run(toId, key, fromId);
+          this.db.prepare('DELETE FROM run_metrics WHERE run=? AND metric=?').run(key, fromId);
+          this.history.catalogAdd(key, toId);
+          this.history.finishWrites(key);
+          moved = { points: points.map((point) => point.step), media };
+        } else this.history.relabelPoints(key, fromId, toId);
+      }
+      // define_metric settings follow a renamed key unless the target has its own.
+      const definitions = JSON.parse(fresh.metric_definitions || '[]') as Row[];
+      if (!target)
+        for (const definition of definitions) {
+          if (definition.name === from) definition.name = to;
+          if (definition.stepMetric === from) definition.stepMetric = to;
+        }
+      this.db
+        .prepare('UPDATE runs SET summary=?,metric_definitions=? WHERE id=?')
+        .run(JSON.stringify(summary), JSON.stringify(definitions), id);
+      const undo = this.db
+        .prepare(
+          'INSERT INTO metric_renames(run,source,target,merged,offsets,steps,summary,by,created) VALUES(?,?,?,?,?,?,?,?,?)',
+        )
+        .run(
+          id,
+          from,
+          to,
+          target ? 1 : 0,
+          JSON.stringify(offsets),
+          moved && JSON.stringify(moved),
+          JSON.stringify(before),
+          by,
+          Date.now() / 1000,
+        ).lastInsertRowid;
+      this.historyEdited(id, true);
+      return { from, to, status: target ? 'merged' : 'renamed', undo: Number(undo) };
+    })();
+  }
+  /** Reverses one logged rename (`run_metrics_rename_undo`); repeating it changes nothing. */
+  *metricsRenameUndo(args: Row): Generator<void, Row> {
+    const record = this.db.prepare('SELECT * FROM metric_renames WHERE id=?').get(args.undo) as
+      Row | undefined;
+    if (!record)
+      throw managementError('METRIC_RENAME_NOT_FOUND', 'Rename not found', { undo: args.undo }, 404);
+    if (record.undone) return { id: record.run, undo: record.id, status: 'unchanged' };
+    const { row, key } = this.editableRun(record.run),
+      summary = JSON.parse(row.summary);
+    if (!record.merged && this.hasMetric(key, summary, record.source))
+      throw managementError(
+        'METRIC_RENAME_CHANGED',
+        `${record.source} exists again; rename it before undoing.`,
+        { metric: record.source },
+        409,
+      );
+    const offsets = new Set<number>(JSON.parse(record.offsets)),
+      file = this.history.fileId('wandb-history.jsonl');
+    if (file !== undefined)
+      yield* this.history.rewriteLines(key, file, (content, offset) =>
+        offsets.has(offset) ? renameKey(content, record.target, record.source) : undefined,
+      );
+    return this.db.transaction(() => {
+      const fresh = this.editableRun(record.run).row,
+        summary = JSON.parse(fresh.summary),
+        before = JSON.parse(record.summary);
+      for (const name of [record.source, record.target])
+        if (Object.hasOwn(before, name)) summary[name] = before[name];
+        else delete summary[name];
+      const sourceId = this.history.ensureMetricId(record.source),
+        targetId = this.history.metricId(record.target);
+      if (targetId !== undefined) {
+        if (!record.merged) this.history.relabelPoints(key, targetId, sourceId);
+        else {
+          const moved = JSON.parse(record.steps) as { points: number[]; media: number[] },
+            points = new Set(moved.points);
+          for (const point of this.history.takePoints(key, targetId))
+            this.history.pointPut(key, points.has(point.step) ? sourceId : targetId, point.step, point.value);
+          const media = this.db.prepare(
+            'UPDATE OR IGNORE media SET metric=? WHERE run=? AND metric=? AND step=?',
+          );
+          for (const step of moved.media) media.run(sourceId, key, targetId, step);
+          this.history.catalogAdd(key, sourceId);
+          this.history.finishWrites(key);
+        }
+      }
+      const definitions = JSON.parse(fresh.metric_definitions || '[]') as Row[];
+      if (!record.merged)
+        for (const definition of definitions) {
+          if (definition.name === record.target) definition.name = record.source;
+          if (definition.stepMetric === record.target) definition.stepMetric = record.source;
+        }
+      this.db
+        .prepare('UPDATE runs SET summary=?,metric_definitions=? WHERE id=?')
+        .run(JSON.stringify(summary), JSON.stringify(definitions), record.run);
+      this.db
+        .prepare('UPDATE metric_renames SET undone=? WHERE id=?')
+        .run(Date.now() / 1000, record.id);
+      this.historyEdited(record.run, true);
+      return {
+        id: record.run,
+        undo: record.id,
+        status: 'undone',
+        from: record.target,
+        to: record.source,
+      };
+    })();
+  }
+  /**
+   * Writes numeric values at given steps of a stored run's history (`run_history_write`), such
+   * as audit results computed after training. Each row merges into the history record at its
+   * `_step`, or adds a record when there is none. A different stored value at the same step
+   * and key is refused unless `replace` is set; identical values change nothing.
+   */
+  *historyWrite(args: Row): Generator<void, Row> {
+    const { key } = this.editableRun(args.id),
+      file = this.history.ensureFileId('wandb-history.jsonl'),
+      wanted = new Map<number, Record<string, number>>();
+    for (const item of args.rows as { step: number; values: Record<string, number> }[])
+      wanted.set(item.step, { ...wanted.get(item.step), ...item.values });
+    const found = new Map<number, { offset: number; record: Row }>();
+    let last = -1,
+      count = 0;
+    for (const line of this.history.lines(key, file)) {
+      last = line.offset;
+      const step = /"_step":(-?[\d.eE+]+)/.exec(line.content);
+      if (step && wanted.has(Number(step[1]))) {
+        const record = JSON.parse(line.content);
+        if (record._step === Number(step[1]) && !found.has(record._step))
+          found.set(record._step, { offset: line.offset, record });
+      }
+      if (++count % 4096 === 0) yield;
+    }
+    const conflicts: string[] = [];
+    for (const [step, values] of wanted) {
+      const record = found.get(step)?.record;
+      if (record)
+        for (const [name, value] of Object.entries(values))
+          if (Object.hasOwn(record, name) && record[name] !== value && !args.replace)
+            conflicts.push(`${name}@${step}`);
+    }
+    if (conflicts.length)
+      throw managementError(
+        'HISTORY_VALUE_CONFLICT',
+        `Different values are already stored: ${conflicts.slice(0, 5).join(', ')}${conflicts.length > 5 ? ', …' : ''}.`,
+        { count: conflicts.length },
+        409,
+      );
+    const edits = new Map<number, string>();
+    for (const [step, values] of wanted) {
+      const stored = found.get(step);
+      if (!stored) continue;
+      const next = JSON.stringify({ ...stored.record, ...values });
+      if (next !== JSON.stringify(stored.record)) edits.set(stored.offset, next);
+    }
+    if (edits.size) yield* this.history.rewriteLines(key, file, (_, offset) => edits.get(offset));
+    return this.db.transaction(() => {
+      let added = 0,
+        changed = edits.size,
+        newKeys = false;
+      for (const [step, values] of wanted) {
+        const stored = found.get(step)?.record;
+        if (!stored) {
+          this.history.linePut(key, file, ++last, JSON.stringify({ _step: step, ...values }));
+          added++;
+        }
+        for (const [name, value] of Object.entries(values)) {
+          if (stored?.[name] === value) continue;
+          const metric = this.history.ensureMetricId(name);
+          if (!this.hasMetric(key, {}, name)) newKeys = true;
+          this.history.pointPut(key, metric, step, value);
+          this.history.catalogAdd(key, metric);
+        }
+      }
+      this.history.finishWrites(key);
+      if (added || changed) {
+        this.db
+          .prepare('UPDATE runs SET history_count=max(history_count,?) WHERE id=?')
+          .run(last + 1, args.id);
+        this.historyEdited(args.id, newKeys);
+      } else this.history.resetCaches();
+      return { id: args.id, changed: !!(added || changed), added, updated: changed };
     })();
   }
   private presentRun(row:Row|undefined,now=Date.now()/1000){

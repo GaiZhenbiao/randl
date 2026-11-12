@@ -5,7 +5,7 @@ import { promises as fs, openAsBlob, createWriteStream } from 'node:fs';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { contained } from './plugins.js';
-const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them. State, history and files are untouched.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
+const usage = `randl — rewards and losses\n\nrandl serve [--port 8742] [--data-dir .data] [--pi-agent-dir DIR] [--frontend-dir DIR] [--host 127.0.0.1] [--run-timeout 600] [--public-url https://randl.example.com] [--entity local]\n  --entity (or RANDL_ENTITY) is the W&B entity the SDK uses when wandb.init() names none.\nrandl status\nrandl runs [--project entity/project]\nrandl runs show --id entity/project/run\nrandl runs delete|restore|stop|add-tags|remove-tags --ids run1,run2 [--tags tag1,tag2]\nrandl runs update-meta --id entity/project/run [--config JSON | --config-file PATH|-] [--merge JSON | --merge-file PATH|-] [--tags a,b] [--add-tags a,b] [--remove-tags a,b] [--summary JSON] [--notes TEXT] [--by NAME]\n  --config replaces top-level config keys (null removes one); --merge deep-merges objects into them; --summary sets summary keys. State, history and files are untouched.\nrandl runs rename-metrics --id entity/project/run --rename old=new[,old2=new2] [--combine] [--by NAME]\nrandl runs rename-metrics --undo ID\n  Renames metric keys in history, summary and the metric index; --combine merges into existing keys. Prints undo IDs.\nrandl runs write-history --id entity/project/run --rows JSON | --rows-file PATH|- [--replace] [--by NAME]\n  Rows are [{\"step\": 545000, \"values\": {\"metric\": 0.7}}]; each merges into the history record at that step.\nrandl projects list|show|create|rename|describe|archive|restore|delete --id entity/project [--name Name] [--description TEXT | --description-file PATH|-] [--confirm Name]\nrandl views list|get|create|rename|delete [--id ID] [--name Name] [--project entity/project]\nrandl panels add|update|remove --view ID [--id PANEL_ID] [--plugin line] [--metric loss] [--metrics loss,reward] [--expressions JSON]\n  --expressions takes a JSON array of computed metrics, e.g. '[{"name":"Rate","expression":"\${hits} / \${total}"}]'; [] or null on update removes them.\nrandl select --view ID [--visible run1,run2 | --visible-file PATH] [--solo run1,run2 | --solo-file PATH]\n  Files contain a JSON array of run IDs; use - to read one array from standard input. Up to 100,000 unique IDs per selection.\nrandl plugins list|install|update|enable|disable|remove [--source PATH_OR_GITHUB_URL] [--id ID]\nrandl artifacts list|show|log|download|alias [--id ID] [--path PATH] [--name NAME] [--project entity/project] [--type dataset] [--alias latest] [--output DIR]\nrandl tools\nrandl tool NAME --json '{"arguments":"value"}'\nrandl agent 'Manage my workspace' [--session ID] [--confirm-delete-project entity/project]\n\nGlobal: --url http://127.0.0.1:8742. Outputs JSON. Plugin enable runs trusted frontend code.\n`;
 export async function main(argv = process.argv.slice(2)) {
   const { values: v, positionals: p } = parseArgs({
     args: argv,
@@ -32,6 +32,13 @@ export async function main(argv = process.argv.slice(2)) {
       'remove-tags': { type: 'string' },
       notes: { type: 'string' },
       by: { type: 'string' },
+      summary: { type: 'string' },
+      rename: { type: 'string' },
+      combine: { type: 'boolean' },
+      undo: { type: 'string' },
+      rows: { type: 'string' },
+      'rows-file': { type: 'string' },
+      replace: { type: 'boolean' },
       confirm: {type:'string'},
       'confirm-delete-project': {type:'string',multiple:true},
       name: { type: 'string' },
@@ -131,8 +138,8 @@ export async function main(argv = process.argv.slice(2)) {
   if(command==='runs'&&action==='show')return output(await tool('run_get',{id:required('id')}));
   if (command === 'runs' && action === 'update-meta') {
     // JSON from --NAME or --NAME-file (a path, or - for standard input).
-    const json = async (name: 'config' | 'merge') => {
-      const file = v[`${name}-file`];
+    const json = async (name: 'config' | 'merge' | 'summary') => {
+      const file = name === 'summary' ? undefined : v[`${name}-file`];
       if (v[name] !== undefined && file !== undefined)
         throw Error(`Use either --${name} or --${name}-file`);
       let text = v[name];
@@ -146,6 +153,7 @@ export async function main(argv = process.argv.slice(2)) {
     for (const [option, field] of [
       ['config', 'config'],
       ['merge', 'configMerge'],
+      ['summary', 'summary'],
     ] as const) {
       const value = await json(option);
       if (value !== undefined) change[field] = value;
@@ -159,6 +167,46 @@ export async function main(argv = process.argv.slice(2)) {
     if (v.notes !== undefined) change.notes = v.notes;
     if (v.by !== undefined) change.by = v.by;
     return output(await tool('run_metadata_update', change));
+  }
+  if (command === 'runs' && action === 'rename-metrics') {
+    if (v.undo !== undefined)
+      return output(
+        await tool('run_metrics_rename_undo', {
+          undo: Number(v.undo),
+          ...(v.by !== undefined ? { by: v.by } : {}),
+        }),
+      );
+    const renames = csv(required('rename')).map((pair) => {
+      const at = pair.indexOf('=');
+      if (at < 1 || at === pair.length - 1) throw Error('Write each rename as old=new');
+      return { from: pair.slice(0, at), to: pair.slice(at + 1) };
+    });
+    return output(
+      await tool('run_metrics_rename', {
+        id: required('id'),
+        renames,
+        ...(v.combine ? { merge: true } : {}),
+        ...(v.by !== undefined ? { by: v.by } : {}),
+      }),
+    );
+  }
+  if (command === 'runs' && action === 'write-history') {
+    if (v.rows !== undefined && v['rows-file'] !== undefined)
+      throw Error('Use either --rows or --rows-file');
+    let text = v.rows;
+    if (v['rows-file'] === '-') {
+      text = '';
+      for await (const chunk of process.stdin) text += chunk.toString();
+    } else if (v['rows-file']) text = await fs.readFile(v['rows-file'], 'utf8');
+    if (text === undefined) throw Error('--rows or --rows-file is required');
+    return output(
+      await tool('run_history_write', {
+        id: required('id'),
+        rows: JSON.parse(text),
+        ...(v.replace ? { replace: true } : {}),
+        ...(v.by !== undefined ? { by: v.by } : {}),
+      }),
+    );
   }
   if (command === 'runs')
     return output(await tool('runs_list', v.project ? { project: v.project } : {}));

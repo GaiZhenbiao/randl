@@ -60,7 +60,8 @@
   aria-label={title}
   onfocusout={(event) => {
     const next = event.relatedTarget as Node | null;
-    if (next && !host.contains(next))
+    // A click on non-focusable content (a checkbox label) focuses an ancestor such as <main>.
+    if (next && !host.contains(next) && !next.contains(host))
       void tick().then(() => {
         if (!host.contains(document.activeElement)) onClose();
       });

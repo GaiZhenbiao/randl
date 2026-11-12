@@ -288,6 +288,28 @@ test('nodes carry the logged compute segments and config bases', () => {
   );
 });
 
+test('nodes carry the logged change, result and verdict', () => {
+  const tagged = run('v651_tagged', {
+    lineage: {
+      parent: null,
+      change: 'Constant actor LR 1e-6 instead of cosine',
+      result: 'Best 377/512, +12 over parent',
+      verdict: { status: 'rejected', reason: 'Collisions doubled' },
+    },
+  });
+  tagged.tags = ['verdict:adopted'];
+  const node = lineageNode(tagged, { latest: null, best: null }, new RunMatcher([tagged]));
+  assert.equal(node.change, 'Constant actor LR 1e-6 instead of cosine');
+  assert.equal(node.result, 'Best 377/512, +12 over parent');
+  assert.equal(node.verdictReason, 'Collisions doubled');
+  assert.equal(node.verdict, 'adopted', 'the tag decides');
+  const untagged = run('v652', { lineage: { verdict: { status: 'rejected' } } });
+  assert.equal(
+    lineageNode(untagged, { latest: null, best: null }, new RunMatcher([untagged])).verdict,
+    'rejected',
+  );
+});
+
 test('config diffs skip ignored keys and compare nested values', () => {
   const a = flattenConfig({
       rl: { checkpoint: { save_dir: '/a', keep_last: 3 }, algorithm: { lr: 1e-6, dims: [512] } },

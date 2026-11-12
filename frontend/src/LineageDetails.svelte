@@ -240,9 +240,26 @@
       </dl>
     </section>{/if}
 
-  {#if node.hypothesis || node.recipe !== null}<section>
+  {#if node.change || node.hypothesis || node.result || node.verdict || node.recipe !== null}<section
+      class="lineage-story"
+    >
+      {#if node.change}<h3>{$t('lineage.panel.change')}</h3>
+        <p class="lineage-hypothesis">{node.change}</p>{/if}
       {#if node.hypothesis}<h3>{$t('lineage.panel.hypothesis')}</h3>
         <p class="lineage-hypothesis">{node.hypothesis}</p>{/if}
+      {#if node.result}<h3>{$t('lineage.panel.result')}</h3>
+        <p class="lineage-hypothesis">{node.result}</p>{/if}
+      {#if node.verdict}<h3>{$t('lineage.panel.verdict')}</h3>
+        <p>
+          <Tag
+            size="sm"
+            type={node.verdict === 'adopted'
+              ? 'green'
+              : node.verdict === 'rejected'
+                ? 'red'
+                : 'blue'}>{$t(verdictLabels[node.verdict])}</Tag
+          >{#if node.verdictReason}<span class="lineage-hypothesis">{node.verdictReason}</span>{/if}
+        </p>{/if}
       {#if node.recipe !== null}<h3>{$t('lineage.panel.recipe')}</h3>
         <JsonValue value={node.recipe} />{/if}
     </section>{/if}

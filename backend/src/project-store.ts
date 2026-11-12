@@ -243,6 +243,9 @@ export class Projects {
       this.db.prepare('DELETE FROM runs WHERE entity=? AND project=?').run(entity, project);
       this.history.deleteRuns(runs.map((id: string) => this.history.runKey(id)!));
       this.db.exec('DELETE FROM run_alerts WHERE run IN (SELECT id FROM temp.deleted_project_runs)');
+      this.db.exec(
+        'DELETE FROM metric_renames WHERE run IN (SELECT id FROM temp.deleted_project_runs)',
+      );
       this.db.exec('DELETE FROM deleted_project_runs');
       this.db.prepare('DELETE FROM projects WHERE id=?').run(a.id);
       this.db.prepare('DELETE FROM server_settings WHERE key=?').run('lineage:' + a.id);

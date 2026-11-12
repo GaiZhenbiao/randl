@@ -66,6 +66,9 @@ try {
         relation: ['initialize_from', 'grown_head'],
         changes: { 'model.head': [512, 1024] },
         hypothesis: 'A wider head holds more boxes',
+        change: 'Command head widened from 512 to 1024 units',
+        result: 'Best 205/512, below its parent',
+        verdict: { status: 'rejected', reason: 'Fewer holds than v100' },
         compute: {
           host: 'Sirius',
           gpu_count: 2,
@@ -122,20 +125,36 @@ try {
   const cards = page.locator('.lineage-card');
   const card = (name) => cards.filter({ hasText: name });
   await expect(cards).toHaveCount(4);
-  await expect(page.locator('.lineage-summary')).toHaveText(
-    '4 runs shown · 1 run without lineage hidden',
-  );
+  // The toolbar is one row; its menus, counts and options open on demand.
+  const toolbar = page.locator('.lineage-toolbar');
+  const { height } = await toolbar.boundingBox();
+  assert.ok(height <= 56, 'one toolbar row: ' + height);
+  const menu = async (name) => {
+    await toolbar.getByRole('button', { name }).click();
+    return page.getByRole('dialog');
+  };
+  const closeMenu = () => page.keyboard.press('Escape');
+  await expect((await menu('Counts and help')).locator('li')).toContainText([
+    '4 runs shown',
+    '1 run without lineage hidden',
+  ]);
+  await closeMenu();
   await expect(card('v100')).toContainText('384/512');
   await expect(card('v100')).toContainText('best 384/512');
   await expect(card('v100').locator('[aria-label="Adopted"]')).toHaveCount(1);
   await expect(page.locator('.lineage-edges .lineage-edge')).toHaveCount(3);
   await expect(page.locator('.lineage-edges .lineage-edge.matched')).toHaveCount(2);
   await expect(page.locator('.lineage-edge-label', { hasText: '@1K · lr' })).toHaveCount(1);
-  await expect(page.locator('.lineage-edge-label', { hasText: '@2K · +grown head' })).toHaveCount(
-    1,
-  );
+  // A logged change sentence labels its link; other links list their changed keys.
+  await expect(
+    page.locator('.lineage-edge-label', {
+      hasText: '@2K · Command head widened from 512 to 1024 units',
+    }),
+  ).toHaveCount(1);
   await expect(card('v102')).toContainText('Sirius · 2× RTX 4090 48GB');
-  checks.push('Cards show verdicts, hardware and scaled metrics; both kinds of link draw');
+  checks.push(
+    'One toolbar row; cards show verdicts, hardware and metrics; links read as the logged change',
+  );
 
   // The page opens at 100% on the running run, which has a rippling accent ring.
   const transform = async () =>
@@ -192,13 +211,13 @@ try {
 
   // Arranged by start update, cards sit left to right in the order their runs started.
   const left = async (name) => parseFloat(await card(name).evaluate((item) => item.style.left));
-  await page.getByRole('combobox', { name: /Arrange by/ }).click();
-  await page.getByRole('option', { name: 'Start update' }).click();
+  await (await menu('View')).getByLabel('Arrange by').selectOption('update');
+  await closeMenu();
   await expect.poll(async () => (await left('v101')) < (await left('v102'))).toBe(true);
   assert.ok((await left('v100')) < (await left('v101')));
   assert.ok((await left('v102')) < (await left('v103')));
-  await page.getByRole('combobox', { name: /Arrange by/ }).click();
-  await page.getByRole('option', { name: 'Lineage depth' }).click();
+  await (await menu('View')).getByLabel('Arrange by').selectOption('depth');
+  await closeMenu();
   await expect.poll(async () => (await left('v101')) === (await left('v102'))).toBe(true);
   checks.push('Cards can be arranged by start update and back by lineage depth');
 
@@ -206,7 +225,19 @@ try {
   const details = page.locator('.lineage-details');
   const parentDiff = details.locator('section', { hasText: 'Config changes from parent' });
   await expect(details.locator('h2')).toHaveText('v102_head');
-  await expect(details).toContainText('A wider head holds more boxes');
+  await expect(details.locator('.lineage-story h3')).toHaveText([
+    'What changed',
+    'Hypothesis',
+    'Result',
+    'Verdict',
+  ]);
+  for (const text of [
+    'Command head widened from 512 to 1024 units',
+    'A wider head holds more boxes',
+    'Best 205/512, below its parent',
+    'Fewer holds than v100',
+  ])
+    await expect(details.locator('.lineage-story')).toContainText(text);
   await expect(details).toContainText('Initialized from update 2,000 · logged by the run');
   await expect(details.locator('.lineage-traits')).toHaveText('grown_head');
   await expect(details).toContainText('Updates 2,000–2,500');
@@ -220,7 +251,9 @@ try {
     'rl.checkpoint.save_dir',
   ]);
   assert.match(page.url(), /\?run=test%2Flineage%2Fv102_head&select=v102_head$/);
-  checks.push('The details panel shows the hypothesis, relation and the diff against the parent');
+  checks.push(
+    'The details panel shows change, hypothesis, result, verdict, relation and the parent diff',
+  );
 
   // Keyboard: Left moves to the parent card, Escape closes the panel and keeps focus.
   await card('v102').focus();
@@ -232,15 +265,19 @@ try {
   await expect(page.locator('.lineage-card:focus')).toHaveCount(1);
   checks.push('Arrow keys follow links and Escape closes the details panel');
 
-  await page.getByText('Collapse rejected branches').click();
+  await (await menu('Filters')).getByText('Collapse rejected branches').click();
+  await closeMenu();
   await expect(cards).toHaveCount(3);
   await expect(card('v102')).toContainText('1 run collapsed');
-  await page.getByText('Collapse rejected branches').click();
+  await expect(toolbar.getByRole('button', { name: 'Filters (1)' })).toBeVisible();
+  await (await menu('Filters (1)')).getByText('Collapse rejected branches').click();
+  await closeMenu();
   await page.getByRole('searchbox', { name: 'Filter runs by name' }).fill('v103');
   await expect(cards).toHaveCount(3);
   await expect(page.locator('.lineage-card.context')).toHaveCount(2);
   await page.getByRole('searchbox', { name: 'Filter runs by name' }).fill('');
-  await page.getByText('Show runs without lineage').click();
+  await (await menu('Filters')).getByText('Show runs without lineage').click();
+  await closeMenu();
   await expect(cards).toHaveCount(5);
   checks.push('Filters keep connecting ancestors; rejected branches and unlinked runs toggle');
 
@@ -257,16 +294,16 @@ try {
 
   // Shift-click picks runs; the root-to-run path joins them; the workspace shows exactly them.
   await card('v102').click({ modifiers: ['Shift'] });
-  await expect(page.locator('.lineage-selection')).toContainText('2 runs selected');
+  await expect(page.getByRole('button', { name: 'Compare 2' })).toBeVisible();
   await page.getByRole('button', { name: 'Select path from root' }).click();
-  await expect(page.locator('.lineage-selection')).toContainText('3 runs selected');
+  await expect(page.getByRole('button', { name: 'Compare 3' })).toBeVisible();
   await expect(page.locator('.lineage-card.picked')).toHaveCount(3);
   assert.deepEqual(new URL(page.url()).searchParams.get('select').split(',').sort(), [
     'v100_root',
     'v101_lr',
     'v102_head',
   ]);
-  await page.getByRole('button', { name: 'Compare in workspace' }).click();
+  await page.getByRole('button', { name: 'Compare 3' }).click();
   await expect(page).toHaveURL(/\/test\/lineage\/workspace/);
   await expect(page.getByText('Showing 3 runs from the lineage')).toBeVisible();
   const viewId = new URL(page.url()).searchParams.get('view');
@@ -317,18 +354,18 @@ try {
   checks.push('Shift+drag draws a lasso that selects cards');
 
   // Hosts: filter to one (its ancestors stay as context) and colour cards by host.
-  await page.getByRole('combobox', { name: /^Host/ }).click();
-  await page.getByRole('option', { name: 'Sirius' }).click();
+  await (await menu('Filters')).getByLabel('Host').selectOption('Sirius');
+  await closeMenu();
   await expect(cards).toHaveCount(2);
   await expect(page.locator('.lineage-card.context')).toHaveCount(1);
-  await page.getByRole('combobox', { name: /Color by/ }).click();
-  await page.getByRole('option', { name: 'Host' }).click();
+  await (await menu('View')).getByLabel('Color by').selectOption('host');
+  await closeMenu();
   await expect(card('v102').locator('.lineage-swatch')).toHaveCount(1);
   await expect(card('v100').locator('.lineage-swatch')).toHaveCount(0);
-  await page.getByRole('combobox', { name: /^Host/ }).click();
-  await page.getByRole('option', { name: 'All hosts' }).click();
-  await page.getByRole('combobox', { name: /Color by/ }).click();
-  await page.getByRole('option', { name: 'Run color' }).click();
+  await (await menu('Filters (2)')).getByLabel('Host').selectOption('');
+  await closeMenu();
+  await (await menu('View')).getByLabel('Color by').selectOption('run');
+  await closeMenu();
   checks.push('Runs can be filtered and coloured by the host they trained on');
 
   await page.getByRole('button', { name: 'Lineage settings' }).click();
