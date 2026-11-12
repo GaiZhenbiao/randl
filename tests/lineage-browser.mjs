@@ -394,6 +394,23 @@ try {
   await expect(page.locator('.lineage-card.picked')).toHaveCount(1);
   checks.push('Dragging draws a selection box (Ctrl adds); Shift+drag pans with a grab cursor');
 
+  // A plain click on empty canvas closes the run panel and clears the selection; a Shift click
+  // (the start of a pan) does not.
+  await card('v100').click();
+  await expect(details.locator('h2')).toHaveText('v100_root');
+  await drag(...(await around(['v101'])), 'Control');
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(2);
+  const blank = (await around(['v100']))[0];
+  await page.keyboard.down('Shift');
+  await page.mouse.click(blank.x, blank.y);
+  await page.keyboard.up('Shift');
+  await expect(details.locator('h2')).toHaveText('v100_root');
+  await page.mouse.click(blank.x, blank.y);
+  await expect(details).toBeHidden();
+  await expect(page.locator('.lineage-card.picked')).toHaveCount(0);
+  await expect(page).not.toHaveURL(/[?&](run|select)=/);
+  checks.push('A click on empty canvas deselects and closes the run panel');
+
   // Hosts: filter to one (its ancestors stay as context) and colour cards by host.
   await (await menu('Filters')).getByLabel('Host').selectOption('Sirius');
   await closeMenu();

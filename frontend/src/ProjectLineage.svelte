@@ -327,7 +327,15 @@
   // mouse wheel pans and Ctrl+wheel zooms. On touch screens one finger pans and two pinch.
   const pointers = new Map<number, { x: number; y: number }>();
   let moved = false,
-    lasso = $state<{ x1: number; y1: number; x2: number; y2: number; add: boolean } | null>(null),
+    tapEmpty = false,
+    lasso = $state<{
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      add: boolean;
+      empty: boolean;
+    } | null>(null),
     shiftHeld = $state(false),
     panning = $state(false);
   $effect(() => {
@@ -352,6 +360,10 @@
     const onControl = !!(event.target as Element).closest('button, a');
     if (event.pointerType === 'mouse' && (event.button !== 0 || onControl)) return;
     const at = local(event);
+    // A press on empty canvas (not a card or the legend) that does not move is a click that
+    // clears the selection.
+    const empty = !(event.target as Element).closest('.lineage-card, .lineage-legend');
+    tapEmpty = empty && !pointers.size;
     // A drag on the canvas selects runs or pans, never text: no text selection starts, and any
     // existing one (in the side panel, say) is cleared.
     if (event.pointerType === 'mouse') {
@@ -359,7 +371,14 @@
       window.getSelection()?.removeAllRanges();
     }
     if (event.pointerType === 'mouse' && !event.shiftKey) {
-      lasso = { x1: at.x, y1: at.y, x2: at.x, y2: at.y, add: event.ctrlKey || event.metaKey };
+      lasso = {
+        x1: at.x,
+        y1: at.y,
+        x2: at.x,
+        y2: at.y,
+        add: event.ctrlKey || event.metaKey,
+        empty,
+      };
       (event.currentTarget as Element).setPointerCapture(event.pointerId);
       return;
     }
@@ -403,11 +422,21 @@
       if (Math.abs(box.x2 - box.x1) > 4 || Math.abs(box.y2 - box.y1) > 4) {
         const inside = cardsIn(layout.positions, { x1: a.x, y1: a.y, x2: b.x, y2: b.y });
         pick(box.add ? [...picked, ...inside] : inside);
-      }
+      } else if (box.empty && !box.add && event.type === 'pointerup') clearSelection();
       return;
     }
     panning = false;
+    // A tap on empty canvas that did not pan or pinch also clears the selection.
+    if (
+      event.type === 'pointerup' &&
+      event.pointerType !== 'mouse' &&
+      tapEmpty &&
+      !moved &&
+      pointers.size === 1
+    )
+      clearSelection();
     pointers.delete(event.pointerId);
+    if (!pointers.size) tapEmpty = false;
   }
   // A drag that ends over a card is not a click on it.
   function clickCapture(event: MouseEvent) {
@@ -474,6 +503,12 @@
       reveal(id);
       if (focus) void tick().then(() => cardButton(id)?.focus());
     }
+  }
+  function clearSelection() {
+    if (!selected && !picked.size) return;
+    selected = '';
+    picked = new Set();
+    syncURL();
   }
   function pick(ids: Iterable<string>) {
     picked = new Set(ids);
