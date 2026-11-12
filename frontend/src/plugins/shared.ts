@@ -619,6 +619,8 @@ export function renderer(
         host.onRange?.({ xMin, xMax });
     }, 250);
   });
+  let emphasisTimer: ReturnType<typeof setTimeout> | undefined;
+  const linkedEmphasisDelay = 120;
   function applyHighlights(list: string[]) {
     // Groups can list tens of thousands of runs, so membership uses a set.
     const ids = new Set(list),
@@ -830,7 +832,19 @@ export function renderer(
       highlighted = ids;
       localHighlight = local;
       inspector.highlightRuns(ids, local);
-      if (ready) applyHighlights(ids);
+      // Emphasis redraws the whole canvas. The chart under the pointer shows it at once; a
+      // linked chart, whose readout and dot already follow, redraws once the hovered run has
+      // stayed the same for a moment, so sweeping a chart or the run list does not redraw
+      // every chart on every step.
+      clearTimeout(emphasisTimer);
+      emphasisTimer = undefined;
+      if (!ready) return;
+      if (local || !ids.length || !highlightSignature) applyHighlights(ids);
+      else
+        emphasisTimer = setTimeout(() => {
+          emphasisTimer = undefined;
+          if (ready) applyHighlights(highlighted);
+        }, linkedEmphasisDelay);
     },
     showCursor: (cursor) => {
       pendingCursor = cursor;
@@ -853,6 +867,7 @@ export function renderer(
     },
     destroy: () => {
       clearTimeout(timer);
+      clearTimeout(emphasisTimer);
       host.onCursor?.(null);
       ready = false;
       inspector.destroy();

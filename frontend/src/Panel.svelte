@@ -138,6 +138,8 @@
   }
   let container: HTMLElement, plot: HTMLDivElement;
   let visible = $state(false),
+    // On screen now, without the half-screen margin `visible` draws ahead with.
+    onScreen = $state(false),
     loading = $state(false),
     status = $state<Message>(''),
     renderError = $state<Message>(''),
@@ -608,6 +610,10 @@
       rootMargin: '50% 0px',
     });
     observer.observe(container);
+    const screen = new IntersectionObserver(([entry]) => (onScreen = entry.isIntersecting), {
+      root: readonly ? null : document.querySelector('main'),
+    });
+    screen.observe(container);
     plotWidth = plot.clientWidth;
     plotHeight = plot.clientHeight;
     const resize = new ResizeObserver(([entry]) => {
@@ -618,6 +624,7 @@
     resize.observe(plot);
     return () => {
       observer.disconnect();
+      screen.disconnect();
       resize.disconnect();
       releaseHiddenRenderer(owner);
       cancelLinked(owner);
@@ -944,6 +951,12 @@
     // A grid cell's cursor is this panel's own; its sibling cells follow it at once.
     const origin =
       local || cursor?.source === panel.id || !!cursor?.source.startsWith(panel.id + '#');
+    // Linked hover state redraws charts, so only panels on screen take it; one scrolled into
+    // view catches up with the latest (its last focus is kept until then).
+    if (!origin && !wasOrigin && !onScreen && !focused) {
+      cancelLinked(owner);
+      return;
+    }
     const immediate = origin || wasOrigin;
     const job = {
       ...(current.highlightRuns &&

@@ -38,6 +38,7 @@
     "test:run-query": "node tests/run-query-performance.mjs",
     "test:run-selection": "node tests/run-selection-performance.mjs",
     "test:open-latency": "node tests/open-latency-browser.mjs",
+    "test:hover-latency": "node tests/hover-latency-browser.mjs",
     "test:run-controls": "node tests/run-controls-browser.mjs && node tests/run-state-group-browser.mjs",
     "test:bulk-selection": "node tests/bulk-selection-browser.mjs",
     "test:run-focus": "node tests/run-focus-browser.mjs",

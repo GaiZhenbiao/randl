@@ -206,16 +206,23 @@ export function plotInspector(
     onFocus(null);
     live.textContent = '';
   }
+  let scroller: HTMLElement | null = null;
   function scrollBounds() {
     const fullscreen = host.closest<HTMLElement>('.chart.fullscreen');
     let container: HTMLElement | null = fullscreen;
+    // The scrolling ancestor is found once while it stays in the page: every linked chart
+    // asks on each pointer move, and each lookup reads computed styles up the tree.
     if (!container) {
-      for (let parent = host.parentElement; parent; parent = parent.parentElement) {
-        if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) {
-          container = parent;
-          break;
+      if (!scroller?.isConnected || !scroller.contains(host)) {
+        scroller = null;
+        for (let parent = host.parentElement; parent; parent = parent.parentElement) {
+          if (/(auto|scroll)/.test(getComputedStyle(parent).overflowY)) {
+            scroller = parent;
+            break;
+          }
         }
       }
+      container = scroller;
     }
     const box = container?.getBoundingClientRect(),
       // Panels scroll beneath a pinned workspace toolbar, which covers the scroller's top.
@@ -502,11 +509,22 @@ export function plotInspector(
     };
     count();
     const maxHeight = Math.min(plotHeight, (plotWidth * plotHeight * 0.4) / cap);
-    while (node.getBoundingClientRect().height > maxHeight && body.children.length > 1) {
-      body.lastElementChild!.remove();
+    // Rows share one height, so the overflow is cut in one step from a single measurement
+    // instead of one layout per removed row; every linked chart does this on each move.
+    let height = node.getBoundingClientRect().height;
+    if (height > maxHeight && body.children.length > 1) {
+      const row = (body.firstElementChild as HTMLElement).getBoundingClientRect().height || 1,
+        extra = Math.min(body.children.length - 1, Math.ceil((height - maxHeight) / row));
+      for (let i = 0; i < extra; i++) body.lastElementChild!.remove();
       count();
+      height = node.getBoundingClientRect().height;
+      while (height > maxHeight && body.children.length > 1) {
+        body.lastElementChild!.remove();
+        count();
+        height = node.getBoundingClientRect().height;
+      }
     }
-    if (node.getBoundingClientRect().height > maxHeight) more.hidden = true;
+    if (height > maxHeight) more.hidden = true;
     const rect = node.getBoundingClientRect();
     const fits =
       body.children.length > 0 && rect.height <= maxHeight && node.scrollWidth <= node.clientWidth;
