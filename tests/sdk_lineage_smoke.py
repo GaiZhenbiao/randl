@@ -26,8 +26,8 @@ with tempfile.TemporaryDirectory(prefix="randl-sdk-lineage-") as directory:
         run.config.update({"lineage": {
             "parent": {"run_id": parent_id, "run_name": "v621_parent", "update": 543000},
             "relation": ["initialize_from", "grown_head"],
-            "compute": {"host": "Sirius", "gpu_count": 2, "segments": [
-                {"from_update": 543000, "to_update": None, "host": "Sirius", "gpu_count": 2,
+            "compute": {"host": "gpu-a", "gpu_count": 2, "segments": [
+                {"from_update": 543000, "to_update": None, "host": "gpu-a", "gpu_count": 2,
                  "gpu_ids": None, "gpu_model": "RTX 4090 48GB", "slot": None}]},
             "changes": {"model.command_head_dim": [512, 1024]},
             "recipe": {"name": "latched_box40"},

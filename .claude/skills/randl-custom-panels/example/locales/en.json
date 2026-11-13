@@ -1,0 +1,6 @@
+{
+  "options.order.label": "Order",
+  "options.order.name": "By run name",
+  "options.order.value": "Highest first",
+  "panel.noData": "No data"
+}

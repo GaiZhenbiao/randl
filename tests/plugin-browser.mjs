@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,6 +102,14 @@ const modules = new Map([
       update:
         'return new Promise((_resolve, reject) => window.rejectUpdate = () => reject(Error("late update fixture failure")));',
     }),
+  ],
+  // The example panel of the randl-custom-panels agent skill, as an author would install it.
+  [
+    'latest-bars',
+    await readFile(
+      join(repository, '.claude/skills/randl-custom-panels/example/panel.js'),
+      'utf8',
+    ),
   ],
   [
     'invalid-lifecycle',
@@ -302,6 +310,21 @@ try {
     },
   );
 
+  await check(
+    'the custom-panels skill example renders through the real panel host',
+    async ({ page, target, mode }) => {
+      await mode('latest-bars');
+      const row = target.locator('[data-run="fixture/run"]');
+      await expect(row).toContainText('Fixture run');
+      await expect(row).toContainText('1');
+      await row.hover();
+      await expect(row).toHaveCSS('opacity', '1');
+      await page.mouse.move(1, 999);
+      await expect(target.locator('.chart-status')).toHaveCount(0);
+      await mode('healthy');
+      await expect(target.locator('.chart-canvas')).toHaveText('healthy-ready');
+    },
+  );
   for (const [id, message] of [
     ['create-failure', 'create fixture failure'],
     ['invalid-lifecycle', 'required rendering methods are missing'],

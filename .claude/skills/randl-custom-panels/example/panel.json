@@ -1,0 +1,26 @@
+{
+  "id": "latest-bars",
+  "name": "Latest value bars",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "entry": "panel.js",
+  "renderer": "dom",
+  "metricSelection": "single",
+  "settings": {
+    "common": [],
+    "options": [
+      {
+        "key": "order",
+        "tab": "display",
+        "type": "select",
+        "default": "value",
+        "label": "options.order.label",
+        "choices": [
+          { "value": "value", "label": "options.order.value" },
+          { "value": "name", "label": "options.order.name" }
+        ]
+      }
+    ]
+  },
+  "locales": { "en": "locales/en.json" }
+}

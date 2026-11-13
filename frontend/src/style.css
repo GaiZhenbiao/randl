@@ -1979,7 +1979,7 @@ aside {
   padding-inline: 16px;
 }
 /* The Lineage page: a pannable graph of run cards beside a details panel. */
-/* Page controls (PageRail.svelte, CONTRIBUTING.md "Page controls"): in the header after the
+/* Page controls (PageRail.svelte, docs/contributing/design-system.md "The header rail"): in the header after the
    page's name at every width; the page's main search ends the rail, as the workspace's does. */
 .page-rail,
 .page-rail-controls {

@@ -1,4 +1,4 @@
-// The experiment ledger kept beside runs (README "Experiment ledger"): topic findings with their
+// The experiment ledger kept beside runs (docs/guides/ledger.md): topic findings with their
 // versions, the current best recipe and its history, planned runs and their queues, and run
 // journals. Records have caller-chosen ids, so a repeated save is a no-op, and every change is
 // a tool call that the audit log records.

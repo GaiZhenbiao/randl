@@ -1,5 +1,5 @@
-// Planned runs as the queue host agents take work from (README "Plans as the training
-// queue"): each plan's status follows the run carrying it out, and the waiting plans are
+// Planned runs as the queue host agents take work from (docs/guides/planning.md,
+// "The queue"): each plan's status follows the run carrying it out, and the waiting plans are
 // ordered by queue position, then by the `after` chain, then by creation.
 import type { GpuRequest, Plan, PlanStatus } from './ledger.js';
 
@@ -43,7 +43,7 @@ export function moveWithin<T extends { id: string }>(
   return list;
 }
 
-// GPU requests (README "Plans as the training queue"): a plan asks for a number of GPUs with
+// GPU requests (docs/guides/planning.md): a plan asks for a number of GPUs with
 // a minimum memory and model on one host; the allocator gives it specific GPUs when a host
 // agent reports them free, head of the queue first, and a projection runs the same rules
 // forward in time for the Plans page.

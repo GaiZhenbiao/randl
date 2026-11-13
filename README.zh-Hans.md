@@ -239,7 +239,7 @@ export WANDB_BASE_URL="$RANDL_URL"
 export WANDB_API_KEY="$RANDL_API_KEY"
 ```
 
-[DEPLOYMENT.md](DEPLOYMENT.md)（英文）介绍了 [deploy/Caddyfile](deploy/Caddyfile) 中的 Caddy 示例、备份、上传限制以及助手提供商的设置。
+[docs/guides/deployment.md](docs/guides/deployment.md)（英文）介绍了 [deploy/Caddyfile](deploy/Caddyfile) 中的 Caddy 示例、备份、上传限制以及助手提供商的设置。
 
 | `randl serve` 选项 | 默认值          | 用途                                              |
 | ------------------ | --------------- | ------------------------------------------------- |
@@ -280,11 +280,11 @@ randl plugins install --source ./examples/plugins/stat-card
 randl plugins enable --id stat-card
 ```
 
-已安装的插件默认处于禁用状态。启用后，插件会在仪表盘中运行并可访问其数据，因此请只安装你信任的代码。randl 会复制源码，但从不运行安装或构建脚本。如需编写自己的插件，请参阅 [PLUGINS.md](PLUGINS.md)（英文）。
+已安装的插件默认处于禁用状态。启用后，插件会在仪表盘中运行并可访问其数据，因此请只安装你信任的代码。randl 会复制源码，但从不运行安装或构建脚本。如需编写自己的插件，请参阅 [docs/guides/custom-panels.md](docs/guides/custom-panels.md)（英文）。
 
 ## 项目状态
 
-randl 尚处于早期阶段，变化很快；不同版本之间可能会有破坏性变更。它是一个独立实现，与 Weights & Biases 没有关联；W&B 服务器和仪表盘不属于 randl。[CONTRIBUTING.md](CONTRIBUTING.md)（英文）介绍了开发环境设置、测试和架构。
+randl 尚处于早期阶段，变化很快；不同版本之间可能会有破坏性变更。它是一个独立实现，与 Weights & Biases 没有关联；W&B 服务器和仪表盘不属于 randl。[docs/contributing/README.md](docs/contributing/README.md)（英文）介绍了开发环境设置、测试和架构。
 
 ## 许可证
 

@@ -78,7 +78,7 @@ export function create({ element }: { element: HTMLElement }): Renderer {
     flow = newFlow();
   const kind = () => ctx!.panel.plugin;
   // Coverflow with run tabs shows one run alone. The host is told which, so its slider spans
-  // that run's media (docs/plugins.md#media-data).
+  // that run's media (docs/reference/panel-api.md).
   let announced: string | undefined;
   function announceRun(run: string | undefined) {
     if (run === announced) return;

@@ -1,5 +1,5 @@
 // W&B ROBIN16, in assignment order. Low-contrast legacy night-mode values have
-// higher OKLCH lightness for Carbon g100; see docs/wandb-reference.md for the audit.
+// higher OKLCH lightness for Carbon g100; see docs/history/wandb-reference.md for the audit.
 export type RunColorPair = { light: string; dark: string };
 export const runPalette: RunColorPair[] = [
   { light: '#538ae5', dark: '#6499f0' }, // blue

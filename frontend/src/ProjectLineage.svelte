@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The Lineage page (README "Lineage"): runs as cards, linked from the run whose checkpoint
+  // The Lineage page (docs/guides/lineage.md): runs as cards, linked from the run whose checkpoint
   // each started from. The server derives the graph; this page filters, lays out and explains
   // it, and hands chosen runs to the workspace for comparison.
   import RunName from './RunName.svelte';

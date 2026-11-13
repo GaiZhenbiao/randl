@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A project's current state (README "Plans and GPU occupancy"): the best recipe and how it
+  // A project's current state (docs/guides/planning.md): the best recipe and how it
   // got there, the GPUs of each host over time with the queue's projected future (the
   // `gpu-occupancy` panel), the queue every host takes plans from, and the ideas not yet
   // planned (PlanIdeas.svelte).

@@ -98,22 +98,22 @@ try {
         result: 'Best 205/512, below its parent',
         verdict: { status: 'rejected', reason: 'Fewer holds than v100' },
         compute: {
-          host: 'Sirius',
+          host: 'gpu-a',
           gpu_count: 2,
           segments: [
             {
               from_update: 2000,
               to_update: 2500,
-              host: 'polaris',
+              host: 'gpu-b',
               gpu_count: 1,
               gpu_ids: [3],
               gpu_model: 'RTX 4090 24GB',
-              slot: 'polaris_012',
+              slot: 'gpu-b_012',
             },
             {
               from_update: 2500,
               to_update: null,
-              host: 'Sirius',
+              host: 'gpu-a',
               gpu_count: 2,
               gpu_ids: null,
               gpu_model: 'RTX 4090 48GB',
@@ -214,7 +214,7 @@ try {
   await expect(sentence).toHaveText('Command head widened from 512 to 1024 units');
   await expect(sentence).toHaveAttribute('title', 'Command head widened from 512 to 1024 units');
   await expect(page.locator('.lineage-edge-label', { hasText: '@' })).toHaveCount(0);
-  await expect(card('v102')).toContainText('Sirius · 2× RTX 4090 48GB');
+  await expect(card('v102')).toContainText('gpu-a · 2× RTX 4090 48GB');
   checks.push(
     'Controls in the header (one row when narrow); cards show verdicts, hardware and metrics; links read as the logged change',
   );
@@ -376,7 +376,7 @@ try {
   await expect(details).toContainText('Initialized from update 2,000 · logged by the run');
   await expect(details.locator('.lineage-traits')).toHaveText('grown_head');
   await expect(details).toContainText('Updates 2,000–2,500');
-  await expect(details).toContainText('polaris · polaris_012');
+  await expect(details).toContainText('gpu-b · gpu-b_012');
   await expect(details).toContainText('1× RTX 4090 24GB (3)');
   // Config changes read as word diffs under their key, its path muted.
   const diffKeys = parentDiff.locator('.config-diff-key');
@@ -639,7 +639,7 @@ try {
   checks.push('A click on empty canvas deselects and closes the run panel');
 
   // Hosts: filter to one (its ancestors stay as context) and colour cards by host.
-  await (await menu('Filters')).getByLabel('Host').selectOption('Sirius');
+  await (await menu('Filters')).getByLabel('Host').selectOption('gpu-a');
   await closeMenu();
   await expect(cards).toHaveCount(2);
   await expect(page.locator('.lineage-card.context')).toHaveCount(1);

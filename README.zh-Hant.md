@@ -240,7 +240,7 @@ export WANDB_BASE_URL="$RANDL_URL"
 export WANDB_API_KEY="$RANDL_API_KEY"
 ```
 
-[DEPLOYMENT.md](DEPLOYMENT.md)（英文）說明了 [deploy/Caddyfile](deploy/Caddyfile) 中的 Caddy 範例、備份、上傳限制與助理供應商設定。
+[docs/guides/deployment.md](docs/guides/deployment.md)（英文）說明了 [deploy/Caddyfile](deploy/Caddyfile) 中的 Caddy 範例、備份、上傳限制與助理供應商設定。
 
 | `randl serve` 選項 | 預設值          | 用途                                                     |
 | ------------------ | --------------- | -------------------------------------------------------- |
@@ -282,12 +282,12 @@ randl plugins enable --id stat-card
 ```
 
 已安裝的外掛程式預設為停用。啟用後，它們會在儀表板中執行並可存取儀表板的資料，因此請只安裝您信任的程式碼。
-randl 會複製原始碼，且絕不執行安裝或建置指令碼。若要撰寫自己的外掛程式，請參閱 [PLUGINS.md](PLUGINS.md)（英文）。
+randl 會複製原始碼，且絕不執行安裝或建置指令碼。若要撰寫自己的外掛程式，請參閱 [docs/guides/custom-panels.md](docs/guides/custom-panels.md)（英文）。
 
 ## 狀態
 
 randl 仍在早期階段且變化快速；不同版本之間可能出現不相容的變更。它是獨立的實作，與 Weights & Biases
-沒有任何關係；W&B 伺服器與儀表板並不包含在其中。[CONTRIBUTING.md](CONTRIBUTING.md)（英文）說明了開發環境設定、測試與架構。
+沒有任何關係；W&B 伺服器與儀表板並不包含在其中。[docs/contributing/README.md](docs/contributing/README.md)（英文）說明了開發環境設定、測試與架構。
 
 ## 授權
 

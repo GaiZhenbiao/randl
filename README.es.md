@@ -357,7 +357,7 @@ export WANDB_BASE_URL="$RANDL_URL"
 export WANDB_API_KEY="$RANDL_API_KEY"
 ```
 
-[DEPLOYMENT.md](DEPLOYMENT.md) (en inglés) cubre el ejemplo de Caddy de
+[docs/guides/deployment.md](docs/guides/deployment.md) (en inglés) cubre el ejemplo de Caddy de
 [deploy/Caddyfile](deploy/Caddyfile), las copias de seguridad, los límites de carga y la
 configuración del proveedor del Asistente.
 
@@ -410,14 +410,14 @@ randl plugins enable --id stat-card
 
 Los plugins instalados empiezan desactivados. Una vez activados, se ejecutan en el tablero
 con acceso a sus datos, así que instale solo código de confianza. randl copia el origen y
-nunca ejecuta scripts de instalación ni de compilación. Consulte [PLUGINS.md](PLUGINS.md)
+nunca ejecuta scripts de instalación ni de compilación. Consulte [docs/guides/custom-panels.md](docs/guides/custom-panels.md)
 (en inglés) para escribir los suyos.
 
 ## Estado
 
 randl es joven y cambia rápidamente; espere cambios incompatibles entre versiones. Es una
 implementación independiente, no está afiliada a Weights & Biases; el servidor y el
-tablero de W&B no forman parte de ella. [CONTRIBUTING.md](CONTRIBUTING.md) (en inglés) describe
+tablero de W&B no forman parte de ella. [docs/contributing/README.md](docs/contributing/README.md) (en inglés) describe
 la configuración de desarrollo, las pruebas y la arquitectura.
 
 ## Licencia

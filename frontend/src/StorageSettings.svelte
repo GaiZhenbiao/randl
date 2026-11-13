@@ -5,7 +5,7 @@
   import { t, type Message } from './i18n';
 
   // Server settings, shared by every browser: whether runs are limited in logged media and
-  // to how much (docs/storage.md#media-limit).
+  // to how much (docs/contributing/storage.md).
   type Limit = { enabled: boolean; megabytes: number };
   const max = 1024 * 1024;
   let saved = $state<Limit | undefined>(),

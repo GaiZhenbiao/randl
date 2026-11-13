@@ -233,7 +233,7 @@ export WANDB_BASE_URL="$RANDL_URL"
 export WANDB_API_KEY="$RANDL_API_KEY"
 ```
 
-[DEPLOYMENT.md](DEPLOYMENT.md)（英語）では、[deploy/Caddyfile](deploy/Caddyfile) にある Caddy の設定例、バックアップ、アップロードの上限、アシスタントのプロバイダー設定について説明しています。
+[docs/guides/deployment.md](docs/guides/deployment.md)（英語）では、[deploy/Caddyfile](deploy/Caddyfile) にある Caddy の設定例、バックアップ、アップロードの上限、アシスタントのプロバイダー設定について説明しています。
 
 | `randl serve` のオプション | デフォルト      | 用途                                                                  |
 | -------------------------- | --------------- | --------------------------------------------------------------------- |
@@ -274,11 +274,11 @@ randl plugins install --source ./examples/plugins/stat-card
 randl plugins enable --id stat-card
 ```
 
-インストールしたプラグインは無効の状態で始まります。有効にすると、ダッシュボード内でそのデータにアクセスできる状態で動作するため、信頼できるコードのみをインストールしてください。randl はソースをコピーし、インストールスクリプトやビルドスクリプトを実行することはありません。独自のプラグインを作成するには [PLUGINS.md](PLUGINS.md)（英語）を参照してください。
+インストールしたプラグインは無効の状態で始まります。有効にすると、ダッシュボード内でそのデータにアクセスできる状態で動作するため、信頼できるコードのみをインストールしてください。randl はソースをコピーし、インストールスクリプトやビルドスクリプトを実行することはありません。独自のプラグインを作成するには [docs/guides/custom-panels.md](docs/guides/custom-panels.md)（英語）を参照してください。
 
 ## ステータス
 
-randl はまだ新しく、変化の速いプロジェクトです。バージョン間で互換性のない変更があることを想定してください。randl は独立した実装であり、Weights & Biases とは提携関係にありません。W&B のサーバーとダッシュボードは randl には含まれていません。開発環境のセットアップ、テスト、アーキテクチャについては [CONTRIBUTING.md](CONTRIBUTING.md)（英語）で説明しています。
+randl はまだ新しく、変化の速いプロジェクトです。バージョン間で互換性のない変更があることを想定してください。randl は独立した実装であり、Weights & Biases とは提携関係にありません。W&B のサーバーとダッシュボードは randl には含まれていません。開発環境のセットアップ、テスト、アーキテクチャについては [docs/contributing/README.md](docs/contributing/README.md)（英語）で説明しています。
 
 ## ライセンス
 

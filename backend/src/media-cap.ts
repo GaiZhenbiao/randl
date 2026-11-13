@@ -3,7 +3,7 @@ import { resolve, sep } from 'node:path';
 import type { DB } from './db.js';
 import { runFolder } from './project-store.js';
 
-// The media limit per run (docs/storage.md#media-limit). When the files of a run's logged
+// The media limit per run (docs/contributing/storage.md). When the files of a run's logged
 // media exceed the limit, entries are removed until they fit again. Removal thins the run
 // instead of dropping its oldest media: each key gives up the entry whose neighbors are
 // closest on the project's thinning axis, so what remains is spread over the whole run.

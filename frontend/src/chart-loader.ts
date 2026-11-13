@@ -427,7 +427,7 @@ const hiddenRenderers = new Map<object, { dispose: () => void; bytes: number; we
   };
 let hiddenRendererBytes = 0,
   hiddenRendererWeight = 0;
-/** Host-generic retention estimate, calibrated in performance.md (2026-10-20).
+/** Host-generic retention estimate, calibrated in docs/history/performance.md (2026-10-20).
  * Shared pair sources, DataStore columns and layout are charged together. Canvas
  * includes an estimated compositor copy; series models/tasks add a fixed floor.
  * This is a retention budget, not measured RSS.

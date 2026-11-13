@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A run's name wherever randl shows one (CONTRIBUTING.md "Run names"): its colour swatch, as
+  // A run's name wherever randl shows one (docs/contributing/design-system.md "Run names"): its colour swatch, as
   // in the Runs tab, then the name on one line, cut with an ellipsis when it does not fit. The
   // full name shows on hover (title) and, for links and buttons, on keyboard focus.
   import { runColors, swatch } from './run-name';

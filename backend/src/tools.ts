@@ -181,7 +181,7 @@ export const settingsSchema = schema({
     },
   },
 });
-// Computed metrics: named expressions over metrics of the same history record (docs/plugins.md).
+// Computed metrics: named expressions over metrics of the same history record (docs/reference/panel-api.md).
 const expressionsSchema = {
   type: 'array',
   maxItems: panelLimits.maxMetrics,
@@ -468,7 +468,7 @@ export const toolCatalog = [
       ['id', 'rows'],
     ),
   },
-  // The experiment ledger (ledger.ts, README "Experiment ledger"). Records have caller-chosen
+  // The experiment ledger (ledger.ts, docs/guides/ledger.md). Records have caller-chosen
   // ids; saving identical content reports unchanged. The Assistant does not see the ledger.
   {
     name: 'findings_list',

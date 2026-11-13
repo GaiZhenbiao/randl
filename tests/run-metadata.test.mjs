@@ -50,7 +50,7 @@ test('run metadata updates change only config keys, tags and notes, idempotently
     addTags: ['verdict:adopted'],
     removeTags: ['verdict:running'],
     notes: 'Backfilled',
-    by: 'aeroseeker-backfill',
+    by: 'lineage-backfill',
   });
   assert.equal(first.statusCode, 200, first.body);
   assert.equal(first.json().changed, true);
@@ -90,7 +90,7 @@ test('run metadata updates change only config keys, tags and notes, idempotently
   // Updates are audited with their caller.
   const audit = await server.db.call('auditList');
   const entry = audit.find(
-    (item) => item.tool === 'run_metadata_update' && item.arguments.includes('aeroseeker-backfill'),
+    (item) => item.tool === 'run_metadata_update' && item.arguments.includes('lineage-backfill'),
   );
   assert.ok(entry, 'audited with the caller');
 

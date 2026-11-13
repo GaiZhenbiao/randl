@@ -1,4 +1,4 @@
-// The files of a logged W&B media value (docs/plugins.md#media-data). A single file
+// The files of a logged W&B media value (docs/reference/panel-api.md). A single file
 // (`image-file`, `video-file`, `audio-file`, ...) is one item; a list logged under one key is
 // a collection: `images/separated` lists `filenames`, `videos`, `audio` and `html` list file
 // descriptors, and `object3D` lists `objects`. Collections may carry `captions` (or `false`)

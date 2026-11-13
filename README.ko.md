@@ -326,7 +326,7 @@ export WANDB_BASE_URL="$RANDL_URL"
 export WANDB_API_KEY="$RANDL_API_KEY"
 ```
 
-[DEPLOYMENT.md](DEPLOYMENT.md)(영어)에서는 [deploy/Caddyfile](deploy/Caddyfile)의
+[docs/guides/deployment.md](docs/guides/deployment.md)(영어)에서는 [deploy/Caddyfile](deploy/Caddyfile)의
 Caddy 예제, 백업, 업로드 한도, 어시스턴트 제공업체 설정을 다룹니다.
 
 | `randl serve` 옵션 | 기본값          | 용도                                                                 |
@@ -379,13 +379,13 @@ randl plugins enable --id stat-card
 설치된 플러그인은 비활성화된 상태로 시작합니다. 활성화하면 대시보드 안에서 대시보드
 데이터에 접근할 수 있는 상태로 실행되므로, 신뢰할 수 있는 코드만 설치하세요. randl은
 소스를 복사할 뿐 설치 또는 빌드 스크립트를 실행하지 않습니다. 직접 작성하려면
-[PLUGINS.md](PLUGINS.md)(영어)를 참고하세요.
+[docs/guides/custom-panels.md](docs/guides/custom-panels.md)(영어)를 참고하세요.
 
 ## 상태
 
 randl은 아직 초기 단계이며 빠르게 변하고 있습니다. 버전 간에 호환성이 깨지는 변경이
 있을 수 있습니다. randl은 독립적인 구현으로, Weights & Biases와 제휴하지 않았습니다.
-W&B 서버와 대시보드는 randl에 포함되어 있지 않습니다. [CONTRIBUTING.md](CONTRIBUTING.md)(영어)에서
+W&B 서버와 대시보드는 randl에 포함되어 있지 않습니다. [docs/contributing/README.md](docs/contributing/README.md)(영어)에서
 개발 환경 설정, 테스트, 아키텍처를 설명합니다.
 
 ## 라이선스

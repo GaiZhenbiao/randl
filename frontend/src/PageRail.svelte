@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A page's controls in the header rail, the design pattern described in CONTRIBUTING.md,
+  // A page's controls in the header rail, the design pattern described in docs/contributing/design-system.md,
   // "Page controls". They sit after the page's name at every width, as the workspace's do:
   // filters, view menus and actions first, then the page's main search at the right end,
   // folded to an icon until it is opened or holds text. On phones the open search covers the

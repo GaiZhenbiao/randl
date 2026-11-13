@@ -423,7 +423,7 @@ export function formatMetric(
   return format(value, { maximumSignificantDigits: 4 });
 }
 
-/** The hardware a run last trained on, such as "Sirius · 2× RTX 4090 48GB". */
+/** The hardware a run last trained on, such as "gpu-a · 2× RTX 4090 48GB". */
 export function computeLabel(compute: Compute | null) {
   if (!compute?.host && !compute?.gpu_count) return '';
   const model = compute.segments.at(-1)?.gpu_model,

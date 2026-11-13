@@ -17,8 +17,8 @@ frontend/dist/
 
 /tmp/
 /data/
-/docs/
 /AGENTS.md
 /CLAUDE.md
-/.claude/
+/.claude/*
+!/.claude/skills/
 /.codex/

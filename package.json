@@ -51,7 +51,8 @@
     "test:columns": "node tests/columns-browser.mjs && node tests/choice-touch-browser.mjs",
     "test:transforms": "node tests/record-transforms-browser.mjs",
     "test:lineage": "node tests/lineage-browser.mjs && node tests/ledger-browser.mjs && node tests/plans-browser.mjs && node tests/findings-browser.mjs && node tests/run-names-browser.mjs",
-    "test:run-stop": "npm run build -w backend && node tests/run-stop-browser.mjs"
+    "test:run-stop": "npm run build -w backend && node tests/run-stop-browser.mjs",
+    "docs": "npm run build -w backend && node scripts/docs-reference.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.0",

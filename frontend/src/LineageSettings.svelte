@@ -1,6 +1,6 @@
 <script lang="ts">
   // A project's lineage settings: the metric on each card, how it is shown, and the config keys
-  // that link runs without a logged `lineage` block (README "Lineage").
+  // that link runs without a logged `lineage` block (docs/guides/lineage.md).
   import {
     Accordion,
     AccordionItem,

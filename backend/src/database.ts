@@ -1373,7 +1373,7 @@ export class Store {
     return this.history.lineCount(id, file);
   }
   /**
-   * Logged media of one metric for a set of runs (docs/plugins.md#media-data). Across runs,
+   * Logged media of one metric for a set of runs (docs/reference/panel-api.md). Across runs,
    * each run's entry at or before a value on the X axis (the latest by default), in the order
    * of `runs`; across steps, one run's entries by step. Across runs the response carries the
    * catalog of X values with media: of all the runs, or of `xRun` alone. Files per entry are allocated within the panel's
@@ -3479,7 +3479,7 @@ export class Store {
   /** Edge diffs by child run, kept while neither run's revision nor the ignore list changes. */
   private lineageDiffs = new Map<string, { key: string; changes: string[] }>();
   /**
-   * A project's lineage graph (README "Lineage"). Parent keys, tags and the `lineage` block are
+   * A project's lineage graph (docs/guides/lineage.md). Parent keys, tags and the `lineage` block are
    * read with json_extract; whole configs are parsed only to diff an edge whose `lineage` block
    * lists no changes, and those diffs are cached. A job, so the worker slices the diffs.
    */

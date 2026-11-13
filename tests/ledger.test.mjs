@@ -360,8 +360,8 @@ test('ledger writes carry their source, plans queue after a run, and dry runs wr
     project: 'e/p',
     id: 'v657',
     after: 'e/p/arm',
-    host: 'Sirius',
-    slot: 'sirius_34',
+    host: 'gpu-a',
+    slot: 'gpu-a_34',
     source,
   });
   assert.deepEqual([plan.plan.after, plan.plan.queue, plan.plan.source], ['e/p/arm', null, source]);
@@ -393,7 +393,7 @@ test('evidence imports as a dated run with examined runs, file references and up
       { name: 'report.json', upload: true },
       {
         name: 'episode_0.mp4',
-        host: 'Sirius',
+        host: 'gpu-a',
         path: '/data/evals/arm/episode_0.mp4',
         bytes: 52428800,
       },
@@ -412,7 +412,7 @@ test('evidence imports as a dated run with examined runs, file references and up
     [run.state, run.job_type, run.created],
     ['finished', 'evaluation', Date.parse('2026-10-05T12:00:00Z') / 1000],
   );
-  assert.deepEqual(JSON.parse(run.config).evidence.value.files[1].host, 'Sirius');
+  assert.deepEqual(JSON.parse(run.config).evidence.value.files[1].host, 'gpu-a');
   assert.deepEqual(JSON.parse(run.summary), { holds: 361, episodes: 512 });
   // Uploaded files go with the run through the usual upload route.
   const upload = await server.app.inject({

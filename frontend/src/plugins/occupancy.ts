@@ -1,4 +1,4 @@
-// GPU occupancy timeline (README "Plans and GPU occupancy"): one row per GPU, grouped by
+// GPU occupancy timeline (docs/guides/planning.md): one row per GPU, grouped by
 // host, with bars for the runs that held each GPU, the running ones up to now and on to their
 // estimated end, and the planned runs queued after them. The timeline scrolls horizontally;
 // Ctrl+wheel, a pinch or the zoom buttons change its scale, and a bar opens its run or plan.

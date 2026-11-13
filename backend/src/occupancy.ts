@@ -1,4 +1,4 @@
-// GPU occupancy (README "Plans and GPU occupancy"): which runs held which GPUs of each host,
+// GPU occupancy (docs/guides/planning.md): which runs held which GPUs of each host,
 // which hold them now and until when, and when the planned runs queued on them should start.
 // Built from runs' `lineage.compute` segments and the ledger's planned runs.
 import type { Compute, ComputeSegment } from './lineage.js';

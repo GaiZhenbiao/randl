@@ -1,5 +1,5 @@
 // Panel plugin settings contract: the host capabilities a panel uses and the typed options
-// a plugin adds to the editor (docs/plugins.md#settings-and-options).
+// a plugin adds to the editor (docs/reference/panel-api.md).
 //
 // Shared by the backend (manifest checks at install, option checks on every view write) and
 // the frontend (editor controls, resolving the values a renderer receives). It has no

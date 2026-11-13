@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A project's findings (README "Experiment ledger"): what the runs showed, by topic, each
+  // A project's findings (docs/guides/ledger.md): what the runs showed, by topic, each
   // citing the runs and updates it rests on, with every earlier version kept.
   import RunName from './RunName.svelte';
   import { onMount, tick, untrack } from 'svelte';

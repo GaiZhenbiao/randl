@@ -13,7 +13,7 @@
   import { filterChoice, resultCount } from './ui';
   import type { Run } from './types';
 
-  // A project's media limit (docs/storage.md#media-limit): the server's unless the project
+  // A project's media limit (docs/contributing/storage.md): the server's unless the project
   // sets its own, and the axis its runs' media are spaced on when they are thinned.
   type Limit = {
     inherit: boolean;

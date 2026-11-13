@@ -1,4 +1,4 @@
-// Run lineage: which run each run started from, derived from stored configs (README "Lineage").
+// Run lineage: which run each run started from, derived from stored configs (docs/guides/lineage.md).
 // The training code may log an explicit `lineage` config block; runs without one are matched
 // by the checkpoint path in one of the project's parent keys.
 

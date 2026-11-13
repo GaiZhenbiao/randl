@@ -43,10 +43,10 @@ test('checkpoint paths name their run folder and update', () => {
 
 test('parent paths match runs across hosts and checkpoint layouts', () => {
   const v611 = run('v611_latched_cos3e6_w3', {
-      saveDir: '/home/u/AeroSeeker/tmp/navigation_forest/checkpoints/v611_latched_cos3e6_w3',
+      saveDir: '/mnt/u/proj/tmp/navigation_forest/checkpoints/v611_latched_cos3e6_w3',
     }),
     v621 = run('v621_latched_cos1e6_w2', {
-      saveDir: '/data/u/AeroSeeker/tmp/navigation_forest/checkpoints/v621_latched_cos1e6_w2',
+      saveDir: '/data/u/proj/tmp/navigation_forest/checkpoints/v621_latched_cos1e6_w2',
     }),
     n5 = run('N5_h1_velocity_nose100_fresh', {
       saveDir: '/root/tmp/navigation_alignment/N5_h1_velocity_nose100_fresh/checkpoints',
@@ -54,13 +54,13 @@ test('parent paths match runs across hosts and checkpoint layouts', () => {
   // The full checkpoint folder, logged on another host.
   const v622 = run('v622_child', {
     parents: [
-      '/data/u/AeroSeeker/tmp/navigation_forest/checkpoints/v611_latched_cos3e6_w3/update_00518000',
+      '/data/u/proj/tmp/navigation_forest/checkpoints/v611_latched_cos3e6_w3/update_00518000',
     ],
   });
   // A copied warm source named by its version prefix and update.
   const v640 = run('v640_child', {
     parents: [
-      '/data/u/AeroSeeker/tmp/navigation_forest/warm_sources/v621_u00543000/update_00543000',
+      '/data/u/proj/tmp/navigation_forest/warm_sources/v621_u00543000/update_00543000',
     ],
   });
   // A run folder holding a checkpoints folder, with and without a trailing slash.
@@ -241,22 +241,22 @@ test('nodes carry the logged compute segments and config bases', () => {
         { kind: 'file', reference: 'configs/forest.yaml' },
       ],
       compute: {
-        host: 'Sirius',
+        host: 'gpu-a',
         gpu_count: 2,
         segments: [
           {
             from_update: 543000,
             to_update: 550000,
-            host: 'polaris',
+            host: 'gpu-b',
             gpu_count: 1,
             gpu_ids: [3],
             gpu_model: 'RTX 4090 24GB',
-            slot: 'polaris_012',
+            slot: 'gpu-b_012',
           },
           {
             from_update: 550000,
             to_update: null,
-            host: 'Sirius',
+            host: 'gpu-a',
             gpu_count: 2,
             gpu_ids: null,
             gpu_model: 'RTX 4090 48GB',
@@ -271,16 +271,16 @@ test('nodes carry the logged compute segments and config bases', () => {
     { kind: 'run', reference: 'v621_base', id: base.id },
     { kind: 'file', reference: 'configs/forest.yaml', id: null },
   ]);
-  assert.equal(node.compute.host, 'Sirius');
+  assert.equal(node.compute.host, 'gpu-a');
   assert.equal(node.compute.gpu_count, 2);
   assert.deepEqual(node.compute.segments[0], {
     from_update: 543000,
     to_update: 550000,
-    host: 'polaris',
+    host: 'gpu-b',
     gpu_count: 1,
     gpu_ids: [3],
     gpu_model: 'RTX 4090 24GB',
-    slot: 'polaris_012',
+    slot: 'gpu-b_012',
   });
   assert.equal(
     lineageNode(base, { latest: null, best: null }, new RunMatcher([base])).compute,

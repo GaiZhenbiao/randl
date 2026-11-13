@@ -155,3 +155,40 @@ test('bar plot options include zero on linear scales and preserve explicit or lo
   assert.equal(option.yAxis.type, 'log');
   assert.equal(option.yAxis.scale, true);
 });
+
+test('the custom-panels skill example installs, enables and takes its option in a panel', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'randl-skill-panel-'));
+  const server = await createServer(directory);
+  t.after(async () => {
+    await server.app.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const example = join(process.cwd(), '.claude/skills/randl-custom-panels/example');
+  const installed = await server.plugins.install(example);
+  assert.deepEqual(
+    [installed.id, installed.enabled, installed.renderer, installed.settings.options.length],
+    ['latest-bars', false, 'dom', 1],
+  );
+  await server.plugins.change(installed.id, 'enable');
+  const view = await server.tools.execute('view_create', { name: 'Bars', project: 'e/p' });
+  const added = await server.tools.execute('panel_add', {
+    view: view.id,
+    plugin: 'latest-bars',
+    metric: 'loss',
+    settings: { options: { 'latest-bars': { order: 'name' } } },
+  });
+  assert.equal(added.body.panels[0].settings.options['latest-bars'].order, 'name');
+  await assert.rejects(
+    server.tools.execute('panel_update', {
+      view: view.id,
+      id: added.body.panels[0].id,
+      settings: { options: { 'latest-bars': { order: 'sideways' } } },
+    }),
+    (error) => error.code === 'PLUGIN_OPTION_INVALID',
+  );
+  const module = await server.app.inject(
+    `/api/plugins/latest-bars/revisions/${installed.revision}/source/panel.js`,
+  );
+  assert.equal(module.statusCode, 200);
+  assert.match(module.body, /export function create/);
+});

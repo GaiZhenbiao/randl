@@ -8,7 +8,7 @@ import { createServer } from '../backend/dist/server.js';
 import { launchBrowser, listen } from './helpers.mjs';
 
 // Open-latency budgets, measured from the trusted pointerdown to the first animation frame
-// in which the dialog (or its ready state) has a layout box. See docs/performance.md.
+// in which the dialog (or its ready state) has a layout box. See docs/history/performance.md.
 const VISIBLE_BUDGET_MS = 250,
   READY_BUDGET_MS = 250,
   CATALOG_DELAY_MS = 1500,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The Plans page's backlog (README "Plans and GPU occupancy"): ideas worth running once what
+  // The Plans page's backlog (docs/guides/planning.md): ideas worth running once what
   // they wait on is in, by priority. Promoting one opens the plan editor on a plan made from
   // it; the plan and the idea link to each other.
   import {

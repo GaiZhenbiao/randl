@@ -33,7 +33,7 @@ const COLORS16 = [
 const ROBIN16 = [11, 2, 7, 12, 0, 4, 8, 13, 5, 10, 9, 3, 6, 14, 1, 15].map((i) =>
   COLORS16[i].toLowerCase(),
 );
-// W&B-derived dark palette corrected for Carbon g100 contrast (see wandb-reference.md).
+// W&B-derived dark palette corrected for Carbon g100 contrast (see docs/history/wandb-reference.md).
 const DARK16 = [
   '#6499f0',
   '#ff8b96',
