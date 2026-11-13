@@ -45,6 +45,8 @@ export type Plan = {
   gpus?: number[] | null;
   /** How much progress (updates) it will train, for its estimated length. */
   updates?: number | null;
+  /** How long it is expected to run, in hours; the timeline prefers it to any inferred length. */
+  estimated_hours?: number | null;
   /**
    * planned: waiting in its slot's queue; started: claimed by a supervisor or carried out by
    * a running run; done: its run finished; stopped: its run was stopped, crashed or failed;
@@ -349,6 +351,7 @@ export class Ledger {
       // Left out while unset, so records saved before these fields existed stay unchanged.
       ...optional('gpus', field('gpus', null)),
       ...optional('updates', field('updates', null)),
+      ...optional('estimated_hours', field('estimated_hours', null)),
       ...optional('config_yaml', field('config_yaml', null)),
       ...optional('resume_run', field('resume_run', null)),
       ...optional('resources', field('resources', null)),

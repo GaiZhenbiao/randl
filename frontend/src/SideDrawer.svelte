@@ -1,17 +1,34 @@
 <script lang="ts">
   import { t } from './i18n';
 
-  import { onMount, tick, type Snippet } from 'svelte';
+  import { onMount, tick, untrack, type Snippet } from 'svelte';
   import { Button } from 'carbon-components-svelte';
   import Close from 'carbon-icons-svelte/lib/Close.svelte';
+  import SidebarResize from './SidebarResize.svelte';
+  import { loadWidth } from './sidebar-width';
   let {
+    id,
     title,
     onClose,
     children,
     footer,
-  }: { title: string; onClose: () => void; children: Snippet; footer?: Snippet } = $props();
+  }: {
+    /** Which drawer, for the width it is given (SidebarResize). */
+    id: string;
+    title: string;
+    onClose: () => void;
+    children: Snippet;
+    footer?: Snippet;
+  } = $props();
   let host: HTMLElement;
   let width = $state(1200);
+  // The width it was dragged to, on the page so the shell beside it makes room (style.css).
+  let drawerWidth = $state(untrack(() => loadWidth('drawer.' + id)));
+  $effect(() => {
+    const root = document.documentElement.style;
+    if (drawerWidth) root.setProperty('--side-drawer-width', drawerWidth + 'px');
+    return () => root.removeProperty('--side-drawer-width');
+  });
   const available = (element: HTMLElement) =>
     element.offsetParent !== null &&
     getComputedStyle(element).visibility === 'visible' &&
@@ -105,6 +122,14 @@
   aria-label={title}
   aria-modal={width <= 760 ? true : undefined}
 >
+  {#if width > 760}<SidebarResize
+      id={'drawer.' + id}
+      label={$t('common.sidebar.resize')}
+      min={320}
+      width={() => host?.getBoundingClientRect().width ?? 400}
+      max={() => Math.min(960, width - 480)}
+      onresize={(next) => (drawerWidth = next)}
+    />{/if}
   <header class="side-drawer-heading">
     <h2 tabindex="-1">{title}</h2>
     <Button

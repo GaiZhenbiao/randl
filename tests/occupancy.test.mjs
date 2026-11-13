@@ -122,6 +122,50 @@ test('finished, running and planned bars sit on the GPUs they use', () => {
   assert.deepEqual(result.unfit, []);
 });
 
+test("a plan's estimated hours set its length; running runs keep their measured end", () => {
+  const compute = (gpus) => ({
+    host: 'alpha',
+    gpu_count: gpus.length,
+    segments: [segment('alpha', 'a', gpus)],
+  });
+  const runs = [
+    // Measured: 500 of 1000 updates in 5 hours, so 5 more, whatever its plan estimated.
+    run('measured', {
+      state: 'running',
+      start: 95 * hour,
+      progress: 500,
+      budget: 1000,
+      from: 0,
+      compute: compute([0]),
+      estimate: { seconds: 2 * hour, from: 95 * hour },
+    }),
+    // No budget to measure against: its plan's 8 hours from when the plan started.
+    run('estimated', {
+      state: 'running',
+      start: 90 * hour,
+      progress: 100,
+      compute: compute([1]),
+      estimate: { seconds: 8 * hour, from: 96 * hour },
+    }),
+  ];
+  const plans = [
+    // Stated updates would take 200 × 36 s; the estimate wins.
+    plan('stated', { request: { gpus: 1 }, queue: 1, updates: 200, estimated_hours: 3 }),
+    plan('inferred', { request: { gpus: 1 }, queue: 2, updates: 100 }),
+  ];
+  const result = occupancy(runs, plans, now, undefined, gpus('alpha', [0, 1]));
+  const bar = (id) => result.bars.find((item) => item.id === id);
+  assert.equal(bar('measured#0:remaining').end, now + 5 * hour);
+  assert.equal(bar('measured#0:remaining').basis, 'progress');
+  assert.equal(bar('estimated#0:remaining').end, 104 * hour);
+  assert.equal(bar('estimated#0:remaining').basis, 'estimate');
+  assert.equal(bar('plan:stated').end - bar('plan:stated').start, 3 * hour);
+  assert.equal(bar('plan:stated').basis, 'estimate');
+  // 100 updates at the median pace of alpha's single-GPU runs: 36 and 360 s per update.
+  assert.equal(bar('plan:inferred').end - bar('plan:inferred').start, 100 * 198);
+  assert.equal(bar('plan:inferred').basis, 'pace');
+});
+
 test('plans queued after a run or a later plan wait for it; unknown lengths are placeholders', () => {
   const runs = [
     run('live', {
@@ -148,6 +192,7 @@ test('plans queued after a run or a later plan wait for it; unknown lengths are 
   assert.equal(bar('plan:first').start, liveEnd);
   // Nothing has run on gamma, so its length is a placeholder.
   assert.ok(bar('plan:first').unknownLength);
+  assert.equal(bar('plan:first').basis, 'placeholder');
   assert.equal(bar('plan:first').end, liveEnd + placeholderLength);
   assert.equal(bar('plan:second').start, bar('plan:first').end);
   assert.deepEqual(

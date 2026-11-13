@@ -48,6 +48,38 @@ A project page's controls live in the header rail after the page name, through
 - Rarely used lists (such as plan history) open in a modal from a rail button rather than taking
   page space.
 
+## Sidebars
+
+Every sidebar can be resized by its users: the run list, the side drawers (settings, panel
+settings, Assistant, deleted runs, best recipe promotions), the run panel on the Lineage page
+and the Findings reading pane. They all use `SidebarResize.svelte`:
+
+```svelte
+<SidebarResize
+  id="findings-reader"
+  label={$t('common.sidebar.resize')}
+  min={320}
+  width={() => reader.getBoundingClientRect().width}
+  max={() => layout.clientWidth - 360}
+  onresize={(next) => (readerWidth = next)}
+/>
+```
+
+- The handle is an 8 px `role="separator"` strip on the sidebar's inner edge (`side="start"` for
+  a sidebar on the left, `end`, the default, for one on the right). A 2 px focus-coloured line
+  eases in on hover and focus.
+- Drag it, or focus it and use the arrow keys (16 px, 64 px with Shift), Home and End. It
+  reports `aria-valuenow`, `aria-valuemin` and `aria-valuemax`.
+- `min` keeps the sidebar usable (320 px for panels, 240 px for the run list); `max` leaves
+  the page beside it room (at least 320–480 px) and is read at each move, so it follows the
+  window.
+- The width is remembered per sidebar `id` in this browser (`sidebar-width.ts`, `loadWidth` and
+  `saveWidth`, which survive storage being unavailable). The page applies it as a CSS variable,
+  such as `--findings-reader-width`, and clamps it in CSS so a narrower window still fits.
+- Phones (760 px or less) have no handle: sidebars there take the full width.
+- Long, rarely needed lists (a recipe's promotions, plan history) open in a side drawer or a
+  modal from a button, so the page shows the current state at a glance.
+
 ## Run names
 
 Show a run's name with `RunName.svelte` everywhere outside the runs table and run list:

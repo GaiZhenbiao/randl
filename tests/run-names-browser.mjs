@@ -65,8 +65,11 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => message.type() === 'error' && errors.push(message.text()));
-  /** Every name of the long run in `scope`: one line, cut, after a coloured swatch. */
-  const oneLine = async (scope, where) => {
+  /**
+   * Every name of the long run in `scope`: one line, cut, after a coloured swatch. Where there
+   * is room for the whole name (`fits`), it may show whole instead, still on one line.
+   */
+  const oneLine = async (scope, where, fits = false) => {
     const names = scope.locator('.run-label', { hasText: long.slice(0, 30) });
     await expect(names.first()).toBeVisible();
     for (const name of await names.all()) {
@@ -84,7 +87,7 @@ try {
         };
       });
       assert.ok(shape.height <= shape.line * 1.5 + 4, `${where}: one line (${shape.height}px)`);
-      assert.ok(shape.cut, `${where}: the name is cut with an ellipsis`);
+      assert.ok(shape.cut || fits, `${where}: the name is cut with an ellipsis`);
       assert.ok(shape.dotLeft, `${where}: the swatch comes first`);
       assert.notEqual(shape.swatch, 'rgba(0, 0, 0, 0)', `${where}: the swatch is coloured`);
       assert.equal(shape.title, long, `${where}: the full name shows on hover`);
@@ -112,7 +115,8 @@ try {
   checks.push('Lineage: the panel header and parent link keep a 150-character name on one line');
 
   await page.goto(`${origin}/test/names/plans`);
-  await oneLine(page.locator('.recipe-tile'), 'Plans recipe');
+  // The recipe spans the page, so the name may fit whole.
+  await oneLine(page.locator('.recipe-tile'), 'Plans recipe', true);
   // A queued plan's baseline, in its details.
   await page.locator('.plan-row .queue-name', { hasText: 'v702_next' }).click();
   await oneLine(page.locator('.queue-details'), 'Plans queue baseline');

@@ -20,7 +20,7 @@ import { metricDefinitions, definitionFor, environmentMetadata } from './run-met
 import { advanceRuntime, plausibleRuntime, type RuntimeState } from './run-runtime.js';
 import { parseLoggedJSON } from './logged-json.js';
 import { Artifacts } from './artifact-store.js';
-import { Ledger, seconds, claimTimeout, type GpuRequest, type Plan } from './ledger.js';
+import { Ledger, seconds, claimTimeout, type GpuRequest, type Plan, type PlanEvent } from './ledger.js';
 import { choose, moveWithin, queueOrder, statusFromRun } from './plan-queue.js';
 import { ensureTables } from './schema.js';
 import { occupancy, type OccupancyPlan, type OccupancyRun } from './occupancy.js';
@@ -2726,6 +2726,7 @@ export class Store {
         config: plan.config ?? null,
         resume_run: plan.resume_run ?? null,
         updates: plan.updates ?? null,
+        estimated_hours: plan.estimated_hours ?? null,
         parent: plan.parent ?? null,
         parentUpdate: plan.parentUpdate ?? null,
         resources: Store.requestOf(plan),
@@ -2923,6 +2924,7 @@ export class Store {
     'gpus',
     'resources',
     'updates',
+    'estimated_hours',
     'config_yaml',
     'resume_run',
   ];
@@ -3149,6 +3151,16 @@ export class Store {
     for (const plan of ledger) {
       const run = byPlan.get(plan.id) ?? (plan.resume_run ? undefined : byName.get(plan.name)),
         allocation = plan.allocation && !plan.allocation.released ? plan.allocation : null;
+      // Its estimate counts from when it started (a resumed run started long before).
+      if (run && plan.estimated_hours) {
+        const started = [...((plan.events as PlanEvent[] | undefined) ?? [])]
+          .reverse()
+          .find((event) => event.status === 'started');
+        run.estimate = {
+          seconds: plan.estimated_hours * 3600,
+          from: Math.max(run.start, started?.at ?? plan.claim?.at ?? run.start),
+        };
+      }
       if (run && !run.compute && (allocation || plan.host))
         run.placement = allocation
           ? { host: allocation.host, slot: '', gpus: allocation.gpus }

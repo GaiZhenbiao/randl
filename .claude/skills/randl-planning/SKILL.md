@@ -35,12 +35,14 @@ randl gpus list --project team/navigation
 
 ```sh
 randl plans save --project team/navigation --id v5 --name v5_wider_still \
-  --json '{"parent": "team/navigation/wide02", "parentUpdate": 10000, "change": "Hidden layer widened from 512 to 1024 units", "hypothesis": "The gain from width has not saturated", "rule": "Stop if return trails v2 by 10 at update 15000", "resources": {"gpus": 2, "min_memory_gb": 24}, "updates": 20000}' \
+  --json '{"parent": "team/navigation/wide02", "parentUpdate": 10000, "change": "Hidden layer widened from 512 to 1024 units", "hypothesis": "The gain from width has not saturated", "rule": "Stop if return trails v2 by 10 at update 15000", "resources": {"gpus": 2, "min_memory_gb": 24}, "estimated_hours": 14}' \
   --config-yaml-file configs/v5.yaml --by me
 ```
 
 - `resources`: `gpus` (on one host), optional `min_memory_gb`, `model` (substring), `hosts`.
 - `config_yaml` is returned verbatim to the agent: pass the real file, not a summary.
+- `estimated_hours`: how long it runs, in hours. The projection and timeline use it before
+  anything inferred; a running run's measured progress still wins. Fill it in for every plan.
 - Order with `queue` (position) or `after` (`"plan:v4"` or a run ID to follow).
 - Re-saving identical content reports `unchanged`; omitted fields keep their values.
 

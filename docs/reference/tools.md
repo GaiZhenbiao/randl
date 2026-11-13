@@ -2119,7 +2119,7 @@ Response:
 
 ### plan_save
 
-Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name, unless the plan has a resume_run: those bind only through lineage.plan). Callers set status planned or cancelled (planned also releases a claim waiting for its run); the server sets started, done and stopped from the claim and the run. config_yaml is the exact config file text, returned verbatim by plan_claim; resume_run names a run the plan continues in its own directory. gpus names the GPU indices it will use on its host (else those its slot last used); updates is how far it will train, for its estimated end (else its config budget less its start). Omitted fields keep their value; status cancelled keeps it for the record.
+Create or update a planned run by its id. It turns into its run once a run logs lineage.plan equal to this id (or has this name, unless the plan has a resume_run: those bind only through lineage.plan). Callers set status planned or cancelled (planned also releases a claim waiting for its run); the server sets started, done and stopped from the claim and the run. config_yaml is the exact config file text, returned verbatim by plan_claim; resume_run names a run the plan continues in its own directory. gpus names the GPU indices it will use on its host (else those its slot last used); estimated_hours is how long it is expected to run, in hours, which the projection and the GPU timeline use before anything they infer; otherwise updates (how far it will train, else its config budget less its start) at the recent pace on its host. Omitted fields keep their value; status cancelled keeps it for the record.
 
 Not available to the Assistant.
 
@@ -2143,6 +2143,7 @@ Not available to the Assistant.
 | `resume_run`              | string or null         |          | at most 512 characters                                        |
 | `gpus`                    | integer[] or null      |          | at most 64 items; unique; each ≥ 0; each ≤ 1023               |
 | `updates`                 | number or null         |          | > 0                                                           |
+| `estimated_hours`         | number or null         |          | > 0; ≤ 100000                                                 |
 | `resources`               | object or null         |          |                                                               |
 | `resources.gpus`          | integer                | yes      | ≥ 1; ≤ 64                                                     |
 | `resources.min_memory_gb` | number or null         |          | ≥ 0                                                           |
@@ -2173,6 +2174,7 @@ POST /api/tools/plan_save
   "rule": "Stop if return trails v2 by 10 at update 15000",
   "resources": { "gpus": 2, "min_memory_gb": 24 },
   "updates": 20000,
+  "estimated_hours": 14,
   "config_yaml": "model:\n  hidden: 1024\nlr: 0.0003\n",
   "by": "me"
 }
@@ -2201,6 +2203,7 @@ Response:
     "status": "planned",
     "source": null,
     "updates": 20000,
+    "estimated_hours": 14,
     "config_yaml": "model:\n  hidden: 1024\nlr: 0.0003\n",
     "resources": { "gpus": 2, "min_memory_gb": 24 },
     "created": 1767225600,
@@ -2297,6 +2300,7 @@ Response:
       "status": "planned",
       "source": null,
       "updates": 20000,
+      "estimated_hours": 14,
       "config_yaml": "model:\n  hidden: 1024\nlr: 0.0003\n",
       "resources": { "gpus": 2, "min_memory_gb": 24 },
       "created": 1767225600,
@@ -2398,6 +2402,7 @@ Response:
       "status": "planned",
       "source": null,
       "updates": 20000,
+      "estimated_hours": 14,
       "config_yaml": "model:\n  hidden: 1024\nlr: 0.0003\n",
       "resources": { "gpus": 2, "min_memory_gb": 24 },
       "created": 1767225600,
@@ -2443,7 +2448,7 @@ Error codes: `LEDGER_NOT_FOUND`, `PLAN_NOT_WAITING`.
 
 ### plan_claim
 
-A host agent's request for work: given the host and the GPU ids (PCI order) it sees free, randl picks the first waiting plan in queue order whose GPU request fits those GPUs (count, minimum memory, model, hosts from gpus_save's inventory; reserved GPUs never), allocates specific GPUs and marks the plan started. A later plan may take GPUs the head cannot use yet, unless the head has waited over six hours and this host could run it (status 'held'). Returns {status: 'claimed', plan: {id, name, config_yaml, config, resume_run, updates, parent, parentUpdate, resources, host, gpu_ids}, gpu_ids, host, allocation: {host, gpus, at, by}, claim}, {status: 'empty', plan: null, waiting, free_gpus} or {status: 'held', plan: null, head, free_gpus}. Launch with those GPUs and log lineage.plan = plan.id; the GPUs are released when the run ends, when the claim lapses after 30 minutes without the run logging, or when plan_save sets the plan back to planned. The same agent asking again while its claim waits for its run, with those GPUs still free, gets the same claim (repeat: true).
+A host agent's request for work: given the host and the GPU ids (PCI order) it sees free, randl picks the first waiting plan in queue order whose GPU request fits those GPUs (count, minimum memory, model, hosts from gpus_save's inventory; reserved GPUs never), allocates specific GPUs and marks the plan started. A later plan may take GPUs the head cannot use yet, unless the head has waited over six hours and this host could run it (status 'held'). Returns {status: 'claimed', plan: {id, name, config_yaml, config, resume_run, updates, estimated_hours, parent, parentUpdate, resources, host, gpu_ids}, gpu_ids, host, allocation: {host, gpus, at, by}, claim}, {status: 'empty', plan: null, waiting, free_gpus} or {status: 'held', plan: null, head, free_gpus}. Launch with those GPUs and log lineage.plan = plan.id; the GPUs are released when the run ends, when the claim lapses after 30 minutes without the run logging, or when plan_save sets the plan back to planned. The same agent asking again while its claim waits for its run, with those GPUs still free, gets the same claim (repeat: true).
 
 Not available to the Assistant.
 
@@ -2475,6 +2480,7 @@ Response:
     "config": null,
     "resume_run": null,
     "updates": 20000,
+    "estimated_hours": 14,
     "parent": "team/navigation/wide02",
     "parentUpdate": 10000,
     "resources": { "gpus": 2, "min_memory_gb": 24 },
@@ -2739,6 +2745,7 @@ Not available to the Assistant.
 | `resume_run`              | string or null    |          | at most 512 characters                                        |
 | `gpus`                    | integer[] or null |          | at most 64 items; unique; each ≥ 0; each ≤ 1023               |
 | `updates`                 | number or null    |          | > 0                                                           |
+| `estimated_hours`         | number or null    |          | > 0; ≤ 100000                                                 |
 | `resources`               | object or null    |          |                                                               |
 | `resources.gpus`          | integer           | yes      | ≥ 1; ≤ 64                                                     |
 | `resources.min_memory_gb` | number or null    |          | ≥ 0                                                           |

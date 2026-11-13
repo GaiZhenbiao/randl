@@ -28,6 +28,8 @@
   import MarkdownIt from 'markdown-it';
   import Choice from './Choice.svelte';
   import LedgerSource from './LedgerSource.svelte';
+  import SidebarResize from './SidebarResize.svelte';
+  import { loadWidth } from './sidebar-width';
   import type { Source } from './lineage-graph';
   import { api, tool, apiMessage } from './api';
   import { t, number, date, type Message } from './i18n';
@@ -68,6 +70,9 @@
     /** The header rail for the page's controls (PageRail.svelte), on wide screens. */
     rail?: HTMLElement;
   } = $props();
+  // The reading pane's width, dragged at its edge (SidebarResize).
+  let layout = $state<HTMLElement>(),
+    readerWidth = $state(loadWidth('findings-reader'));
   const markdown = new MarkdownIt({ html: false, linkify: true, breaks: false });
   let findings = $state<Finding[] | null>(null),
     error = $state<Message>(''),
@@ -571,7 +576,11 @@
         {$t('common.status.loading')}
       </p>{/if}
   {:else if !findings.length}<p class="empty-table">{$t('findings.empty')}</p>
-  {:else}<div class="findings-layout">
+  {:else}<div
+      class="findings-layout"
+      bind:this={layout}
+      style:--findings-reader-width={readerWidth ? readerWidth + 'px' : undefined}
+    >
       <section class="findings-list" aria-label={$t('findings.list')}>
         <div class="findings-list-bar" class:active={checked.size > 0}>
           {#if checked.size}<span class="findings-bulk-count"
@@ -666,7 +675,16 @@
             </table>
           </div>{/if}
       </section>
-      {#if current}<div class="findings-reader">{@render card(current)}</div>{/if}
+      {#if current}<div class="findings-reader">{@render card(current)}</div>
+        {#if !narrow}<SidebarResize
+            id="findings-reader"
+            label={$t('common.sidebar.resize')}
+            min={320}
+            width={() =>
+              layout?.querySelector('.findings-reader')?.getBoundingClientRect().width ?? 480}
+            max={() => (layout?.clientWidth ?? 1200) - 360}
+            onresize={(next) => (readerWidth = next)}
+          />{/if}{/if}
     </div>{/if}
 </div>
 

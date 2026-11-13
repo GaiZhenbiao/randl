@@ -92,6 +92,8 @@ export type Plan = {
   gpus?: number[] | null;
   /** How far it will train (updates), for its estimated length. */
   updates?: number | null;
+  /** How long it is expected to run, in hours; preferred over any inferred length. */
+  estimated_hours?: number | null;
   source: Source | null;
   /** planned → started (claimed or running) → done | stopped; or cancelled. */
   status: 'planned' | 'started' | 'done' | 'stopped' | 'cancelled';

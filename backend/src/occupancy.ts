@@ -27,6 +27,11 @@ export type OccupancyRun = {
   audit: number | null;
   /** When the run reached each segment boundary, where its history told. */
   reached?: Record<number, number>;
+  /**
+   * The plan it carries out's estimated length (seconds) and when that plan started, for a run
+   * whose progress cannot tell its end.
+   */
+  estimate?: { seconds: number; from: number } | null;
   /** Where the ledger plan it carries out put it, for a run that logs no compute block. */
   placement?: { host: string; slot: string; gpus: number[] | null } | null;
 };
@@ -36,6 +41,7 @@ export type OccupancyPlan = Pick<
 > & {
   gpus?: number[] | null;
   updates?: number | null;
+  estimated_hours?: number | null;
   /** The GPUs it asks for. */
   request: GpuRequest;
   /** Since when it has waited, for the head's hold. */
@@ -81,6 +87,11 @@ export type OccupancyBar = {
   estimated: boolean;
   /** No budget or rate was known: the length is a placeholder. */
   unknownLength: boolean;
+  /**
+   * Where an estimated end comes from: the run's measured progress, the plan's estimated hours,
+   * its updates or budget at the usual pace on that host, or a placeholder.
+   */
+  basis?: 'progress' | 'estimate' | 'pace' | 'placeholder';
   /** The run logs no compute block: its host and GPUs are those of the plan it carries out. */
   inferred?: boolean;
   /** The timeline rows it covers. */
@@ -241,7 +252,7 @@ export function occupancy(
       const end =
         rate !== null && run.budget !== null && run.progress !== null && run.budget > run.progress
           ? now + (run.budget - run.progress) * rate
-          : now;
+          : Math.max(now, run.estimate ? run.estimate.from + run.estimate.seconds : now);
       runEnds.set(run.id, end);
       runEnds.set(run.name, end);
       continue;
@@ -315,8 +326,12 @@ export function occupancy(
         kind: 'running',
         estimated: false,
       });
-      if (remaining !== null) {
-        finish = now + remaining;
+      // Measured progress tells the end; without it, the estimate of the plan it carries out.
+      const planned = run.estimate ? run.estimate.from + run.estimate.seconds : null,
+        end =
+          remaining !== null ? now + remaining : planned !== null && planned > now ? planned : null;
+      if (end !== null) {
+        finish = end;
         bars.push({
           ...base,
           ...facts,
@@ -325,6 +340,7 @@ export function occupancy(
           end: finish,
           kind: 'remaining',
           estimated: true,
+          basis: remaining !== null ? 'progress' : 'estimate',
         });
       }
     }
@@ -359,7 +375,18 @@ export function occupancy(
         median(recent(rates.get(host + '#' + count)).map((entry) => entry.rate)) ??
         median(recent(rates.get(host)).map((entry) => entry.rate)) ??
         median(recent(rates.get(''), 10).map((entry) => entry.rate));
-    return { updates, rate, length: updates !== null && rate !== null ? updates * rate : null };
+    // A stated estimate wins; else the updates at the recent pace; else nothing is known.
+    const length = plan.estimated_hours
+      ? plan.estimated_hours * 3600
+      : updates !== null && rate !== null
+        ? updates * rate
+        : null;
+    const basis: OccupancyBar['basis'] = plan.estimated_hours
+      ? 'estimate'
+      : length !== null
+        ? 'pace'
+        : 'placeholder';
+    return { updates, rate, length, basis };
   };
   for (const gpu of inventory) remember(gpu.host, gpu.model || null, [gpu.gpu], -Infinity);
   const busy: Busy[] = [];
@@ -380,7 +407,7 @@ export function occupancy(
     end: number,
     extra: Partial<OccupancyBar>,
   ): OccupancyBar => {
-    const { updates, rate } = lengthOn(plan, host);
+    const { updates, rate, basis } = lengthOn(plan, host);
     return {
       id: 'plan:' + plan.id,
       run: null,
@@ -400,6 +427,7 @@ export function occupancy(
       rows: [],
       budget: updates,
       rate,
+      basis,
       ...extra,
     };
   };

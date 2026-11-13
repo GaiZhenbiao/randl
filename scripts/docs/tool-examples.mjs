@@ -332,6 +332,7 @@ export const examples = [
       rule: 'Stop if return trails v2 by 10 at update 15000',
       resources: { gpus: 2, min_memory_gb: 24 },
       updates: 20000,
+      estimated_hours: 14,
       config_yaml: 'model:\n  hidden: 1024\nlr: 0.0003\n',
       by: 'me',
     },

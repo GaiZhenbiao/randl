@@ -1429,6 +1429,7 @@
     >{/if}{#if error}<InlineNotification kind="error" title={$t(error)} hideCloseButton />{/if}
 {/snippet}
 {#if open && settingsOnly}<SideDrawer
+    id="panel-settings"
     title={heading || $t('panelSettings.drawerTitle')}
     onClose={() => (open = false)}
     >{@render editorForm()}{#snippet footer()}<Button

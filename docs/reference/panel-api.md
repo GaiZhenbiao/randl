@@ -365,8 +365,10 @@ empty `series` and `metrics`:
 | `unplaced` | `{id, name}` of running runs that log no compute block.                                                                                                                                                                                       |
 | `unfit`    | `{id, name, reason}` of waiting plans no host can run.                                                                                                                                                                                        |
 
-Bars may also carry `lane` and `lanes` (bars overlapping in time), `follows`, `claimed`,
-`inferred`, and for running runs `progress`, `budget`, `from`, `rate` and `audit`.
+Bars may also carry `lane` and `lanes` (bars overlapping in time), `follows` (the runs or
+plans whose GPUs a projected plan takes next), `claimed`, `inferred`, `basis` (where an
+estimated end comes from: `progress`, `estimate` for a plan's `estimated_hours`, `pace` or
+`placeholder`), and for running runs `progress`, `budget`, `from`, `rate` and `audit`.
 
 ### ECharts build
 

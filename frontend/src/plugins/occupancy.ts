@@ -13,8 +13,6 @@ type Bar = {
   host: string;
   slot: string;
   gpus: number[] | null;
-  /** A projected plan: the runs (by id) or plans (`plan:` id) whose GPUs it takes next. */
-  follows?: string[];
   /** A plan claimed for these GPUs, its run not started yet. */
   claimed?: boolean;
   count: number | null;
@@ -25,6 +23,8 @@ type Bar = {
   verdict: string | null;
   estimated: boolean;
   unknownLength: boolean;
+  /** Where an estimated end comes from (backend occupancy.ts). */
+  basis?: 'progress' | 'estimate' | 'pace' | 'placeholder';
   inferred?: boolean;
   rows: string[];
   lane?: number;
@@ -51,6 +51,12 @@ export type OccupancyData = {
   unfit?: { id: string; name: string; reason: string }[];
 };
 
+/** Where an estimated end comes from, as the tooltip says it. */
+const basisLabels = {
+  progress: 'occupancy.tooltip.basis.progress',
+  estimate: 'occupancy.tooltip.basis.estimate',
+  pace: 'occupancy.tooltip.basis.pace',
+} as const;
 const rowHeight = 26,
   hostHeight = 30,
   labelWidth = 148,
@@ -338,6 +344,8 @@ export function create({
       );
     else if (bar.kind === 'planned' && bar.budget != null)
       lines.push(t('occupancy.tooltip.updates', { updates: numbers.format(bar.budget) }));
+    if (bar.estimated && bar.basis && bar.basis !== 'placeholder')
+      lines.push(t(basisLabels[bar.basis]));
     if (bar.inferred) lines.push(t('occupancy.tooltip.inferred'));
     // How a past run ended, when it did not simply finish.
     if (bar.kind === 'past' && bar.run && bar.state !== 'finished')
@@ -481,10 +489,15 @@ export function create({
         ]
           .filter(Boolean)
           .join(' ');
-        const left = x(bar.start),
-          right = x(bar.end);
+        // A bar spans its time less a pixel's gap. Too short for a label, it has no padding and
+        // thin borders, which would otherwise widen it past its end (a running run's past now);
+        // one under the 3 px minimum grows back from its end, so nothing ends after it should.
+        const right = x(bar.end) - 1,
+          span = right - x(bar.start),
+          left = right - Math.max(3, span);
         item.style.left = left + 'px';
-        item.style.width = Math.max(3, right - left - 1) + 'px';
+        item.style.width = right - left + 'px';
+        if (span <= 28) item.classList.add('bare');
         // Thin pieces keep a pixel between lanes.
         item.style.top = block.top + 'px';
         item.style.height = Math.max(3, block.height - ((bar.lanes ?? 1) > 1 ? 1 : 0)) + 'px';
@@ -493,9 +506,9 @@ export function create({
         // A running run's estimate continues its bar, so only the first part is named; a short
         // bar shows the name's first part (such as v657) when the whole name does not fit.
         // A run's bar starts with its colour swatch, as run names do everywhere.
-        const label = bar.kind === 'remaining' ? '' : shortName(bar.name, right - left - 26);
-        if (label && right - left > 28) {
-          if (bar.run && right - left > 40) item.append(swatch(bar.run));
+        const label = bar.kind === 'remaining' ? '' : shortName(bar.name, span - 26);
+        if (label && span > 28) {
+          if (bar.run && span > 40) item.append(swatch(bar.run));
           const text = document.createElement('span');
           text.textContent = label;
           item.append(text);
@@ -511,47 +524,10 @@ export function create({
         });
         trackItems.push(item);
       }
-    // The projected order: a line from each run or plan to the plan that takes its GPUs next,
-    // on a GPU row they share.
-    const links = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    links.setAttribute('class', 'occupancy-links');
-    links.setAttribute('aria-hidden', 'true');
-    links.setAttribute('width', String(width));
-    links.setAttribute('height', String(height));
-    const byPlan = new Map(data.bars.filter((bar) => bar.plan).map((bar) => [bar.plan!, bar])),
-      lastOfRun = new Map<string, Bar>();
-    for (const bar of data.bars)
-      if (bar.run && (bar.kind === 'remaining' || (bar.kind === 'running' && !lastOfRun.has(bar.run))))
-        lastOfRun.set(bar.run, bar);
-    for (const bar of data.bars.filter((item) => item.follows?.length)) {
-      for (const follow of bar.follows!) {
-        const before = follow.startsWith('plan:')
-          ? byPlan.get(follow.slice(5))
-          : lastOfRun.get(follow);
-        if (!before) continue;
-        const shared = bar.rows.find((row) => before.rows.includes(row)) ?? bar.rows[0],
-          y = (rows.get(shared) ?? 0) + rowHeight / 2,
-          from = x(before.end),
-          to = x(bar.start),
-          path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        // An elbow: out of the earlier bar's end, along the row, into the later bar's start.
-        path.setAttribute(
-          'd',
-          `M ${from - 6} ${y} L ${Math.max(from, to - 8)} ${y} L ${to} ${y}`,
-        );
-        path.setAttribute('class', 'occupancy-link');
-        links.append(path);
-        const head = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        head.setAttribute('d', `M ${to - 5} ${y - 3} L ${to} ${y} L ${to - 5} ${y + 3}`);
-        head.setAttribute('class', 'occupancy-link-head');
-        links.append(head);
-      }
-    }
     const now = document.createElement('div');
     now.className = 'occupancy-now';
     now.style.left = x(data.now) + 'px';
     trackItems.push(now);
-    trackItems.push(links as unknown as HTMLElement);
     labels.replaceChildren(...labelItems);
     track.replaceChildren(...trackItems);
     drawAxis();

@@ -25,6 +25,7 @@
   import ArrowDown from 'carbon-icons-svelte/lib/ArrowDown.svelte';
   import ChevronRight from 'carbon-icons-svelte/lib/ChevronRight.svelte';
   import PlanIdeas from './PlanIdeas.svelte';
+  import SideDrawer from './SideDrawer.svelte';
   import StarFilled from 'carbon-icons-svelte/lib/StarFilled.svelte';
   import RecentlyViewed from 'carbon-icons-svelte/lib/RecentlyViewed.svelte';
   import Choice from './Choice.svelte';
@@ -540,7 +541,8 @@
   };
 
   // The best recipe.
-  let promoting = $state(false),
+  let promotionsOpen = $state(false),
+    promoting = $state(false),
     recipeRun = $state(''),
     recipeReason = $state(''),
     busy = $state(false);
@@ -581,6 +583,7 @@
     hosts: string[];
     queue: string;
     updates: string;
+    estimatedHours: string;
     config_yaml: string;
     /** The config file as loaded: sent again only when edited, so its bytes stay as they are. */
     configYamlLoaded: string;
@@ -623,6 +626,7 @@
       hosts: [...(request?.hosts ?? [])],
       queue: text(plan.queue),
       updates: text(plan.updates),
+      estimatedHours: text(plan.estimated_hours),
       config_yaml: yaml,
       configYamlLoaded: created ? yaml : '',
       resume_run: text(plan.resume_run),
@@ -669,9 +673,10 @@
     !draft?.minMemory.trim() ||
       (Number.isFinite(Number(draft.minMemory)) && Number(draft.minMemory) >= 0),
   );
-  let updatesValid = $derived(
-    !draft?.updates.trim() || (Number.isFinite(Number(draft.updates)) && Number(draft.updates) > 0),
-  );
+  const positive = (text: string | undefined) =>
+    !text?.trim() || (Number.isFinite(Number(text)) && Number(text) > 0);
+  let updatesValid = $derived(positive(draft?.updates));
+  let hoursValid = $derived(positive(draft?.estimatedHours) && Number(draft?.estimatedHours || 0) <= 100000);
   let configError = $derived.by(() => {
     if (!draft?.config.trim()) return false;
     try {
@@ -690,7 +695,8 @@
       ) &&
       countValid &&
       memoryValid &&
-      updatesValid,
+      updatesValid &&
+      hoursValid,
   );
   /** Where a run or plan is: a host and its GPUs, such as gpu-a · GPUs 3, 4. */
   const gpuText = (host: string, gpus: number[] | null | undefined) =>
@@ -725,6 +731,7 @@
         },
         queue: numberOrNull(draft.queue),
         updates: numberOrNull(draft.updates),
+        estimated_hours: numberOrNull(draft.estimatedHours),
         // Sent only when edited, as typed: the supervisor writes it byte for byte.
         ...(draft.config_yaml !== draft.configYamlLoaded
           ? { config_yaml: draft.config_yaml ? draft.config_yaml : null }
@@ -972,7 +979,9 @@
       {#if bar}<span>{clock(bar.start)} → {estimate ? clock(estimate.end) : '?'}</span>
         <span class="queue-sub"
           >{estimate
-            ? $t('plans.lane.endsIn', { wait: span(estimate.end - now) })
+            ? $t(estimate.basis === 'estimate' ? 'plans.lane.endsInEstimated' : 'plans.lane.endsIn', {
+                wait: span(estimate.end - now),
+              })
             : $t('plans.lane.noEstimate')}</span
         >{/if}
       {#if bar?.inferred}<span class="queue-sub">{$t('plans.lane.fromPlan')}</span>{/if}
@@ -1070,7 +1079,9 @@
             ? $t('plans.lane.startsNow')
             : $t('plans.lane.inWait', { wait: span(at.start - now) })} · {at.unknownLength
             ? $t('plans.lane.lengthUnknown')
-            : $t('plans.lane.length', { length: span(at.end - at.start) })}</span
+            : $t(at.basis === 'estimate' ? 'plans.lane.lengthEstimated' : 'plans.lane.length', {
+                length: span(at.end - at.start),
+              })}</span
         >
         {#if alongside(at).length}<span class="queue-sub queue-alongside"
             >{$t('plans.gpus.alongside', {
@@ -1168,69 +1179,80 @@
         <StarFilled size={20} class="lineage-recipe-icon" />
         {$t('lineage.recipe.title')}
       </h2>
-      {#if recipe && !promoting}<Button
-          kind="tertiary"
-          size="small"
-          on:click={() => (promoting = true)}>{$t('plans.recipe.change')}</Button
-        >{/if}
+      <span class="plans-heading-actions">
+        {#if recipe?.history.length}<Button
+            kind="ghost"
+            size="small"
+            icon={RecentlyViewed}
+            on:click={() => (promotionsOpen = true)}
+            >{$t('plans.recipe.history', { count: recipe.history.length })}</Button
+          >{/if}
+        {#if recipe && !promoting}<Button
+            kind="tertiary"
+            size="small"
+            on:click={() => (promoting = true)}>{$t('plans.recipe.change')}</Button
+          >{/if}
+      </span>
     </div>
     {#if recipe === null}<p class="lineage-muted">{$t('common.status.loading')}</p>
-    {:else}<div class="recipe-layout">
-        <div class="recipe-tile">
-          {#if recipe.current}<p class="recipe-run">{@render runLink(recipe.current.run)}</p>
-            <p class="lineage-muted">
-              {$t('lineage.recipe.since', { date: $date(recipe.current.since, true) })}{recipe
-                .current.by
-                ? ' · ' + recipe.current.by
-                : ''}
-            </p>
-            <p class="recipe-reason">{recipe.current.reason}</p>
-            <LedgerSource source={recipe.current.source} />
-          {:else}<p class="lineage-muted">{$t('lineage.recipe.none')}</p>{/if}
-          {#if promoting}<div class="form-stack recipe-form">
-              <Choice
-                {...choice}
-                labelText={$t('plans.recipe.run')}
-                selectionClearedText={$t('common.combobox.selectionCleared')}
-                filterResultsText={(count) => resultCount(count, $t)}
-                translateWithId={(id) =>
-                  $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
-                items={runItems}
-                selectedId={recipeRun || undefined}
-                on:select={(event) => (recipeRun = String(event.detail.selectedId))}
-              />
-              <TextArea
-                labelText={$t('lineage.recipe.reason')}
-                rows={2}
-                bind:value={recipeReason}
-              />
-              <div class="lineage-actions">
-                <Button
-                  size="small"
-                  disabled={busy || !recipeRun || !recipeReason.trim()}
-                  on:click={setRecipe}>{$t('plans.recipe.set')}</Button
-                ><Button kind="ghost" size="small" on:click={() => (promoting = false)}
-                  >{$t('common.action.cancel')}</Button
-                >
-              </div>
-            </div>{/if}
-        </div>
-        {#if recipe.history.length}<div class="recipe-timeline">
-            <h3>{$t('plans.recipe.history', { count: recipe.history.length })}</h3>
-            <ol>
-              {#each recipe.history as event, index (event.id)}<li
-                  aria-current={index === 0 && recipe.current?.id === event.id ? 'true' : undefined}
-                >
-                  <span class="recipe-timeline-date">{$date(event.since, true)}</span>
-                  <span class="recipe-timeline-run">{@render runLink(event.run)}</span>
-                  <span class="recipe-timeline-reason"
-                    >{event.reason}{event.by ? ' · ' + event.by : ''}</span
-                  >
-                </li>{/each}
-            </ol>
+    {:else}
+      <div class="recipe-tile">
+        {#if recipe.current}<p class="recipe-run">{@render runLink(recipe.current.run)}</p>
+          <p class="lineage-muted">
+            {$t('lineage.recipe.since', { date: $date(recipe.current.since, true) })}{recipe
+              .current.by
+              ? ' · ' + recipe.current.by
+              : ''}
+          </p>
+          <p class="recipe-reason">{recipe.current.reason}</p>
+          <LedgerSource source={recipe.current.source} />
+        {:else}<p class="lineage-muted">{$t('lineage.recipe.none')}</p>{/if}
+        {#if promoting}<div class="form-stack recipe-form">
+            <Choice
+              {...choice}
+              labelText={$t('plans.recipe.run')}
+              selectionClearedText={$t('common.combobox.selectionCleared')}
+              filterResultsText={(count) => resultCount(count, $t)}
+              translateWithId={(id) =>
+                $t(id === 'open' ? 'common.combobox.open' : 'common.combobox.close')}
+              items={runItems}
+              selectedId={recipeRun || undefined}
+              on:select={(event) => (recipeRun = String(event.detail.selectedId))}
+            />
+            <TextArea
+              labelText={$t('lineage.recipe.reason')}
+              rows={2}
+              bind:value={recipeReason}
+            />
+            <div class="lineage-actions">
+              <Button
+                size="small"
+                disabled={busy || !recipeRun || !recipeReason.trim()}
+                on:click={setRecipe}>{$t('plans.recipe.set')}</Button
+              ><Button kind="ghost" size="small" on:click={() => (promoting = false)}
+                >{$t('common.action.cancel')}</Button
+              >
+            </div>
           </div>{/if}
       </div>{/if}
   </section>
+  {#if promotionsOpen && recipe}<SideDrawer
+      id="recipe-history"
+      title={$t('plans.recipe.historyTitle')}
+      onClose={() => (promotionsOpen = false)}
+      ><ol class="recipe-timeline">
+        {#each recipe.history as event, index (event.id)}<li
+            aria-current={index === 0 && recipe.current?.id === event.id ? 'true' : undefined}
+          >
+            <span class="recipe-timeline-date"
+              >{$date(event.since, true)}{event.by ? ' · ' + event.by : ''}</span
+            >
+            <span class="recipe-timeline-run">{@render runLink(event.run)}</span>
+            <span class="recipe-timeline-reason">{event.reason}</span>
+            <LedgerSource source={event.source} />
+          </li>{/each}
+      </ol></SideDrawer
+    >{/if}
 
   <section class="plans-section" aria-label={$t('charts.types.gpuOccupancy')}>
     {#if occupancyPlugin}<div class="plans-occupancy" bind:this={occupancyBox}>
@@ -1647,6 +1669,17 @@
             </div>
             <p class="plan-form-help">{$t('plans.edit.hostsHelp')}</p>
           </fieldset>
+          <div class="span-4">
+            <TextInput
+              labelText={$t('plans.edit.estimatedHours')}
+              inputmode="decimal"
+              invalid={!hoursValid}
+              bind:value={draft.estimatedHours}
+            />
+          </div>
+          <p class="span-8 plan-form-help plan-form-help-beside">
+            {$t('plans.edit.estimatedHoursHelp')}
+          </p>
           <div class="span-4">
             <TextInput
               labelText={$t('plans.edit.updates')}

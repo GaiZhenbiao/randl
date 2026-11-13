@@ -103,6 +103,7 @@ try {
     host: 'hostB',
     gpus: [0],
     after: bare,
+    estimated_hours: 3,
   });
 
   // The GPU inventory: three GPUs on hostA, one on hostB, and one on hostR kept for others.
@@ -131,7 +132,11 @@ try {
   // The recipe with its history, then the queue: the running runs with their progress and
   // end, then the waiting plans in claim order, each with its GPU request and projected start.
   await expect(page.locator('.recipe-tile')).toContainText('p1_done');
-  await expect(page.locator('.recipe-timeline li')).toHaveCount(1);
+  await expect(page.locator('.recipe-timeline')).toHaveCount(0);
+  await page.getByRole('button', { name: '1 promotion' }).click();
+  await expect(page.locator('.side-drawer .recipe-timeline li')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.side-drawer')).toHaveCount(0);
   const queue = page.locator('.plan-queue');
   const running = queue.locator('.queue-running', { hasText: 'p2_live' });
   await expect(running).toContainText('Update 500 of 1,000 (50%)');
@@ -159,7 +164,9 @@ try {
     'p5_after',
     'p3_next',
   ]);
-  await expect(queue.locator('.plan-row', { hasText: 'p5_after' })).toContainText(/in 1h ·/);
+  await expect(queue.locator('.plan-row', { hasText: 'p5_after' })).toContainText(
+    /in 1h · runs 3h, as its plan estimates/,
+  );
   // The GPU strip: each host's GPUs now, the reserved host last.
   const strip = page.locator('.gpu-host');
   await expect(strip.locator('strong')).toHaveText(['hostA', 'hostB', 'hostR']);
@@ -192,7 +199,6 @@ try {
     await expect(timeline.locator('.occupancy-track .kind-' + kind)).toHaveCount(count);
   await expect(timeline.locator('.occupancy-track .kind-past')).toHaveClass(/verdict-adopted/);
   await expect(timeline.locator('.occupancy-now')).toHaveCount(1);
-  await expect(timeline.locator('.occupancy-link')).toHaveCount(1);
   // The panel is as tall as its rows: no scrolling inside it but sideways.
   const fit = await timeline
     .locator('.occupancy-scroll')

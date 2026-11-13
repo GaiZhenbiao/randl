@@ -1030,6 +1030,10 @@ aside {
   /* Its own layer: moving section pages beside it would otherwise move it into and out of one. */
   will-change: transform;
 }
+.sidebar-resize.end {
+  right: auto;
+  left: -4px;
+}
 .sidebar-resize::after,
 .section-row-resize::after {
   content: '';
@@ -1641,7 +1645,7 @@ aside {
   right: 0;
   top: 48px;
   bottom: 0;
-  width: 400px;
+  width: var(--side-drawer-width, 400px);
   max-width: 100vw;
   background: var(--cds-ui-01);
   color: var(--cds-text-01);
@@ -1682,7 +1686,7 @@ aside {
   max-width: none;
 }
 .layered-shell.settings-open {
-  padding-right: 400px;
+  padding-right: var(--side-drawer-width, 400px);
 }
 .side-drawer .form-grid {
   grid-template-columns: 1fr 1fr;
@@ -1785,10 +1789,10 @@ aside {
     max-height: none;
   }
   .side-drawer {
-    width: 360px;
+    width: var(--side-drawer-width, 360px);
   }
   .layered-shell.settings-open {
-    padding-right: 360px;
+    padding-right: var(--side-drawer-width, 360px);
   }
 }
 @media (max-width: 760px) {
@@ -2157,6 +2161,7 @@ aside {
   margin-left: 4px;
 }
 .lineage-body {
+  position: relative;
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr);
@@ -2164,7 +2169,13 @@ aside {
   border-top: 1px solid var(--cds-ui-03);
 }
 .lineage-body.with-details {
-  grid-template-columns: minmax(0, 1fr) min(480px, 45%);
+  --details: min(var(--lineage-details-width, min(480px, 45%)), calc(100% - 320px));
+  grid-template-columns: minmax(0, 1fr) var(--details);
+}
+/* The run panel's resize edge, over its left border. */
+.lineage-body > .sidebar-resize.end {
+  left: auto;
+  right: calc(var(--details) - 4px);
 }
 .lineage-viewport {
   position: relative;
@@ -6395,13 +6406,20 @@ aside {
   text-overflow: ellipsis;
 }
 .findings-layout {
+  position: relative;
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: minmax(0, 1fr);
   min-height: 0;
 }
 .findings-page.reading .findings-layout {
-  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  --reader: min(max(320px, var(--findings-reader-width, 40%)), calc(100% - 360px));
+  grid-template-columns: minmax(0, 1fr) var(--reader);
+}
+/* The reading pane's resize edge, over its left border. */
+.findings-layout > .sidebar-resize.end {
+  left: auto;
+  right: calc(var(--reader) - 4px);
 }
 .findings-list {
   display: flex;
@@ -6750,19 +6768,14 @@ th.findings-col-citations .findings-sort {
   margin-top: 12px;
   font-size: 14px;
 }
-.recipe-history summary {
-  cursor: pointer;
-  color: var(--cds-link-01);
-}
 .plans-heading-help {
   font-size: 14px;
 }
-/* The recipe: the current one in a tile, its history as a dated timeline beside it. */
-.recipe-layout {
-  display: grid;
-  align-items: start;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: 16px;
+/* The recipe: the current one in a tile; its promotions open in a drawer (Promotions). */
+.plans-heading-actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
 }
 .recipe-tile {
   padding: 16px;
@@ -6782,28 +6795,16 @@ th.findings-col-citations .findings-sort {
   overflow-wrap: anywhere;
 }
 .recipe-timeline {
-  padding: 16px;
-  background: var(--cds-ui-01);
-}
-.recipe-timeline h3 {
-  margin-bottom: 12px;
-  font-size: 14px;
-  font-weight: 600;
-}
-.recipe-timeline ol {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  max-height: 260px;
-  overflow-y: auto;
-  padding-left: 20px;
+  gap: 16px;
+  padding: 16px 16px 16px 36px;
 }
 .recipe-timeline li {
   position: relative;
   display: grid;
-  grid-template-columns: 7rem minmax(0, 12rem) minmax(0, 1fr);
-  gap: 4px 12px;
+  gap: 2px;
   font-size: 14px;
   line-height: 20px;
 }
@@ -6822,7 +6823,7 @@ th.findings-col-citations .findings-sort {
 .recipe-timeline li:not(:last-child)::after {
   position: absolute;
   top: 17px;
-  bottom: -11px;
+  bottom: -15px;
   left: -13px;
   border-left: 1px solid var(--cds-ui-03);
   content: '';
@@ -6836,9 +6837,7 @@ th.findings-col-citations .findings-sort {
   white-space: nowrap;
 }
 .recipe-timeline-run {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
 }
 .recipe-timeline-reason {
   overflow-wrap: anywhere;
@@ -7186,21 +7185,6 @@ th.findings-col-citations .findings-sort {
   color: var(--cds-text-02);
   text-decoration: line-through;
 }
-/* The projected order: lines from what holds GPUs to the plan that takes them next. */
-.occupancy-links {
-  position: absolute;
-  top: 0;
-  left: 0;
-  z-index: 2;
-  overflow: visible;
-  pointer-events: none;
-}
-.occupancy-link,
-.occupancy-link-head {
-  fill: none;
-  stroke: #8a3ffc;
-  stroke-width: 1.5;
-}
 .occupancy-bar.kind-planned.claimed {
   border-style: solid;
   background: color-mix(in srgb, #8a3ffc 28%, var(--cds-ui-01));
@@ -7257,6 +7241,11 @@ th.findings-col-citations .findings-sort {
 .occupancy-bar.kind-past.ended-crashed,
 .occupancy-bar.kind-past.ended-failed {
   border-right: 2px solid var(--cds-support-01);
+}
+/* Too short for a label: no padding and a thin left border, so its box is its time span. */
+.occupancy-bar.bare.bare {
+  padding: 0;
+  border-left-width: 1px;
 }
 /* Stopped on purpose: ends on the stopped colour. */
 .occupancy-bar.kind-past.ended-killed {

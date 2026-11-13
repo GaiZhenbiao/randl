@@ -40,7 +40,7 @@
   }
 </script>
 
-<SideDrawer title={$t('runs.trash.title')} {onClose}
+<SideDrawer id="trash" title={$t('runs.trash.title')} {onClose}
   ><Search
     closeButtonLabelText={$t('common.search.clear')}
     size="sm"

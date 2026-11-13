@@ -32,6 +32,8 @@
   import { runPalette } from './run-colors';
   import type { Plugin, Run } from './types';
   import LineageDetails from './LineageDetails.svelte';
+  import SidebarResize from './SidebarResize.svelte';
+  import { loadWidth } from './sidebar-width';
   import LineageSettingsModal from './LineageSettings.svelte';
   import LineageCard from './LineageCard.svelte';
   import {
@@ -89,6 +91,9 @@
     /** A phone-width window: the controls show as icons. */
     narrow?: boolean;
   } = $props();
+  // The run panel's width, dragged at its edge (SidebarResize).
+  let lineageBody = $state<HTMLElement>(),
+    detailsWidth = $state(loadWidth('lineage-details'));
 
   // The page's choices for a project, kept in this browser.
   type ColorBy = 'run' | 'host';
@@ -1033,7 +1038,12 @@
       closeButtonDescription={$t('common.notification.close')}
       on:close={() => (error = '')}
     />{/if}
-  <div class="lineage-body" class:with-details={!!selected && !!index?.nodes.has(selected)}>
+  <div
+    class="lineage-body"
+    class:with-details={!!selected && !!index?.nodes.has(selected)}
+    bind:this={lineageBody}
+    style:--lineage-details-width={detailsWidth ? detailsWidth + 'px' : undefined}
+  >
     <div
       class="lineage-viewport"
       class:pan-ready={shiftHeld}
@@ -1175,7 +1185,15 @@
         {onPage}
         picked={pickedRuns}
         onChanged={load}
-      />{/if}
+      />{#if !narrow}<SidebarResize
+          id="lineage-details"
+          label={$t('common.sidebar.resize')}
+          min={320}
+          width={() =>
+            lineageBody?.querySelector('.lineage-details')?.getBoundingClientRect().width ?? 480}
+          max={() => (lineageBody?.clientWidth ?? 1200) - 320}
+          onresize={(next) => (detailsWidth = next)}
+        />{/if}{/if}
   </div>
 </div>
 {#if settingsOpen && graph}<LineageSettingsModal

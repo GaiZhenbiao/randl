@@ -129,7 +129,31 @@ try {
   await page.getByLabel('Why it is the best recipe').fill('Highest audit mean');
   await page.getByRole('button', { name: 'Set best recipe' }).click();
   await expect(page.locator('.recipe-tile')).toContainText('v2_arm');
-  await expect(page.locator('.recipe-timeline li')).toHaveCount(1);
+  // Its promotions open in a drawer beside the page.
+  await page.getByRole('button', { name: '1 promotion' }).click();
+  const promotions = page.getByRole('dialog', { name: 'Best recipe promotions' });
+  await expect(promotions.locator('.recipe-timeline li')).toHaveCount(1);
+  await expect(promotions).toContainText('Highest audit mean');
+  // Every sidebar resizes the same way (SidebarResize): drag its edge, or the arrow keys on
+  // it, and it keeps the width the next time it opens.
+  const edge = promotions.getByRole('separator', { name: 'Resize panel' }),
+    drawerWidth = async () => Math.round((await promotions.boundingBox()).width),
+    before = await drawerWidth(),
+    grip = await edge.boundingBox();
+  await page.mouse.move(grip.x + 4, grip.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(grip.x - 116, grip.y + 200, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(drawerWidth).toBe(before + 120);
+  await edge.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect.poll(drawerWidth).toBe(before + 136);
+  await expect(edge).toHaveAttribute('aria-valuenow', String(before + 136));
+  await promotions.getByRole('button', { name: 'Close' }).click();
+  await expect(promotions).toHaveCount(0);
+  await page.getByRole('button', { name: '1 promotion' }).click();
+  await expect.poll(drawerWidth).toBe(before + 136);
+  await promotions.getByRole('button', { name: 'Close' }).click();
   await page.getByRole('button', { name: 'Plan a run' }).click();
   const plan = page.getByRole('dialog', { name: 'Plan a run' });
   await plan.getByLabel('Run name').fill('v3_next');
@@ -143,9 +167,7 @@ try {
   await plan.getByRole('button', { name: 'Save plan' }).click();
   const queue = page.locator('.plan-queue');
   await expect(queue.locator('.plan-row .queue-name')).toHaveText(['v3_next', 'v4_later']);
-  await expect(queue.locator('.plan-row', { hasText: 'v3_next' })).toContainText(
-    '2 GPUs ≥ 24 GB',
-  );
+  await expect(queue.locator('.plan-row', { hasText: 'v3_next' })).toContainText('2 GPUs ≥ 24 GB');
   checks.push('The Plans page sets the best recipe and queues planned runs with GPU requests');
 
   // Lineage: the recipe star, the dashed planned node, its plan, a journal entry and a comparison.

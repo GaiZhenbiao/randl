@@ -48,6 +48,8 @@
   import Undo from 'carbon-icons-svelte/lib/Undo.svelte';
   import Redo from 'carbon-icons-svelte/lib/Redo.svelte';
   import SideDrawer from './SideDrawer.svelte';
+  import SidebarResize from './SidebarResize.svelte';
+  import { loadWidth } from './sidebar-width';
   import StorageSettings from './StorageSettings.svelte';
   import ContextPopover from './ContextPopover.svelte';
   import ViewIcon from 'carbon-icons-svelte/lib/View.svelte';
@@ -210,17 +212,7 @@
       },
     };
   }
-  let sidebarWidth = $state(Number(localStorage.getItem('randl.sidebar-width')) || 304),
-    sidebarDrag = $state(false);
-  function sidebarResize(event: PointerEvent) {
-    if (sidebarDrag) sidebarWidth = Math.max(240, Math.min(sidebarLimit, event.clientX - navWidth));
-  }
-  function sidebarResizeEnd() {
-    if (sidebarDrag) {
-      sidebarDrag = false;
-      localStorage.setItem('randl.sidebar-width', String(sidebarWidth));
-    }
-  }
+  let sidebarWidth = $state(loadWidth('runs') ?? 304);
   let trashOpen = $state(false),
     lastDeleted = $state<string[]>([]),
     runFeedback = $state.raw<Message>(''),
@@ -3121,39 +3113,15 @@
               >{/if}
           </div>{/if}
         {/if}
-        {#if width > 760}<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (Focusable splitter with arrow-key resizing.) -->
-          <div
-            class="sidebar-resize"
-            class:dragging={sidebarDrag}
-            role="separator"
-            aria-label={$t('runs.list.resize')}
-            aria-orientation="vertical"
-            aria-valuemin={240}
-            aria-valuemax={sidebarLimit}
-            aria-valuenow={displayedSidebarWidth}
-            tabindex="0"
-            onpointerdown={(event) => {
-              sidebarDrag = true;
-              event.currentTarget.setPointerCapture(event.pointerId);
-              event.preventDefault();
-            }}
-            onpointermove={sidebarResize}
-            onpointerup={sidebarResizeEnd}
-            onpointercancel={sidebarResizeEnd}
-            onkeydown={(event) => {
-              if (['ArrowLeft', 'ArrowRight'].includes(event.key)) {
-                event.preventDefault();
-                sidebarWidth = Math.max(
-                  240,
-                  Math.min(
-                    sidebarLimit,
-                    displayedSidebarWidth + (event.key === 'ArrowRight' ? 16 : -16),
-                  ),
-                );
-                localStorage.setItem('randl.sidebar-width', String(sidebarWidth));
-              }
-            }}
-          ></div>{/if}
+        {#if width > 760}<SidebarResize
+            id="runs"
+            side="start"
+            label={$t('runs.list.resize')}
+            min={240}
+            width={() => displayedSidebarWidth}
+            max={() => sidebarLimit}
+            onresize={(next) => (sidebarWidth = next)}
+          />{/if}
       </aside>{/if}
     {#snippet viewStatus()}
       {#if !(width <= 760 && drawer)}{@render actionNotice()}{@render saveFailureNotice()}{/if}
@@ -3780,7 +3748,9 @@
     </div>
     {#if viewError}<InlineNotification kind="error" title={$t(viewError)} />{/if}</Modal
   >
-  {#if agentDialog}<SideDrawer title={$t('assistant.title')} onClose={() => (agentDialog = false)}
+  {#if agentDialog}<SideDrawer
+      id="assistant"
+      title={$t('assistant.title')} onClose={() => (agentDialog = false)}
       >{#await import('./AgentChat.svelte')}<p role="status">
           {$t('common.status.loading')}
         </p>{:then module}<module.default

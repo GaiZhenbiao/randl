@@ -39,21 +39,22 @@ randl plans save --project team/navigation --id v5 --name v5_wider_still \
            "change": "Hidden layer widened from 512 to 1024 units",
            "hypothesis": "The gain from width has not saturated",
            "rule": "Stop if return trails v2 by 10 at update 15000",
-           "resources": {"gpus": 2, "min_memory_gb": 24}, "updates": 20000}' \
+           "resources": {"gpus": 2, "min_memory_gb": 24}, "estimated_hours": 14}' \
   --config-yaml-file configs/v5.yaml --by me
 ```
 
-| Field                     | Meaning                                                                                                 |
-| ------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `resources.gpus`          | How many GPUs, all on one host.                                                                         |
-| `resources.min_memory_gb` | Minimum memory per GPU.                                                                                 |
-| `resources.model`         | A model name to match, case-insensitive substring (`4090`, `H100`).                                     |
-| `resources.hosts`         | Hosts it may run on; any host when omitted.                                                             |
-| `config_yaml`             | The config file text, returned verbatim to the agent that claims the plan.                              |
-| `config`                  | The same config as JSON, for display and diffs.                                                         |
-| `resume_run`              | A run this plan continues in its own directory (see [resume plans](#resume-plans)).                     |
-| `updates`                 | How far it trains, for the projected end. Else the config's budget, else the usual length on that host. |
-| `queue` / `after`         | A queue position, or a run or `plan:<id>` to wait for and follow.                                       |
+| Field                     | Meaning                                                                                                                                                   |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resources.gpus`          | How many GPUs, all on one host.                                                                                                                           |
+| `resources.min_memory_gb` | Minimum memory per GPU.                                                                                                                                   |
+| `resources.model`         | A model name to match, case-insensitive substring (`4090`, `H100`).                                                                                       |
+| `resources.hosts`         | Hosts it may run on; any host when omitted.                                                                                                               |
+| `config_yaml`             | The config file text, returned verbatim to the agent that claims the plan.                                                                                |
+| `config`                  | The same config as JSON, for display and diffs.                                                                                                           |
+| `resume_run`              | A run this plan continues in its own directory (see [resume plans](#resume-plans)).                                                                       |
+| `estimated_hours`         | How long it runs, in hours (a number above 0, such as `14` or `2.5`). Used before anything inferred.                                                      |
+| `updates`                 | How far it trains. Without `estimated_hours`, the length is this (else the config's budget, else the usual length on that host) at the recent pace there. |
+| `queue` / `after`         | A queue position, or a run or `plan:<id>` to wait for and follow.                                                                                         |
 
 The [`plan_save`](../reference/tools.md#plan_save) reference lists every field. Saving the same
 plan again with the same content reports `unchanged`. Planned runs also appear on the Lineage
@@ -95,13 +96,18 @@ Claims are atomic: two agents never get the same plan or GPU.
 
 The **GPU occupancy** timeline has a row per GPU, grouped by host. It shows past runs, running
 runs up to now and on to their estimated end, claimed plans, and waiting plans where the
-allocator would start them (hatched), with a line from the run or plan whose GPUs each takes
-next. Reserved GPUs are struck through.
+allocator would start them (hatched). Reserved GPUs are struck through.
 
-The projection runs the same allocation rules forward in time. A running run's end comes from
-its progress: its summary's `progressKey` (default `update`) counted toward the config's
-`budgetKey` (default `rl.algorithm.total_updates`) from `startKey`
-(`rl.algorithm.start_update`), at its recent pace. Set these keys in Lineage settings.
+The projection runs the same allocation rules forward in time. How long things take:
+
+| What           | Length or end, first that is known                                                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A running run  | Its measured progress: the summary's `progressKey` (default `update`) toward the config's `budgetKey` (default `rl.algorithm.total_updates`) from `startKey`, at its own pace; else its plan's `estimated_hours` from when the plan started |
+| A waiting plan | Its `estimated_hours`; else its `updates` (or config budget, or the usual length on that host) at the recent pace there; else a 6-hour placeholder                                                                                          |
+
+The queue and the timeline's tooltips say which: "runs 14h, as its plan estimates" for a stated
+estimate, "runs about 9h" for one inferred from pace, and "length unknown" for the placeholder.
+Set the progress keys in Lineage settings.
 [`project_occupancy`](../reference/tools.md#project_occupancy) returns the timeline, with plans
 that fit no host as `unfit`.
 
@@ -118,11 +124,11 @@ POST /api/tools/plan_claim
 
 The response is one of:
 
-| `status`  | Meaning                                                                                            |
-| --------- | -------------------------------------------------------------------------------------------------- |
-| `claimed` | `plan` (with `config_yaml` verbatim, `resume_run`, `updates`, `parent`) and `gpu_ids` to launch on |
-| `empty`   | Nothing waiting fits these GPUs; `waiting` counts the queue                                        |
-| `held`    | The head of the queue has waited too long and this host is holding GPUs for it                     |
+| `status`  | Meaning                                                                                                               |
+| --------- | --------------------------------------------------------------------------------------------------------------------- |
+| `claimed` | `plan` (with `config_yaml` verbatim, `resume_run`, `updates`, `estimated_hours`, `parent`) and `gpu_ids` to launch on |
+| `empty`   | Nothing waiting fits these GPUs; `waiting` counts the queue                                                           |
+| `held`    | The head of the queue has waited too long and this host is holding GPUs for it                                        |
 
 The agent must then:
 

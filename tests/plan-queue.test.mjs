@@ -471,6 +471,46 @@ test('host agents claim GPUs for the first plan that fits; claims are atomic, re
   assert.deepEqual([resume.plan.id, resume.gpu_ids, resume.plan.resume_run], ['one', [3], null]);
 });
 
+test("a plan's estimated hours travel with it and set its run's end while progress cannot", async (t) => {
+  const { server, call } = await fixture(t);
+  await call('plan_save', {
+    project: 'e/p',
+    id: 'est',
+    queue: 1,
+    resources: { gpus: 1 },
+    estimated_hours: 5,
+  });
+  const claim = await call('plan_claim', {
+    project: 'e/p',
+    host: 'h',
+    free_gpus: [2],
+    by: 'agent',
+  });
+  assert.equal(claim.plan.estimated_hours, 5);
+  // Its run logs no budget to measure progress against: the plan's 5 hours from its claim.
+  await server.db.call('upsert', {
+    entity: 'e',
+    project: 'p',
+    name: 'est-run',
+    config: { lineage: { value: { plan: 'est' } } },
+  });
+  const timeline = await call('project_occupancy', { project: 'e/p' });
+  const remaining = timeline.bars.find(
+    (bar) => bar.run === 'e/p/est-run' && bar.kind === 'remaining',
+  );
+  assert.equal(remaining.basis, 'estimate');
+  assert.ok(
+    Math.abs(remaining.end - (claim.allocation.at + 5 * 3600)) < 5,
+    JSON.stringify(remaining),
+  );
+  // An idea's draft or the promote request carries it to the plan.
+  await call('idea_save', { project: 'e/p', id: 'later', title: 'Later' });
+  await call('idea_promote', { project: 'e/p', id: 'later', estimated_hours: 1.5 });
+  const plans = (await call('plans_list', { project: 'e/p' })).plans;
+  assert.equal(plans.find((plan) => plan.id === 'later').estimated_hours, 1.5);
+  await call('plan_save', { project: 'e/p', id: 'bad', estimated_hours: 0 }, 400);
+});
+
 test('GPUs a running run logs are busy, whatever the agent reports free', async (t) => {
   const { server, call } = await fixture(t);
   // Started before allocations existed (or by hand): no plan holds its GPUs, its compute
