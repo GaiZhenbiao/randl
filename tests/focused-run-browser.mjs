@@ -351,6 +351,55 @@ try {
     `sidebar sweep paints once per chart: ${JSON.stringify(paints)}`,
   );
   await shown(22);
+  // A sweep across many rows at pointer speed: the line chart's highlight follows every row
+  // without redrawing its canvas, and the composition panels wait for the row the pointer stops
+  // on instead of redrawing for each row crossed (hover.ts, settledFocus).
+  {
+    const sweep = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+    await page.locator(`[data-entry-key="${runs[11].id}"]`).scrollIntoViewIfNeeded();
+    await page.mouse.move(1590, 10);
+    await shown(22);
+    await page.waitForTimeout(400);
+    const boxes = [];
+    for (const index of sweep)
+      boxes.push(await page.locator(`[data-entry-key="${runs[index].id}"]`).boundingBox());
+    await page.evaluate(() => {
+      window.sweepPaints = {};
+      window.sweepListeners = [];
+      for (const id of ['line', 'stack', 'percent']) {
+        const chart = window.focusChart(id);
+        window.sweepPaints[id] = 0;
+        const listener = () => window.sweepPaints[id]++;
+        chart.getZr().on('rendered', listener);
+        window.sweepListeners.push([chart, listener]);
+      }
+    });
+    const sweepStart = requests.length;
+    for (const box of boxes) {
+      await page.mouse.move(box.x + 20, box.y + box.height / 2);
+      await page.waitForTimeout(16);
+    }
+    const during = await page.evaluate(() => ({ ...window.sweepPaints }));
+    await shown(17);
+    await page.evaluate(() => {
+      for (const [chart, listener] of window.sweepListeners)
+        chart.getZr().off('rendered', listener);
+    });
+    assert.ok(
+      during.stack <= 1 && during.percent <= 1,
+      `composition panels redraw at most for the first row of a sweep: ${JSON.stringify(during)}`,
+    );
+    assert.equal(during.line, 0, 'line highlights draw over the chart without redrawing it');
+    // Only the first row (taken at once) and the row it stopped on load, never those crossed.
+    const loaded = requests.slice(sweepStart).map((request) => request.body.runs.join());
+    assert.ok(
+      loaded.length <= 4 && loaded.every((id) => [runs[6].id, runs[17].id].includes(id)),
+      `a sweep loads only its first and last rows: ${loaded}`,
+    );
+    await page.mouse.move(1590, 10);
+    await shown(22);
+    requestStart = requests.length;
+  }
   // A hidden run still exists in the sidebar but cannot become the displayed candidate.
   await page.locator(`[data-entry-key="${runs[23].id}"]`).hover();
   await shown(22);
@@ -475,8 +524,8 @@ try {
   await expect
     .poll(
       async () =>
-        (await server.db.call('view', view.id)).body.panels.find((p) => p.id === 'percent')?.settings
-          ?.maxRuns,
+        (await server.db.call('view', view.id)).body.panels.find((p) => p.id === 'percent')
+          ?.settings?.maxRuns,
     )
     .toBe(null);
   await expect(header('percent')).toHaveCount(0);
@@ -488,8 +537,8 @@ try {
   await expect
     .poll(
       async () =>
-        (await server.db.call('view', view.id)).body.panels.find((p) => p.id === 'percent')?.settings
-          ?.maxRuns,
+        (await server.db.call('view', view.id)).body.panels.find((p) => p.id === 'percent')
+          ?.settings?.maxRuns,
     )
     .toBe('focused');
   await shown(22);
@@ -523,7 +572,9 @@ try {
       exact: true,
     });
     await expect(localized).toHaveValue('focused');
-    await expect(localized.locator('option:checked')).toHaveText(copy['panelSettings.data.limit.focused']);
+    await expect(localized.locator('option:checked')).toHaveText(
+      copy['panelSettings.data.limit.focused'],
+    );
     await drawer.getByRole('button', { name: copy['common.action.cancel'], exact: true }).click();
   }
   // Large candidate set and a single large run: default and cold hover must render.

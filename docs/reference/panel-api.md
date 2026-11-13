@@ -669,7 +669,9 @@ them aligned within each history record:
 A panel with one series gets ordinary history. A plugin with a `recordTransform` also
 supports **Runs shown → Focused run** (`maxRuns: "focused"`) when it has two or more
 series: the host then passes `data.series` with only the focused run or group, the one
-hovered elsewhere or else the newest, and the renderer needs no extra code.
+hovered elsewhere or else the newest, and the renderer needs no extra code. A hover applies at
+once when no other run was hovered in the last 150 ms; during a sweep across runs the panel
+waits until the pointer rests that long, so it redraws once for the run the pointer stops on.
 
 ## Grouped charts
 

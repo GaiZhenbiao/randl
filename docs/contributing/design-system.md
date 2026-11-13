@@ -110,7 +110,10 @@ colours.
 - Downsampling keeps spikes (minimum and maximum per bucket); sampling extremes are not
   between-run spread. Aggregation states which runs contribute.
 - Zoom fetches finer data rather than enlarging a coarse line.
-- Hover is cheap: highlight by restyling or an overlay, never by redrawing every chart.
+- Hover is cheap: highlight by restyling or an overlay, never by redrawing every chart. The
+  hovered run keeps its line width; the others dim.
+- Work that a hover change makes slow (a panel redrawn for the hovered run) waits for the
+  pointer to rest and never delays the highlight elsewhere; only the latest hover counts.
 - Deliberate settings persist; an intentionally empty view stays empty after reload.
 
 ## Feedback and recovery

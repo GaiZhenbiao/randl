@@ -77,7 +77,14 @@ on-screen chart. Plain line charts draw it as an SVG overlay: a veil over the pl
 the run's lines on top, reduced to the first, lowest, highest and last point per pixel
 column. The chart canvas is not redrawn. Area and stacked charts use ECharts' emphasis,
 which redraws the canvas, so linked charts of those types wait until the hovered run has
-stayed the same for 120 ms.
+stayed the same for 120 ms. Highlighting never changes line widths: the other runs dim.
+
+Panels that show only the hovered run (**Runs shown → Focused run**) have to redraw for each
+run. They take a hover at once when the pointer has been still, but during a sweep across
+many runs they wait until it rests for 150 ms and then redraw once, for the run it stopped on.
+The highlight in every other chart and in the run list follows the pointer meanwhile, and a
+change of the hovered run never queues work: each chart draws only the latest one, at most
+once a frame. Leaving one run row for the next does not pass through an empty hover.
 
 ## Runs per panel
 

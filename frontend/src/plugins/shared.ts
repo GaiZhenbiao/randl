@@ -260,7 +260,11 @@ export function lines(ctx: PanelContext, area = false): any[] {
             opacity: original.opacity,
           },
           emphasis: {
-            lineStyle: { color: color(series.id, ctx.colors, ctx.dark), opacity: 0.6, width: 1 },
+            lineStyle: {
+              color: color(series.id, ctx.colors, ctx.dark),
+              opacity: 0.6,
+              width: original.width,
+            },
           },
           blur: { lineStyle: { opacity: original.opacity / 2 } },
           silent: true,
@@ -321,7 +325,8 @@ export function lines(ctx: PanelContext, area = false): any[] {
           area && !(band && settings.spread && settings.spread !== 'none')
             ? { opacity: ctx.dark ? 0.4 : 0.3 }
             : undefined,
-        emphasis: { focus: 'series' },
+        // Hover dims the other runs; the hovered line keeps its width.
+        emphasis: { focus: 'series', lineStyle: { width: settings.lineWidth || 1.5 } },
       });
     }
   return result;
@@ -560,7 +565,7 @@ export function renderer(
       path.setAttribute('class', 'chart-linked-line');
       path.dataset.key = String(series.get('randlKey') ?? series.name);
       path.setAttribute('stroke', String(style.stroke ?? style.fill ?? '#0f62fe'));
-      path.setAttribute('stroke-width', String((series.get(['lineStyle', 'width']) ?? 2) + 1));
+      path.setAttribute('stroke-width', String(series.get(['lineStyle', 'width']) ?? 1.5));
       drawn++;
     }
     while (lines.children.length > drawn) lines.lastChild!.remove();

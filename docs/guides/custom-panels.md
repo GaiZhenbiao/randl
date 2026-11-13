@@ -102,7 +102,8 @@ these rules, and plugins should too:
   before sorting or transforming.
 - **Do no rendering work in `highlightRuns`.** Hover moves across every linked panel on each
   pointer move. Restyle what is drawn (opacity, a class, an overlay) and return. randl's line
-  charts draw the hovered run in an SVG overlay rather than redrawing the canvas.
+  charts draw the hovered run in an SVG overlay rather than redrawing the canvas, and dim the
+  other runs without making the hovered line thicker.
 - **Report hover once per change.** Call `onHover([runId])` when the run under the pointer
   changes and `onHover([])` when it leaves, not on every pointer move.
 - **Let the host pace updates.** Live data arrives at most every two seconds, only for panels on

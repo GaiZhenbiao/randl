@@ -231,20 +231,33 @@ test('focused run chooses latest creation, external hover, and visible group mem
   );
 });
 
+// Hover clears wait for the next frame; Node has no frames, so a timer stands in.
+globalThis.requestAnimationFrame ??= (callback) =>
+  setTimeout(() => callback(performance.now()), 16);
+globalThis.cancelAnimationFrame ??= (id) => clearTimeout(id);
+const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
 const { runFocus, setHoveredRuns } = await import(
   await load('hover', { 'svelte/store': import.meta.resolve('svelte/store') })
 );
-test('hover ownership survives a stale leave and clears on owner cleanup', () => {
-  let current;
-  const unsubscribe = runFocus.subscribe((value) => {
-    current = value;
-  });
+test('hover ownership survives a stale leave and clears on owner cleanup', async () => {
+  const seen = [];
+  const unsubscribe = runFocus.subscribe((value) => seen.push(value));
+  const current = () => seen.at(-1);
   setHoveredRuns('panel', ['one']);
   setHoveredRuns('run-list', ['two']);
   setHoveredRuns('panel', []);
-  assert.deepEqual(current, { source: 'run-list', ids: ['two'] });
+  await frame();
+  assert.deepEqual(current(), { source: 'run-list', ids: ['two'] });
+  // Leaving one row for the next in the same frame never passes through an empty hover.
+  seen.length = 0;
   setHoveredRuns('run-list', []);
-  assert.equal(current, null);
+  setHoveredRuns('run-list', ['three']);
+  await frame();
+  assert.deepEqual(seen, [{ source: 'run-list', ids: ['three'] }]);
+  setHoveredRuns('run-list', []);
+  assert.deepEqual(current(), { source: 'run-list', ids: ['three'] }, 'a clear waits a frame');
+  await frame();
+  assert.equal(current(), null);
   unsubscribe();
 });
 

@@ -10,6 +10,12 @@ colours and plot settings. Tools change views the same way the dashboard does. D
 [workspace guide](../../../docs/guides/workspace.md),
 [view, panel and plot-settings shapes](../../../docs/reference/tools.md#shared-shapes).
 
+> **Finding the docs.** Links here are relative to the randl repository, where this skill lives
+> in `.claude/skills/randl-workspace/`. If the skill was loaded through a symlink (for example from
+> `~/.claude/skills/randl-workspace`), a link may not resolve: resolve the symlink to the checkout with
+> `readlink -f ~/.claude/skills/randl-workspace/SKILL.md`, then read `docs/` at the root of that
+> checkout (`git -C "$(dirname "$(readlink -f ~/.claude/skills/randl-workspace/SKILL.md)")" rev-parse --show-toplevel`).
+
 Setup: `RANDL_URL`, `RANDL_API_KEY` if set, `alias randl="node /path/to/randl/backend/dist/cli.js"`.
 
 ## 1. Find what exists

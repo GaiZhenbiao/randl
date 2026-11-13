@@ -9,6 +9,12 @@ randl is one Node.js process serving the dashboard, SDK, tools API and file tran
 port, with one data directory. Details: [deployment guide](../../../docs/guides/deployment.md),
 [configuration](../../../docs/reference/configuration.md).
 
+> **Finding the docs.** Links here are relative to the randl repository, where this skill lives
+> in `.claude/skills/randl-deploy/`. If the skill was loaded through a symlink (for example from
+> `~/.claude/skills/randl-deploy`), a link may not resolve: resolve the symlink to the checkout with
+> `readlink -f ~/.claude/skills/randl-deploy/SKILL.md`, then read `docs/` at the root of that
+> checkout (`git -C "$(dirname "$(readlink -f ~/.claude/skills/randl-deploy/SKILL.md)")" rev-parse --show-toplevel`).
+
 Before starting, find out from the user (do not guess): the checkout path, the data directory,
 the port, how the server is started (service unit, script, or `randl serve` options), and
 whether a separate dashboard copy is served with `--frontend-dir`. Training runs may be logging

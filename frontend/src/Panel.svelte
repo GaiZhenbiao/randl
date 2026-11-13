@@ -20,7 +20,7 @@
   } from './chart-loader';
   import panelLimits from '../../backend/src/panel-limits.json';
   import { mountPlugin } from './plugins/registry';
-  import { runFocus, setHoveredRuns, plotCursor, type RunFocus } from './hover';
+  import { runFocus, settledFocus, setHoveredRuns, plotCursor, type RunFocus } from './hover';
   import { scheduleLinked, cancelLinked } from './linked-frame';
   import { schedulePanel, cancelPanel } from './panel-frame';
   import { focusedRun, focusedSeries, supportsFocusedRun } from './focused-run';
@@ -242,11 +242,12 @@
   let focused = $derived(
     plotSettings.maxRuns === 'focused' && supportsFocusedRun(plugin, requestMetrics.length),
   );
-  // Load only the displayed run. Previously every candidate consumed the same
-  // transform input budget before any output could be sampled.
+  // Focus on hover follows the settled hover (hover.ts), so sweeping across runs redraws these
+  // panels once the pointer rests, never for each run it crosses. Load only the displayed
+  // run: every candidate would otherwise use the transform input budget before any output.
   let demandRun = $derived(
     focused && !grouped
-      ? focusedRun(requestedRuns, readonly ? null : $runFocus, panel.id)
+      ? focusedRun(requestedRuns, readonly ? null : $settledFocus, panel.id)
       : undefined,
   );
   // Grid and Coverflow: a cell per run or group for plugins that declare cellLayout. Focused
@@ -430,7 +431,7 @@
   }
   let displayedSeries = $derived(
     focused && data
-      ? focusedSeries(data.series, requestedRuns, readonly ? null : $runFocus, panel.id)
+      ? focusedSeries(data.series, requestedRuns, readonly ? null : $settledFocus, panel.id)
       : undefined,
   );
   let displayedData = $derived(

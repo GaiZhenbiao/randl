@@ -57,7 +57,7 @@ export function stackedOption(ctx: PanelContext, percent: boolean) {
           lineStyle: { width: settings.lineWidth || 1.5 },
           itemStyle: { color: componentColor(index, ctx.dark) },
           areaStyle,
-          emphasis: { focus: 'series' },
+          emphasis: { focus: 'series', lineStyle: { width: settings.lineWidth || 1.5 } },
         };
       }),
     );
@@ -123,7 +123,7 @@ export function stackedOption(ctx: PanelContext, percent: boolean) {
       areaStyle,
       lineStyle: { width: settings.lineWidth || 1.5 },
       itemStyle: { color: color(item.id, ctx.colors, ctx.dark) },
-      emphasis: { focus: 'series' },
+      emphasis: { focus: 'series', lineStyle: { width: settings.lineWidth || 1.5 } },
       data: steps.map((x, i) => [x, percent ? share(values, index, i) : values[index][i]]),
     }));
   }

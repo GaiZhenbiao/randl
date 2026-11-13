@@ -10,6 +10,12 @@ Plans are runs to try next. Waiting plans form one queue; host agents report fre
 [planning guide](../../../docs/guides/planning.md),
 [tools](../../../docs/reference/tools.md#planning).
 
+> **Finding the docs.** Links here are relative to the randl repository, where this skill lives
+> in `.claude/skills/randl-planning/`. If the skill was loaded through a symlink (for example from
+> `~/.claude/skills/randl-planning`), a link may not resolve: resolve the symlink to the checkout with
+> `readlink -f ~/.claude/skills/randl-planning/SKILL.md`, then read `docs/` at the root of that
+> checkout (`git -C "$(dirname "$(readlink -f ~/.claude/skills/randl-planning/SKILL.md)")" rev-parse --show-toplevel`).
+
 Setup as in the tracking skill: `RANDL_URL`, `RANDL_API_KEY` if set, `alias randl=…`, and
 `--by NAME` on every change.
 
