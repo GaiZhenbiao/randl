@@ -1133,7 +1133,7 @@ Response:
 }
 ```
 
-Error codes: `VIEW_NOT_FOUND`.
+A view that does not exist returns `null`.
 
 ### view_rename
 
@@ -1905,6 +1905,8 @@ Response:
 }
 ```
 
+`RUN_NOT_FOUND` means neither `run` nor `project` was given; an unknown run has no entries.
+
 Error codes: `RUN_NOT_FOUND`.
 
 ### evidence_save
@@ -2663,7 +2665,7 @@ Response:
 }
 ```
 
-Error codes: `IDEA_STATUS_INVALID`, `IDEA_EXISTS`.
+Error codes: `IDEA_STATUS_INVALID`.
 
 ### idea_list
 

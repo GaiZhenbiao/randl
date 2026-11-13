@@ -92,7 +92,7 @@ not change the running dashboard until you copy the new build.
 | `randl.sqlite3` | Runs, history, views, the ledger, settings and the audit log (WAL mode: `-wal`, `-shm` too) |
 | `files/`        | Run files and logged media                                                                  |
 | `artifacts/`    | Artifact files                                                                              |
-| `plugins/`      | Installed panel plugins, one folder per revision                                            |
+| `plugins/`      | Installed panel plugins, one folder per plugin                                              |
 | `pi/`           | The Assistant's profile, including provider keys                                            |
 | `cache/`        | Video posters; safe to delete                                                               |
 

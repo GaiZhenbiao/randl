@@ -199,7 +199,7 @@ export const examples = [
   {
     tool: 'view_get',
     request: (done) => ({ id: done.view_create.id }),
-    errors: ['VIEW_NOT_FOUND'],
+    note: 'A view that does not exist returns `null`.',
   },
   {
     tool: 'view_rename',
@@ -286,7 +286,12 @@ export const examples = [
     },
     errors: ['LEDGER_TIME_INVALID', 'JOURNAL_KEY_IN_USE'],
   },
-  { tool: 'journal_list', request: { run: run('wide02') }, errors: ['RUN_NOT_FOUND'] },
+  {
+    tool: 'journal_list',
+    request: { run: run('wide02') },
+    errors: ['RUN_NOT_FOUND'],
+    note: '`RUN_NOT_FOUND` means neither `run` nor `project` was given; an unknown run has no entries.',
+  },
   {
     tool: 'evidence_save',
     request: {
@@ -369,7 +374,7 @@ export const examples = [
       priority: 'high',
       by: 'me',
     },
-    errors: ['IDEA_STATUS_INVALID', 'IDEA_EXISTS'],
+    errors: ['IDEA_STATUS_INVALID'],
   },
   { tool: 'idea_list', request: { project } },
   {

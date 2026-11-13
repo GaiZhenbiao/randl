@@ -81,18 +81,17 @@ waiting or cancelled plans become ideas.
 Loop on each training host (the guide has a complete Python version):
 
 1. Find free GPUs (for example `nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits`).
-2. Call `plan_claim`:
-
-   ```http
-   POST /api/tools/plan_claim
-
-   {"project": "team/navigation", "host": "gpu-a", "free_gpus": [0, 1, 3], "by": "gpu-a-agent"}
-   ```
-
+2. Call `plan_claim` (the request below).
 3. On `"status": "claimed"` and no `"repeat": true`: write `plan.config_yaml` to a file and
    launch with `CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES=<gpu_ids>`. The run must log
    `{"lineage": {"plan": plan.id, "compute": {...gpu_ids...}}}` at start; that binds it.
 4. `"empty"` or `"held"`: launch nothing. Sleep about a minute and repeat.
+
+```http
+POST /api/tools/plan_claim
+
+{"project": "team/navigation", "host": "gpu-a", "free_gpus": [0, 1, 3], "by": "gpu-a-agent"}
+```
 
 `repeat: true` means the claim is already yours and waiting for its run: do not launch twice.
 `PLAN_HOST_UNKNOWN` means the host has no GPUs registered (step 1).

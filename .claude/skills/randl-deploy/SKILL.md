@@ -34,6 +34,7 @@ Never point tests or experiments at the live server. Start a second server on a 
 against a copy of the data:
 
 ```sh
+mkdir -p /tmp/randl-rehearsal
 sqlite3 /srv/randl/randl.sqlite3 ".backup /tmp/randl-rehearsal/randl.sqlite3"
 node backend/dist/cli.js serve --port 8799 --data-dir /tmp/randl-rehearsal
 ```

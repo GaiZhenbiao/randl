@@ -147,8 +147,13 @@ function tidy(value, ids, cut, key = '') {
   }
   if (value && typeof value === 'object')
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, tidy(v, ids, cut, k)]));
-  // A run's runtime is null until its first report, which can come either side of a read.
-  if (key === 'runtime' && value === null) return 0;
+  // Elapsed times (null until a run's first report) depend on how long the examples took;
+  // show them as 0.
+  if (
+    /(runtime|compute|duration|elapsed)$/i.test(key) &&
+    (value === null || typeof value === 'number')
+  )
+    return 0;
   if (typeof value === 'number') {
     if (value > 1.5e9 && value < 2.5e9) return day;
     if (value > 1.5e12 && value < 2.5e12) return day * 1000;
